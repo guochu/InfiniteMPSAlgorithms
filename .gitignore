@@ -1,0 +1,5 @@
+# Julia
+Manifest.toml
+
+# 日志与临时输出
+*.log
