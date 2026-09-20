@@ -126,11 +126,11 @@ end
 @testset "MPS 工具：dot / dag / copy / bonddim / regauge / gaugefix" begin
     T = ComplexF64
     Random.seed!(11)
-    ψ = randommps(T, [2, 2], 6)
+    ψ = randomimps(T, [2, 2], 6)
 
     # dot：自重叠 = 1；不同态 Cauchy–Schwarz |⟨a|b⟩| ≤ 1；共轭对称
     @test real(dot(ψ, ψ)) ≈ 1 atol = 1e-10
-    ψb = randommps(T, [2, 2], 6)
+    ψb = randomimps(T, [2, 2], 6)
     @test abs(dot(ψ, ψb)) ≤ 1 + 1e-8
     @test dot(ψ, ψb) ≈ conj(dot(ψb, ψ)) atol = 1e-8
 
@@ -172,7 +172,7 @@ end
 @testset "环境与有效哈密顿量" begin
     T = ComplexF64
     Random.seed!(23)
-    ψ = randommps(T, [2], 4)
+    ψ = randomimps(T, [2], 4)
     H = tfim_hamiltonian(T = T)
 
     envs = DMRGCache(ψ, H)
@@ -186,7 +186,7 @@ end
     @test rightenv(envs0, 1)[:, 1, :] ≈ I4
 
     # 二元稠密 MPO：哈密顿量通道（InfiniteMPO 可直接作基态哈密顿量）
-    @test DMRGCache(ψ, identity_mpo(T, [2])) isa DMRGCache
+    @test DMRGCache(ψ, identityimpo(T, [2])) isa DMRGCache
 
     # 三元环境（below, nothing, above）：恒等通道 ∝ I（overlap 通道）
     # （主本征向量只确定到任意复相位，比较时先消去复数比例因子）
@@ -198,7 +198,7 @@ end
     @test norm(L3 - κ * I4) / norm(I4) < 1e-9
 
     # 三元 InfiniteMPO：MPO 施加通道
-    @test MultCache(ψ, identity_mpo(T, [2]), ψ) isa MultCache
+    @test MultCache(ψ, identityimpo(T, [2]), ψ) isa MultCache
 
     # recalculate!：重算后能量不变
     e_ref = real(expectationvalue(ψ, H, envs))
@@ -208,7 +208,7 @@ end
     # transfer_leftenv!/rightenv!：增量推进必须与直接调用 push_env_* 一致
     # （全新构造的环境在恒等层还含逐 site regularize! 投影，故这里只验证
     # 包装器本身的收缩语义；算法中的物理等价性由 debug/envs_alignment.jl 覆盖）
-    ψ2 = randommps(T, [2, 2], 4)
+    ψ2 = randomimps(T, [2, 2], 4)
     H2 = tfim_hamiltonian(T = T)
     envst = DMRGCache(ψ2, H2)
     Lref = push_env_left(leftenv(envst, 1), tompotensor(H2[1]), ψ2.AL[1])
@@ -245,7 +245,7 @@ end
     @test xl ≈ b / 3
 
     # contract_mpo_expval：恒等 MPO 单 site 收缩 = ‖AC‖²
-    I1 = identity_mpo(T, [2])
+    I1 = identityimpo(T, [2])
     GL = reshape(Matrix{T}(I, 4, 4), 4, 1, 4)
     GR = reshape(Matrix{T}(I, 4, 4), 4, 1, 4)
     @test contract_mpo_expval(ψ.AC[1], GL, I1[1], GR) ≈ norm(ψ.AC[1])^2 atol = 1e-10
@@ -254,8 +254,8 @@ end
 @testset "InfiniteMPO 构造、周期下标与标量代数" begin
     T = ComplexF64
     Random.seed!(31)
-    ψ = randommps(T, [2, 2], 5)
-    I2 = identity_mpo(T, [2, 2])
+    ψ = randomimps(T, [2, 2], 5)
+    I2 = identityimpo(T, [2, 2])
 
     # 周期下标与基本接口
     @test length(I2) == 2 && I2[3] == I2[1] && I2[0] == I2[2]
@@ -344,7 +344,7 @@ end
     # 无 on-site、无最近邻项的 bulk 只有恒等通道（2-site 单胞期望 = 2）
     empty_bulk = bulk_mpo(zeros(T, 2, 2), Tuple{Float64,Matrix{T},Matrix{T}}[])
     W0 = infinite_mpo(empty_bulk)
-    ρ = prodmps(T, [2, 2], [1, 1])
+    ρ = prodimps(T, [2, 2], [1, 1])
     @test abs(expectationvalue(ρ, W0) - 2) < 1e-12
 end
 
@@ -378,7 +378,7 @@ end
     T = ComplexF64
     H = tfim_hamiltonian(T = T)
     Random.seed!(41)
-    ψg, envs_g, ϵg = find_groundstate(randommps(T, [2], 10), H,
+    ψg, envs_g, ϵg = find_groundstate(randomimps(T, [2], 10), H,
                                        VUMPS(maxiter = 300, tol = 1e-11, verbosity = 0))
     # calc_galerkin 公开接口
     @test calc_galerkin(ψg, H, envs_g) == ϵg
@@ -392,12 +392,12 @@ end
     @test abs(norm(ψt) - 1) < 1e-8
 
     # fuse：恒等 MPO 与 AL 融合后等于 AL
-    I1 = identity_mpo(T, [2])
+    I1 = identityimpo(T, [2])
     @test fuse(I1[1], ψg.AL[1]) ≈ ψg.AL[1]
 
     # approximate（mult）：恒等 MPO 作用任意态 → 不动点（overlap = 1，输出与输入同向）
     Random.seed!(42)
-    ψ0 = randommps(T, [2], 6)
+    ψ0 = randomimps(T, [2], 6)
     ψa, ov = mult(I1, ψ0; alg = VOMPS(maxiter = 50, tol = 1e-10))
     @test ov ≈ 1 atol = 1e-8
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
@@ -408,7 +408,7 @@ end
     H = tfim_hamiltonian(T = T)
     Random.seed!(51)
     # 用 2-site 单胞，使 (1,2) 相邻双 site 期望落在同一胞元内
-    ψ, _, _ = find_groundstate(randommps(T, [2, 2], 10), H,
+    ψ, _, _ = find_groundstate(randomimps(T, [2, 2], 10), H,
                                VUMPS(maxiter = 300, tol = 1e-11, verbosity = 0))
     Z = σz(T)
 
@@ -423,7 +423,7 @@ end
                    expectationvalue(ψ, (1,) => Z)) atol = 1e-8
 
     # 乘积态每个 bond 熵为 0、谱归一（对标 MPSKit entropy testset）
-    ρ = prodmps(T, [2, 2], [1, 2])
+    ρ = prodimps(T, [2, 2], [1, 2])
     for loc in 1:2
         @test abs(entropy(ρ, loc)) < 1e-12
         p = entanglement_spectrum(ρ, loc)
@@ -434,7 +434,7 @@ end
 @testset "InfiniteCanonicalMPO 结构" begin
     T = ComplexF64
     Random.seed!(61)
-    W = random_mpo(T, [2, 2], 3)
+    W = randomimpo(T, [2, 2], 3)
     M = InfiniteCanonicalMPO(W)
     @test length(M) == 2 && eachsite(M) == 1:2
     @test M[3] == M[1] && M[0] == M[2]

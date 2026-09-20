@@ -3,7 +3,7 @@
     Z = σz(T)
 
     # 乘积态 |↑↑⟩
-    ρ = prodmps(T, [2, 2], [1, 1])
+    ρ = prodimps(T, [2, 2], [1, 1])
     @test real(expectationvalue(ρ, (1,) => Z)) ≈ 1 atol = 1e-12
     @test real(expectationvalue(ρ, (1, 2) => kron(Z, Z))) ≈ 1 atol = 1e-12
     C = correlator(ρ, Z, Z, 1, 2:5)
@@ -13,7 +13,7 @@
     @test all(abs.(Cxy) .< 1e-12)
 
     # 反铁磁乘积态（Néel，单胞 2 site）
-    ρn = prodmps(T, [2, 2], [1, 2])   # |↑↓⟩
+    ρn = prodimps(T, [2, 2], [1, 2])   # |↑↓⟩
     @test real(expectationvalue(ρn, (1,) => Z)) ≈ 1 atol = 1e-12
     @test real(expectationvalue(ρn, (2,) => Z)) ≈ -1 atol = 1e-12
     @test real(expectationvalue(ρn, (1, 2) => kron(Z, Z))) ≈ -1 atol = 1e-12
@@ -23,7 +23,7 @@
     #   该断言不稳定，故不设；固定种子保证其余断言可复现）
     Hm = heisenberg_hamiltonian(T = T)
     Random.seed!(1)
-    ψ, envs, _ = find_groundstate(randommps(T, [2, 2], 12), Hm,
+    ψ, envs, _ = find_groundstate(randomimps(T, [2, 2], 12), Hm,
                                   VUMPS(maxiter = 200, tol = 1e-9))
     @test abs(expectationvalue(ψ, (1,) => Sz(T)^2) - 0.25) < 1e-12
     Czz = correlator(ψ, Sz(T), Sz(T), 1, 2:6)

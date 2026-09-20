@@ -9,7 +9,7 @@
 
     # 稠密 InfiniteMPO 路径可运行（能量收敛性与 MPSKit 保持一致：
     # 恒等通道主导本征向量污染，见 PLAN §9；收敛断言只在 Jordan 路径检查）
-    ψd, envsd, ϵd = find_groundstate(randommps(T, [2, 2], 10), Hm,
+    ψd, envsd, ϵd = find_groundstate(randomimps(T, [2, 2], 10), Hm,
                                      VUMPS(maxiter = 10, tol = 1e-9, verbosity = 0))
     @test expectationvalue(ψd, Hm, envsd) isa Number
 
@@ -20,7 +20,7 @@
 
     # Hubbard 模型可构造且 MPO 期望为实数
     Hf, _ = fermi_hubbard(T = T)
-    ψf = prodmps(T, [4, 4], [1, 1])
+    ψf = prodimps(T, [4, 4], [1, 1])
     @test abs(imag(expectationvalue(ψf, Hf))) < 1e-12
 end
 
@@ -45,7 +45,7 @@ end
     @test H[1][1, 2] ≈ H[1].C[:, 1, :]
 
     # 有限链逐项能量对照：Jordan 收缩 vs 显式算符平均（随机态、短链近似）
-    ψ0 = randommps(T, [2, 2], 10)
+    ψ0 = randomimps(T, [2, 2], 10)
     envs = DMRGCache(ψ0, H)
     eH = real(expectationvalue(ψ0, H, envs))
     @test isfinite(eH) && abs(imag(eH)) < 1e-10
@@ -64,7 +64,7 @@ end
 
     # TFIM Hamiltonian：乘积态期望 = -h·N·⟨σz⟩
     Ht = tfim_hamiltonian(T = T)
-    ψp = prodmps(T, [2], [1])   # 全 |0⟩（σz = +1）
+    ψp = prodimps(T, [2], [1])   # 全 |0⟩（σz = +1）
     @test abs(real(expectationvalue(ψp, Ht)) - (-1.0)) < 1e-12
 
     # make_time_mpo 路径（Jordan → Schur bulk）

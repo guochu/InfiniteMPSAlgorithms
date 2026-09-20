@@ -26,7 +26,7 @@
 
     # ---- vumps ----
     Random.seed!(71)
-    ψg, envsg, ϵg = find_groundstate(randommps(T, [2, 2], 12), H,
+    ψg, envsg, ϵg = find_groundstate(randomimps(T, [2, 2], 12), H,
                                      VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
     eg = real(expectationvalue(ψg, H, envsg) / 2)
     @test ϵg < 1e-9
@@ -35,19 +35,19 @@
     # TFIM 2-site 单胞：e₀ = −4/π（临界点解析解）
     Wt = mpohamiltonian(-σz(T), [(-1.0, σx(T), σx(T))])
     Ht = InfiniteMPOHamiltonian([Wt, Wt])
-    ψt2, _, _ = find_groundstate(randommps(T, [2, 2], 12), Ht,
+    ψt2, _, _ = find_groundstate(randomimps(T, [2, 2], 12), Ht,
                                  VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
     @test abs(real(expectationvalue(ψt2, Ht) / 2) + 4 / π) < 1e-6
 
     # dimerized：能量介于两个极限之间（J₂=0 孤立二聚体 −0.375 / J₂=1 均匀 −0.4431；
     # S·S 非半正定，两极限间无普遍变分序），VUMPS 与 IDMRG 交叉验证见下
-    ψd, envsd, _ = find_groundstate(randommps(T, [2, 2], 12), Hd,
+    ψd, envsd, _ = find_groundstate(randomimps(T, [2, 2], 12), Hd,
                                     VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
     ed = real(expectationvalue(ψd, Hd, envsd) / 2)
     @test -0.4431 - 1e-9 < ed < -0.375 + 1e-9
 
     # ---- idmrg ----
-    ψi, envsi, ϵi = find_groundstate(randommps(T, [2, 2], 12), H,
+    ψi, envsi, ϵi = find_groundstate(randomimps(T, [2, 2], 12), H,
                                      IDMRG(maxiter = 300, tol = 1e-9))
     ei = real(expectationvalue(ψi, H, envsi) / 2)
     @test abs(ei - e_exact) < 2e-4
@@ -55,7 +55,7 @@
     @test max_bonddim(ψi) <= 12
 
     # dimerized：VUMPS 与 IDMRG 交叉验证（有能隙，收敛更快）
-    ψdi, envsdi, _ = find_groundstate(randommps(T, [2, 2], 12), Hd,
+    ψdi, envsdi, _ = find_groundstate(randomimps(T, [2, 2], 12), Hd,
                                       IDMRG(maxiter = 300, tol = 1e-9))
     edi = real(expectationvalue(ψdi, Hd, envsdi) / 2)
     @test abs(edi - ed) < 2e-4
@@ -75,7 +75,7 @@
     @test abs(sum(spec) - 1) < 1e-10 && spec[1] >= spec[end]
 
     # ---- mult / w1w2 ----
-    I2 = identity_mpo(T, [2, 2])
+    I2 = identityimpo(T, [2, 2])
     ψa, ova = mult(I2, ψg)
     @test abs(dot(ψa, ψg)) ≈ 1 atol = 1e-8
     @test real(ova) ≈ 2 atol = 1e-8                            # 恒等 MPO 和式期望 = N
@@ -106,7 +106,7 @@
     @test abs(norm(ψtv) - 1) < 1e-8
 
     # 虚时间：随机初态收敛到基态
-    ψβ, _, _ = time_evolve(randommps(T, [2, 2], 12), H, 0:0.05:20, TDVP();
+    ψβ, _, _ = time_evolve(randomimps(T, [2, 2], 12), H, 0:0.05:20, TDVP();
                            imaginary_evolution = true)
     @test abs(real(expectationvalue(ψβ, H) / 2) - e_exact) < 1e-3
 end

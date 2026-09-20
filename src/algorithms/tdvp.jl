@@ -1,4 +1,6 @@
 # ---------------- TDVP（对标 MPSKit src/algorithms/timestep/tdvp.jl + time_evolve.jl） ----------------
+#
+# 算法定义（TDVP 参数对象）见 algdefs.jl。
 
 """
     integrate(H, x, t, dt, alg; imaginary_evolution = false) -> x′
@@ -11,20 +13,6 @@ function integrate(H, x, t::Number, dt::Number, alg::KrylovKit.KrylovAlgorithm;
     δ = imaginary_evolution ? -dt : -im * dt
     return exponentiate(H, δ, x; ishermitian = alg isa KrylovKit.Lanczos,
                         tol = alg.tol, krylovdim = alg.krylovdim, maxiter = alg.maxiter)[1]
-end
-
-"""
-    TDVP(; integrator, tolgauge, gaugemaxiter, finalize)
-
-single-site TDVP 时间演化（Haegeman et al.，对标 MPSKit 的 `TDVP`）。
-无限系统版本：每步将所有 `AC` 与 `C` 用同一个 `dt` 独立演化，随后
-`regauge!` 成对重新规范并整体 `gaugefix!`（右规范）重建状态。
-"""
-@kwdef struct TDVP{I,F} <: Algorithm
-    integrator::I = Defaults.alg_expsolve()
-    tolgauge::Float64 = Defaults.tolgauge
-    gaugemaxiter::Int = Defaults.maxiter
-    finalize::F = Defaults._finalize
 end
 
 """

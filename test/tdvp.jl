@@ -3,7 +3,7 @@
     Hm = heisenberg_hamiltonian(T = T)
 
     # 实时间：从基态出发能量守恒
-    ψg, envsg, _ = find_groundstate(randommps(T, [2, 2], 8), Hm,
+    ψg, envsg, _ = find_groundstate(randomimps(T, [2, 2], 8), Hm,
                                     VUMPS(maxiter = 200, tol = 1e-9))
     e0 = real(expectationvalue(ψg, Hm) / 2)
     tspan = 0:0.01:0.1
@@ -13,7 +13,7 @@
     @test abs(norm(ψt) - 1) < 1e-8
 
     # 虚时间：收敛到基态能量
-    ψr = randommps(T, [2, 2], 8)
+    ψr = randomimps(T, [2, 2], 8)
     tspanβ = 0:0.05:20
     ψβ, _, historyβ = time_evolve(ψr, Hm, tspanβ, TDVP(); imaginary_evolution = true)
     e_exact = 0.25 - log(2)

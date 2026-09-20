@@ -200,7 +200,7 @@ function mpo_compress(W::InfiniteMPO, D::Int;
     dds = [size(W[ℓ], 4) for ℓ in 1:N]
     K = asmps_view(W.Ws)
     ket = InfiniteCanonicalMPS(K)       # MPO 的 MPS 视图规范化为 ket
-    x0 = randommps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D)
+    x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D)
     x, overlap = _overlap_sweeps(nothing, ket, x0, K;
                                  tol = tol, maxiter = maxiter, verbosity = verbosity)
     c = _ring_scale(x, K)

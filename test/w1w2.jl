@@ -4,7 +4,7 @@
     HJ = Hxxz.hamiltonian   # Jordan 哈密顿量（能量断言用）
     bulk = Hxxz.bulk
     dt = 0.01
-    ψ0 = randommps(T, [2, 2], 8)
+    ψ0 = randomimps(T, [2, 2], 8)
     e0 = real(expectationvalue(ψ0, HJ) / 2)
 
     # 恒等哈密顿量：WI 演化 MPO = 恒等，mult 后状态不变
@@ -36,7 +36,7 @@
     # MPO 压缩：恒等 MPO 压到 D=1（本包扩展，MPSKit 无对标）。结构 + 压缩保真度
     # （归一化保真度 × N）是规范不变的；输出的逐 site 相位是压缩本征解的规范
     # 自由度（MPSKit 同样不钉定本征解相位），期望值等规范依赖量不作断言。
-    I2 = identity_mpo(T, [2, 2])
+    I2 = identityimpo(T, [2, 2])
     comp = mpo_compress(I2, 1)
     @test max_bonddim(comp.W) == 1
     @test abs(comp.overlap - 2) < 1e-8

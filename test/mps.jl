@@ -1,6 +1,6 @@
 @testset "InfiniteCanonicalMPS 数据结构与规范" begin
     T = ComplexF64
-    ψ = randommps(T, [2, 2], 6)
+    ψ = randomimps(T, [2, 2], 6)
 
     @test length(ψ) == 2
     @test phydims(ψ) == [2, 2]
@@ -33,7 +33,7 @@
     @test abs(norm(ψ.C[1]) - 1) < 1e-10
 
     # 乘积态：熵为 0
-    ρ = prodmps(T, [2, 2], [1, 2])
+    ρ = prodimps(T, [2, 2], [1, 2])
     @test abs(norm(ρ) - 1) < 1e-12
     @test entropy(ρ) < 1e-12
     @test expectationvalue(ρ) ≈ 1 atol = 1e-12

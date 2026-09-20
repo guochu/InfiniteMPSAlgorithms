@@ -131,7 +131,6 @@ const tolgauge = 1.0e-13
 const tol = 1.0e-10
 const verbosity = 0
 const krylovdim = 30
-const truncD = 64
 # 动态容差（对标 MPSKit Defaults）
 const dynamic_tols = true
 const tol_min = 1.0e-14

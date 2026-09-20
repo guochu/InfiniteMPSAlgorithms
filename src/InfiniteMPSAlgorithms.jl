@@ -82,7 +82,7 @@ export
     ismixedcanonical, mixedcanonical_error,
     norm, normalize!, dot,
     # 构造器
-    randommps, prodmps, identity_mpo, random_mpo,
+    randomimps, prodimps, identityimpo, randomimpo,
     # 规范
     gaugefix!, regauge!,
     LeftCanonical, RightCanonical, MixedCanonical,
@@ -97,7 +97,6 @@ export
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS,
     find_groundstate, timestep, time_evolve, integrate,
     mult, exact_mult, exact_add, exact_hadamard, add, hadamard, fuse, mpo_compress,
-    bondD,
     DynamicTol, updatetol,
     # MPOHamiltonian（Jordan 结构）与时间演化 MPO
     JordanMPOTensor, MPOHamiltonian, FiniteMPOHamiltonian, InfiniteMPOHamiltonian,

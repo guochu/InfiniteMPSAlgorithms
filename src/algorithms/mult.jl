@@ -323,8 +323,8 @@ end
 # ---------------- 公开接口 mult ----------------
 
 """
-    mult(W, ψ; [ψ₀], alg = VOMPS()) -> (y::InfiniteCanonicalMPS, overlap)
-    mult(W, W2; [ψ₀], alg = VOMPS()) -> (y::InfiniteCanonicalMPO, overlap)
+    mult(W, ψ; [ψ₀], [D], alg = VOMPS()) -> (y::InfiniteCanonicalMPS, overlap)
+    mult(W, W2; [ψ₀], [D], alg = VOMPS()) -> (y::InfiniteCanonicalMPO, overlap)
 
 MPO 乘法的迭代（变分）版本：求 `y ≈ W·ψ`（态施加）或 `y ≈ W·W2`（算符复合）。
 朴素精确构造见 [`exact_mult`](@ref)；时间演化 MPO 的施加即
@@ -333,34 +333,30 @@ MPO 乘法的迭代（变分）版本：求 `y ≈ W·ψ`（态施加）或 `y �
 - `W`：`InfiniteMPO`、`MPOHamiltonian`（稠密化为 InfiniteMPO 后施加）或
   `InfiniteCanonicalMPO`；
 - `alg`：[`VOMPS`](@ref)（重叠最大化 ALS 扫描）或 [`IDMRG`](@ref)
-  （秩-1 有效哈密顿量本征求解），两者不动点相同；输出键维
-  `D = bondD(alg.trunc)`；
-- `ψ₀`：初态（缺省时以键维 `D` 的随机态出发；`D ≥ 朴素构造键维` 时短路，
-  直接返回精确施加/复合的规范存储）；
+  （秩-1 有效哈密顿量本征求解），两者不动点相同；
+- `ψ₀`：初态（默认缺省时 mpo·mps 复用 `ψ`、mpo·mpo 复用 `W2` 的 MPS 视图，
+  即保持键维）；`D`：给定则以键维 `D` 的随机态为初态；
 - 输出保证为混合规范形式（mpo·mps → `InfiniteCanonicalMPS`，mpo·mpo →
   `InfiniteCanonicalMPO`；算符输出的幅值遵循 `InfiniteCanonicalMPO` 的射线
   规范约定，保真度由 `overlap` 给出，overlap ∈ [0, N]，= N 即方向一致）。
 """
-function mult(W, ψ::InfiniteCanonicalMPS; ψ₀ = nothing, alg::Union{VOMPS,IDMRG} = VOMPS())
+function mult(W, ψ::InfiniteCanonicalMPS; ψ₀ = nothing, D = nothing,
+              alg::Union{VOMPS,IDMRG} = VOMPS())
     Wm = W isa InfiniteMPO ? W : InfiniteMPO(W)
     (length(ψ) % length(Wm) == 0) ||
         throw(DimensionMismatch("MPS 与 MPO 单胞长度不兼容"))
     N = length(ψ)
     T = promote_type(scalartype(Wm), scalartype(ψ))
     K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:N]        # 朴素目标射线（W·ψ 的 fuse）
-    D = bondD(alg.trunc)
-    if isnothing(ψ₀) && all(size(K[ℓ], 1) ≤ D for ℓ in eachindex(K))
-        return InfiniteCanonicalMPS(collect(K)), float(N)   # 精确施加短路（overlap = N）
-    end
     ket = InfiniteCanonicalMPS(K)                   # 目标的规范存储（迭代用）
-    x0 = isnothing(ψ₀) ? randommps(T, phydims(ψ), D) : ψ₀
+    x0 = _mult_init(copy(ψ), ψ₀, D, phydims(ψ), T)
     y, overlap = _mult_compress(alg, ket, x0, K)
     # 保证混合规范：从 AL + C[end] 重新右规范化（保持射线）
     y = InfiniteCanonicalMPS(collect(y.AL), y.C[end])
     return y, overlap
 end
 
-function mult(W, W2::Union{InfiniteMPO,InfiniteCanonicalMPO}; ψ₀ = nothing,
+function mult(W, W2::Union{InfiniteMPO,InfiniteCanonicalMPO}; ψ₀ = nothing, D = nothing,
               alg::Union{VOMPS,IDMRG} = VOMPS())
     Wm = W isa InfiniteMPO ? W : InfiniteMPO(W)
     W2m = W2 isa InfiniteMPO ? W2 : InfiniteMPO(W2)
@@ -372,18 +368,22 @@ function mult(W, W2::Union{InfiniteMPO,InfiniteCanonicalMPO}; ψ₀ = nothing,
     dus = [size(K4[ℓ], 2) for ℓ in 1:N]
     dds = [size(K4[ℓ], 4) for ℓ in 1:N]
     K3 = asmps_view(K4)                             # MPO 乘积的 MPS 视图目标
-    D = bondD(alg.trunc)
-    if isnothing(ψ₀) && all(size(K3[ℓ], 1) ≤ D for ℓ in eachindex(K3))
-        # 精确复合短路：朴素乘积的规范存储（overlap = N）
-        y = _mpo_from_mps(_align_scale!(InfiniteCanonicalMPS(K3), K3), dus, dds)
-        return y, float(N)
-    end
     ket = InfiniteCanonicalMPS(K3)
-    x0 = isnothing(ψ₀) ? randommps(T, [size(K3[ℓ], 2) for ℓ in 1:N], D) : ψ₀
+    physdims = [size(K3[ℓ], 2) for ℓ in 1:N]
+    default0 = InfiniteCanonicalMPS(asmps_view(collect(W2m.Ws)))   # 保持 W2 键维
+    x0 = _mult_init(default0, ψ₀, D, physdims, T)
     x, overlap = _mult_compress(alg, ket, x0, K3)
     x = _align_scale!(x, K3)                        # 幅值/相位对齐到目标射线
     y = _mpo_from_mps(x, dus, dds)                  # → InfiniteCanonicalMPO（重新规范）
     return y, overlap
+end
+
+"mult 的初态装配：显式 `ψ₀` 优先，其次键维 `D` 随机态，最后用 `default`。"
+function _mult_init(default::InfiniteCanonicalMPS, ψ₀, D::Union{Nothing,Int},
+                    physdims::AbstractVector{Int}, T::Type)
+    isnothing(ψ₀) || return ψ₀
+    isnothing(D) && return default
+    return randomimps(T, physdims, D)
 end
 
 "mult 的压缩引擎分派：`VOMPS` → 重叠最大化扫描，`IDMRG` → 本征求解扫描。"

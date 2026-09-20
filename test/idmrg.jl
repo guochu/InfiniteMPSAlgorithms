@@ -3,11 +3,11 @@
     H = heisenberg_hamiltonian(T = T)
     e_exact = 0.25 - log(2)
 
-    ψv, envsv, _ = find_groundstate(randommps(T, [2, 2], 12), H,
+    ψv, envsv, _ = find_groundstate(randomimps(T, [2, 2], 12), H,
                                     VUMPS(maxiter = 300, tol = 1e-10))
     ev = real(expectationvalue(ψv, H, envsv) / 2)
 
-    ψi, envsi, ϵ = find_groundstate(randommps(T, [2, 2], 12), H,
+    ψi, envsi, ϵ = find_groundstate(randomimps(T, [2, 2], 12), H,
                                     IDMRG(maxiter = 300, tol = 1e-9))
     ei = real(expectationvalue(ψi, H, envsi) / 2)
 
@@ -16,7 +16,7 @@
     @test abs(ei - ev) < 2e-4
 
     # 固定键维 D=8 仍收敛（single-site 不增长键维）
-    ψ8, envs8, _ = find_groundstate(randommps(T, [2, 2], 8), H,
+    ψ8, envs8, _ = find_groundstate(randomimps(T, [2, 2], 8), H,
                                     IDMRG(maxiter = 300, tol = 1e-9))
     e8 = real(expectationvalue(ψ8, H, envs8) / 2)
     @test max_bonddim(ψ8) <= 8
