@@ -3,7 +3,7 @@
 """
     LeftCanonical(; tol, maxiter, verbosity, alg_orth, alg_eigsolve, eig_miniter)
 
-将 `MixedCanonicalMPS` 化为左规范形式的算法（对标 MPSKit 的 `LeftCanonical`）。
+将 `InfiniteCanonicalMPS` 化为左规范形式的算法（对标 MPSKit 的 `LeftCanonical`）。
 """
 @kwdef struct LeftCanonical <: Algorithm
     tol::Float64 = Defaults.tolgauge
@@ -17,7 +17,7 @@ end
 """
     RightCanonical(; tol, maxiter, verbosity, alg_orth, alg_eigsolve, eig_miniter)
 
-将 `MixedCanonicalMPS` 化为右规范形式的算法（对标 MPSKit 的 `RightCanonical`）。
+将 `InfiniteCanonicalMPS` 化为右规范形式的算法（对标 MPSKit 的 `RightCanonical`）。
 """
 @kwdef struct RightCanonical <: Algorithm
     tol::Float64 = Defaults.tolgauge
@@ -46,13 +46,13 @@ function MixedCanonical(; tol::Real = Defaults.tolgauge, maxiter::Int = Defaults
 end
 
 """
-    gaugefix!(ψ::MixedCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...) -> ψ
-    gaugefix!(ψ::MixedCanonicalMPS, A, C₀, alg::Algorithm) -> ψ
+    gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...) -> ψ
+    gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::Algorithm) -> ψ
 
 把 `A`（普通 site 张量串或左/右规范张量串）的规范信息写入 `ψ`
 （对标 MPSKit 的 `gaugefix!`）。`order` 可为 `:L`、`:R`、`:LR`、`:RL`。
 """
-function gaugefix!(ψ::MixedCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...)
+function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...)
     alg = if order === :LR || order === :RL
         MixedCanonical(; order = order, kwargs...)
     elseif order === :L
@@ -65,7 +65,7 @@ function gaugefix!(ψ::MixedCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwar
     return gaugefix!(ψ, A, C₀, alg)
 end
 
-function gaugefix!(ψ::MixedCanonicalMPS, A, C₀, alg::MixedCanonical)
+function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::MixedCanonical)
     if alg.order === :LR
         gaugefix!(ψ, A, C₀, alg.alg_leftcanonical)
         gaugefix!(ψ, ψ.AL, ψ.C[end], alg.alg_rightcanonical)
@@ -78,11 +78,11 @@ function gaugefix!(ψ::MixedCanonicalMPS, A, C₀, alg::MixedCanonical)
     return ψ
 end
 
-function gaugefix!(ψ::MixedCanonicalMPS, A, C₀, alg::LeftCanonical)
+function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::LeftCanonical)
     uniform_leftorth!((ψ.AL, ψ.C), A, C₀, alg)
     return ψ
 end
-function gaugefix!(ψ::MixedCanonicalMPS, A, C₀, alg::RightCanonical)
+function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::RightCanonical)
     uniform_rightorth!((ψ.AR, ψ.C), A, C₀, alg)
     return ψ
 end

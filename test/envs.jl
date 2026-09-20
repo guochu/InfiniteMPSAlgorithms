@@ -1,15 +1,15 @@
 @testset "转移矩阵与环境" begin
     T = ComplexF64
-    ψ = random_mps(T, [2, 3], 5)
+    ψ = randommps(T, [2, 3], 5)
 
     # 恒等通道环境 = 恒等矩阵（AL 严格规范，对应 MPSKit 的 l_LL/r_RR）
-    envs = environments(ψ)
+    envs = OverlapCache(ψ)
     @test leftenv(envs, 1) == reshape(Matrix{T}(I, 5, 5), 5, 1, 5)
     @test rightenv(envs, 1) == reshape(Matrix{T}(I, 5, 5), 5, 1, 5)
 
     # 恒等 MPO（作为 Σᵢ I 的和式哈密顿量）期望 = N
     I2 = identity_mpo(T, [2, 3])
-    @test abs(expectation_value(ψ, I2) - 2) < 1e-8
+    @test abs(expectationvalue(ψ, I2) - 2) < 1e-8
 
     # TransferMatrix：与 push_env_left 序列一致
     tm = TransferMatrix(ψ)

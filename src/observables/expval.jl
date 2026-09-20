@@ -1,37 +1,37 @@
 # ---------------- 期望值（对标 MPSKit src/algorithms/expval.jl） ----------------
 
 """
-    expectation_value(ψ, O, [environments])
-    expectation_value(ψ, inds => O)
+    expectationvalue(ψ, O, [envs])
+    expectationvalue(ψ, inds => O)
 
 算符期望值：
 
-- `O::InfiniteMPO`：MPO 全收缩，返回单位胞总期望（如 `expectation_value(ψ, H)` = 总能量）；
+- `O::InfiniteMPO`：MPO 全收缩，返回单位胞总期望（如 `expectationvalue(ψ, H)` = 总能量）；
 - `O = (i,) => A`：单 site 局域算符；
 - `O = ((i, i+1),) => A12`：相邻双 site 算符（`A12` 为 `d²×d²` 矩阵，
   指标序 `(u1, u2; d1, d2)`）；
-- `expectation_value(ψ)`：`⟨ψ|ψ⟩`。
+- `expectationvalue(ψ)`：`⟨ψ|ψ⟩`。
 """
-function expectation_value end
+function expectationvalue end
 
-expectation_value(ψ::MixedCanonicalMPS) = dot(ψ, ψ)
+expectationvalue(ψ::InfiniteCanonicalMPS) = dot(ψ, ψ)
 
-expectation_value(ψ::MixedCanonicalMPS, operator::Nothing, envs...) = dot(ψ, ψ)
+expectationvalue(ψ::InfiniteCanonicalMPS, operator::Nothing, envs...) = dot(ψ, ψ)
 
-function expectation_value(ψ::MixedCanonicalMPS, (inds, O)::Pair)
+function expectationvalue(ψ::InfiniteCanonicalMPS, (inds, O)::Pair)
     sites = Tuple(inds)
     (length(sites) == 1) && return _local_expectation1(ψ, sites[1], O)
     (length(sites) == 2) && return _local_expectation2(ψ, sites[1], sites[2], O)
     throw(ArgumentError("仅支持单 site 或相邻双 site 局域算符"))
 end
 
-function _local_expectation1(ψ::MixedCanonicalMPS, site::Int, O::AbstractMatrix)
+function _local_expectation1(ψ::InfiniteCanonicalMPS, site::Int, O::AbstractMatrix)
     AC = ψ.AC[site]
     @tensor E[] := conj(AC[a, u, b]) * O[u, s] * AC[a, s, b]
     return E[] / dot(ψ, ψ)
 end
 
-function _local_expectation2(ψ::MixedCanonicalMPS, i::Int, j::Int, O12::AbstractMatrix)
+function _local_expectation2(ψ::InfiniteCanonicalMPS, i::Int, j::Int, O12::AbstractMatrix)
     N = length(ψ)
     (j == _mod1(i + 1, N)) || throw(ArgumentError("双 site 算符仅支持相邻 site"))
     d1 = size(ψ.AC[i], 2)
@@ -55,8 +55,8 @@ function contract_mpo_expval(AC, GL, O, GR, ACbar = AC)
     return E[]
 end
 
-function expectation_value(ψ::MixedCanonicalMPS, mpo::InfiniteMPO,
-                           envs::Environments = environments(ψ, mpo))
+function expectationvalue(ψ::InfiniteCanonicalMPS, mpo::InfiniteMPO,
+                          envs::Environments = DMRGCache(ψ, mpo))
     N = length(ψ)
     E = zero(promote_type(scalartype(ψ), scalartype(mpo)))
     for ℓ in 1:N
@@ -66,7 +66,7 @@ function expectation_value(ψ::MixedCanonicalMPS, mpo::InfiniteMPO,
 end
 
 """
-    expectation_value(ψ, H::MPOHamiltonian, [envs])
+    expectationvalue(ψ, H::MPOHamiltonian, [envs])
 
 Jordan 哈密顿量能量（对标 MPSKit）：每 site 只收缩**闭合列**
 `H[site][:, 1, 1, end]`（on-site `D`、闭合 `B`、恒等簿记项），即
@@ -77,10 +77,10 @@ E = Σ_site Σ_l ⟨GL_l · W[l → end] · GR_end⟩
 
 恒等层环境的固定点分量已在环境构建中投影掉，`(end → end)` 项因此为零。
 """
-function expectation_value(ψ::MixedCanonicalMPS, H::MPOHamiltonian,
-                           envs::Environments = environments(ψ, H))
+function expectationvalue(ψ::InfiniteCanonicalMPS, H::MPOHamiltonian,
+                          envs::Environments = DMRGCache(ψ, H))
     N = length(ψ)
-    nl = mpobond(H)
+    nl = bonddim(H)
     d = phydim(H)
     T = promote_type(scalartype(ψ), scalartype(H))
     E = zero(T)

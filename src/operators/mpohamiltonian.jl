@@ -11,7 +11,7 @@
 # ```
 #
 # 首末虚拟层为单位层（恒等通道），`isidentitylevel`/`isemptylevel` 支撑
-# 环境的逐层线性求解（见 environments）。
+# DMRGCache 的逐层线性求解（见 algorithms/idmrg.jl）。
 
 """
     MPOHamiltonian(W) -> MPOHamiltonian
@@ -60,11 +60,11 @@ function InfiniteMPOHamiltonian(Ws::Vector{<:Matrix})
     return InfiniteMPOHamiltonian(PeriodicVector([JordanMPOTensor(W) for W in Ws]))
 end
 
-"mpobond(H, ℓ)：site ℓ 的 Jordan 虚拟层数（键维语义 per-bond，对标 MPSKit 的
+"bonddim(H, ℓ)：site ℓ 的 Jordan 虚拟层数（键维语义 per-bond，对标 MPSKit 的
 `size(mpo[i], 1)`）。"
-mpobond(H::MPOHamiltonian, ℓ::Integer) = nlvls(H[ℓ])
-"mpobond(H)：单胞均匀层数（上三角方块结构 + 周期闭合要求各 site 层一致，由构造器保证）。"
-mpobond(H::MPOHamiltonian) = nlvls(H[1])
+bonddim(H::MPOHamiltonian, ℓ::Integer) = nlvls(H[ℓ])
+"bonddim(H)：单胞均匀层数（上三角方块结构 + 周期闭合要求各 site 层一致，由构造器保证）。"
+bonddim(H::MPOHamiltonian) = nlvls(H[1])
 
 scalartype(::Type{MPOHamiltonian{TO,V}}) where {TO,V} = scalartype(TO)
 scalartype(H::MPOHamiltonian) = scalartype(typeof(H))
@@ -90,7 +90,7 @@ end
 中间层要求所有 site 的 `(i,i)` 对角块为恒等。
 """
 function isidentitylevel(H::MPOHamiltonian, i::Int)
-    n = mpobond(H)
+    n = bonddim(H)
     (i == 1 || i == n) && return true
     return all(parent(H)) do W
         block = W.A[i - 1, :, i - 1, :]
@@ -106,7 +106,7 @@ end
 注意显式存储的零对角块（如严格最近邻 MPO 的中间层）不算空层。
 """
 function isemptylevel(H::MPOHamiltonian, i::Int)
-    n = mpobond(H)
+    n = bonddim(H)
     (i == 1 || i == n) && return false
     return all(parent(H)) do W
         return iszero(W.A[i - 1, :, i - 1, :]) &&
@@ -132,7 +132,7 @@ function Base.:+(H::InfiniteMPOHamiltonian, λs::AbstractVector{<:Number})
     (length(H) == length(λs)) || throw(DimensionMismatch("单胞长度不匹配"))
     Ws = Vector{Matrix{Any}}(undef, length(H))
     for i in 1:length(H)
-        n = mpobond(H)
+        n = bonddim(H)
         W = Matrix{Any}(missing, n, n)
         W[1, 1] = one(scalartype(H))
         W[n, n] = one(scalartype(H))

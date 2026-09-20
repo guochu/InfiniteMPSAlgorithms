@@ -1,30 +1,9 @@
 # ---------------- VUMPS（严格对标 MPSKit src/algorithms/groundstate/vumps.jl） ----------------
-
-"""
-    VUMPS(; tol, maxiter, verbosity, alg_gauge, alg_eigsolve, alg_environments, finalize)
-
-均匀 MPS 变分基态算法（Zaletel–Pollmann / Vanderstraeten 等，对标 MPSKit 的 `VUMPS`）。
-
-每轮迭代（MPSKit 模板）：
-1. `localupdate_step!`：逐 site 解 `AC_hamiltonian` 与 `C_hamiltonian` 最小本征对
-   （`fixedpoint`，热启动），`regauge!` 得到候选 `AL`；
-2. `gauge_step!`：`gaugefix!(ψ, ALs, ψ.C[end]; order = :R)` 恢复整体右规范，
-   随后 `AC = AL·C`；
-3. `envs_step!`：`recalculate!` 重算环境；
-4. `finalize` 回调；收敛判据 `calc_galerkin ≤ tol`。
-"""
-@kwdef struct VUMPS{F} <: Algorithm
-    tol::Float64 = Defaults.tol
-    maxiter::Int = Defaults.maxiter
-    verbosity::Int = Defaults.verbosity
-    alg_gauge = Defaults.alg_gauge()
-    alg_eigsolve = Defaults.alg_eigsolve()
-    alg_environments = Defaults.alg_environments()
-    finalize::F = Defaults._finalize
-end
+#
+# 算法定义（VUMPS 参数对象）见 algdefs.jl。
 
 "localupdate_step!：逐 site 解 AC/C 子问题并 `regauge!`，返回候选 `AL` 串。"
-function localupdate_step!(ψ::MixedCanonicalMPS, operator, envs::Environments,
+function localupdate_step!(ψ::InfiniteCanonicalMPS, operator, envs::Environments,
                            which::Symbol, alg_eigsolve)
     N = length(ψ)
     ALs = Vector{eltype(ψ.AL)}(undef, N)
@@ -39,7 +18,7 @@ function localupdate_step!(ψ::MixedCanonicalMPS, operator, envs::Environments,
 end
 
 "gauge_step!：候选 `AL` 写入 `ψ.AL` 后 `gaugefix!(; order = :R)`，再 `AC = AL·C`（MPSKit 模板）。"
-function gauge_step!(ψ::MixedCanonicalMPS, ALs::Vector, C₀; tol::Real, maxiter::Int)
+function gauge_step!(ψ::InfiniteCanonicalMPS, ALs::Vector, C₀; tol::Real, maxiter::Int)
     for ℓ in eachindex(ALs)
         ψ.AL[ℓ] = ALs[ℓ]
     end
@@ -50,8 +29,8 @@ function gauge_step!(ψ::MixedCanonicalMPS, ALs::Vector, C₀; tol::Real, maxite
     return ψ
 end
 
-function find_groundstate(ψ₀::MixedCanonicalMPS, operator, alg::VUMPS,
-                          envs::Environments = environments(ψ₀, operator);
+function find_groundstate(ψ₀::InfiniteCanonicalMPS, operator, alg::VUMPS,
+                          envs::Environments = DMRGCache(ψ₀, operator);
                           which::Symbol = :SR)
     ψ = copy(ψ₀)
     ϵ = calc_galerkin(ψ, operator, envs)
@@ -72,14 +51,14 @@ function find_groundstate(ψ₀::MixedCanonicalMPS, operator, alg::VUMPS,
         # finalize
         ψ, envs = alg.finalize(iter, ψ, operator, envs)
         ϵ = calc_galerkin(ψ, operator, envs)
-        f = expectation_value(ψ, operator, envs)
+        f = expectationvalue(ψ, operator, envs)
         alg.verbosity > 0 && _logiter(stdout, "VUMPS", iter, ϵ, "f" => f)
         ϵ ≤ alg.tol && break
     end
     return ψ, envs, ϵ
 end
 
-find_groundstate(ψ₀::MixedCanonicalMPS, operator; kwargs...) =
+find_groundstate(ψ₀::InfiniteCanonicalMPS, operator; kwargs...) =
     find_groundstate(ψ₀, operator, VUMPS(; kwargs...))
 
 """
@@ -88,7 +67,7 @@ find_groundstate(ψ₀::MixedCanonicalMPS, operator; kwargs...) =
 对标 MPSKit `calc_galerkin`：归一化梯度 `x = H_AC(AC)/‖H_AC(AC)‖`，再投影掉
 `AL` 规范方向，`ϵ = max_site ‖x − AL·(AL†·x)‖`。
 """
-function calc_galerkin(ψ::MixedCanonicalMPS, operator, envs::Environments)
+function calc_galerkin(ψ::InfiniteCanonicalMPS, operator, envs::Environments)
     N = length(ψ)
     ϵ = 0.0
     for site in 1:N

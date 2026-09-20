@@ -32,8 +32,8 @@ end
 
 以步长 `dt` 在时刻 `t` 演化一步（解 `i∂ψ/∂t = Hψ`）。
 """
-function timestep(ψ::MixedCanonicalMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(),
-                  envs::Environments = environments(ψ, H);
+function timestep(ψ::InfiniteCanonicalMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(),
+                  envs::Environments = DMRGCache(ψ, H);
                   imaginary_evolution::Bool = false)
     N = length(ψ)
     temp_ACs = Vector{eltype(ψ.AC)}(undef, N)
@@ -45,7 +45,7 @@ function timestep(ψ::MixedCanonicalMPS, H, t::Number, dt::Number, alg::TDVP = T
         temp_Cs[loc] = integrate(Hc, ψ.C[loc], t, dt, alg.integrator; imaginary_evolution)
     end
     ALs = regauge!(temp_ACs, temp_Cs; alg = Defaults.alg_orth())
-    ψ′ = MixedCanonicalMPS(ALs, ψ.C[end]; tol = alg.tolgauge, maxiter = alg.gaugemaxiter)
+    ψ′ = InfiniteCanonicalMPS(ALs, ψ.C[end]; tol = alg.tolgauge, maxiter = alg.gaugemaxiter)
     recalculate!(envs, ψ′, H)
     return ψ′, envs
 end
@@ -58,19 +58,19 @@ end
 `imaginary_evolution = true` 时为虚时间演化 `exp(-H·dt)`。
 `observer(ψ, iter, t)` 回调逐步收集数据。
 """
-function time_evolve(ψ₀::MixedCanonicalMPS, H, t_span::AbstractVector{<:Number},
-                     alg::TDVP = TDVP(), envs::Environments = environments(ψ₀, H);
+function time_evolve(ψ₀::InfiniteCanonicalMPS, H, t_span::AbstractVector{<:Number},
+                     alg::TDVP = TDVP(), envs::Environments = DMRGCache(ψ₀, H);
                      verbosity::Int = 0, imaginary_evolution::Bool = false, observer = nothing)
     ψ = copy(ψ₀)
     if scalartype(ψ) <: Real && (!imaginary_evolution || !isreal(dt_span_diff(t_span)))
-        ψ = MixedCanonicalMPS(PeriodicVector(complex.(parent(ψ.AL))),
+        ψ = InfiniteCanonicalMPS(PeriodicVector(complex.(parent(ψ.AL))),
                               PeriodicVector(complex.(parent(ψ.AR))),
                               PeriodicVector(complex.(parent(ψ.C))),
                               PeriodicVector(complex.(parent(ψ.AC))))
     end
     history = Any[]
     push_history!(h, obs, ψ, iter, t) =
-        push!(h, isnothing(obs) ? expectation_value(ψ, H, envs) : obs(ψ, iter, t))
+        push!(h, isnothing(obs) ? expectationvalue(ψ, H, envs) : obs(ψ, iter, t))
     push_history!(history, observer, ψ, 0, t_span[1])
     for iter in 1:(length(t_span) - 1)
         t = t_span[iter]

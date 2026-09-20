@@ -1,9 +1,9 @@
-@testset "MixedCanonicalMPS 数据结构与规范" begin
+@testset "InfiniteCanonicalMPS 数据结构与规范" begin
     T = ComplexF64
-    ψ = random_mps(T, [2, 2], 6)
+    ψ = randommps(T, [2, 2], 6)
 
     @test length(ψ) == 2
-    @test physicaldims(ψ) == [2, 2]
+    @test phydims(ψ) == [2, 2]
     @test scalartype(ψ) == T
 
     # 左正交性：Σ AL† AL = 1
@@ -33,11 +33,11 @@
     @test abs(norm(ψ.C[1]) - 1) < 1e-10
 
     # 乘积态：熵为 0
-    ρ = product_mps(T, [2, 2], [1, 2])
+    ρ = prodmps(T, [2, 2], [1, 2])
     @test abs(norm(ρ) - 1) < 1e-12
     @test entropy(ρ) < 1e-12
-    @test expectation_value(ρ) ≈ 1 atol = 1e-12
+    @test expectationvalue(ρ) ≈ 1 atol = 1e-12
 
     # 乘积态的 ⟨Z⟩（site 1 处于 |0⟩ = |↑⟩）
-    @test real(expectation_value(ρ, (1,) => σz(T))) ≈ 1 atol = 1e-12
+    @test real(expectationvalue(ρ, (1,) => σz(T))) ≈ 1 atol = 1e-12
 end

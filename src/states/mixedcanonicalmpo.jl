@@ -1,32 +1,32 @@
 """
-    MixedCanonicalMPO{T}
+    InfiniteCanonicalMPO{T}
 
-与 `MixedCanonicalMPS` 同布局的 MPO 混合规范存储（把 MPO 当 MPS 用，
-可用于密度矩阵等；储存与使用规则参考 `MixedCanonicalMPS`）：
+与 `InfiniteCanonicalMPS` 同布局的 MPO 混合规范存储（把 MPO 当 MPS 用，
+可用于密度矩阵等；储存与使用规则参考 `InfiniteCanonicalMPS`）：
 
 - `AL[ℓ]::Array{T,4}`：MPO 张量 `(wl, u, wr, d)`，MPS 视图下左正交；
 - `AR[ℓ]::Array{T,4}`：MPS 视图下右正交；
 - `C[ℓ]::Array{T,2}`：bond ℓ 中心矩阵；
 - `AC[ℓ]::Array{T,4}`：中心规范 MPO 张量，`AC[ℓ] = AL[ℓ]·C[ℓ] = C[ℓ-1]·AR[ℓ]`
-  （在 MPS 视图 `(wl, u*d, wr)` 意义下，约定与 `MixedCanonicalMPS` 相同）。
+  （在 MPS 视图 `(wl, u*d, wr)` 意义下，约定与 `InfiniteCanonicalMPS` 相同）。
 
 用途：对 MPO 使用 MPS 算法（主导本征向量 = 最优低键维逼近 → MPO 压缩；
 `hadamard(ψ, dag(ψ))` 型密度矩阵的规范存储）。
 MPS 视图：`(wl, u, wr, d)` → permute `(1,2,4,3)` → reshape `(wl, u*d, wr)`。
 
-注意：构造经 `MixedCanonicalMPS` 的 `gaugefix!` 混合规范化。规范变换在周期
+注意：构造经 `InfiniteCanonicalMPS` 的 `gaugefix!` 混合规范化。规范变换在周期
 trace 表示下望远相消（`tr(C⁻¹·X·C) = tr(X)`），故算符值（周期收缩）被精确保留。
 """
-struct MixedCanonicalMPO{T}
+struct InfiniteCanonicalMPO{T}
     AL::PeriodicVector{Array{T,4}}
     AR::PeriodicVector{Array{T,4}}
     C::PeriodicVector{Array{T,2}}
     AC::PeriodicVector{Array{T,4}}
 
-    function MixedCanonicalMPO{T}(AL::PeriodicVector{Array{T,4}},
-                                  AR::PeriodicVector{Array{T,4}},
-                                  C::PeriodicVector{Array{T,2}},
-                                  AC::PeriodicVector{Array{T,4}}) where {T}
+    function InfiniteCanonicalMPO{T}(AL::PeriodicVector{Array{T,4}},
+                                     AR::PeriodicVector{Array{T,4}},
+                                     C::PeriodicVector{Array{T,2}},
+                                     AC::PeriodicVector{Array{T,4}}) where {T}
         L = length(AL)
         (L == length(AR) == length(C) == length(AC)) ||
             throw(ArgumentError("incompatible lengths of AL, AR, C, and AC"))
@@ -46,80 +46,80 @@ struct MixedCanonicalMPO{T}
 end
 
 """
-    _mpo_from_mps(ψ::MixedCanonicalMPS, dus, dds) -> MixedCanonicalMPO
+    _mpo_from_mps(ψ::InfiniteCanonicalMPS, dus, dds) -> InfiniteCanonicalMPO
 
-[`MixedCanonicalMPS`](@ref) → [`MixedCanonicalMPO`](@ref)：rank-3 场经
+[`InfiniteCanonicalMPS`](@ref) → [`InfiniteCanonicalMPO`](@ref)：rank-3 场经
 [`mps_view_to_mpo`](@ref) 逆视图变换转 rank-4（`dus`/`dds` 为每个 site 的 u/d 物理维）。
 """
-function _mpo_from_mps(ψ::MixedCanonicalMPS{T}, dus::AbstractVector{Int},
+function _mpo_from_mps(ψ::InfiniteCanonicalMPS{T}, dus::AbstractVector{Int},
                        dds::AbstractVector{Int}) where {T}
     to4 = As -> mps_view_to_mpo(collect(As); dus = dus, dds = dds)
-    return MixedCanonicalMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
-                                copy(ψ.C), PeriodicVector(to4(ψ.AC)))
+    return InfiniteCanonicalMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
+                                   copy(ψ.C), PeriodicVector(to4(ψ.AC)))
 end
 
 """
-    MixedCanonicalMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...)
+    InfiniteCanonicalMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...)
 
-由普通 MPO 张量串构造（对标 `MixedCanonicalMPS(As)`）：经 `asmps_view` 转 MPS 后
+由普通 MPO 张量串构造（对标 `InfiniteCanonicalMPS(As)`）：经 `asmps_view` 转 MPS 后
 `gaugefix!` 混合规范化（周期 trace 表示下算符值精确保留，见类型文档）。
 """
-function MixedCanonicalMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...) where {T}
+function InfiniteCanonicalMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...) where {T}
     N = length(Ws)
-    ψ = MixedCanonicalMPS(asmps_view(Ws); kwargs...)
+    ψ = InfiniteCanonicalMPS(asmps_view(Ws); kwargs...)
     return _mpo_from_mps(ψ, [size(Ws[ℓ], 2) for ℓ in 1:N], [size(Ws[ℓ], 4) for ℓ in 1:N])
 end
 
-MixedCanonicalMPO(W::InfiniteMPO; kwargs...) = MixedCanonicalMPO(W.Ws; kwargs...)
+InfiniteCanonicalMPO(W::InfiniteMPO; kwargs...) = InfiniteCanonicalMPO(W.Ws; kwargs...)
 
-# ---------------- 接口（对标 MixedCanonicalMPS） ----------------
+# ---------------- 接口（对标 InfiniteCanonicalMPS） ----------------
 
-Base.length(W::MixedCanonicalMPO) = length(W.AL)
-Base.size(W::MixedCanonicalMPO, args...) = size(W.AL, args...)
-Base.getindex(W::MixedCanonicalMPO, ℓ::Integer) = W.AC[_mod1(ℓ, length(W))]
-Base.setindex!(W::MixedCanonicalMPO, v::Array, ℓ::Integer) = (W.AC[ℓ] = v; W)
-Base.firstindex(W::MixedCanonicalMPO) = 1
-Base.lastindex(W::MixedCanonicalMPO) = length(W)
-Base.iterate(W::MixedCanonicalMPO, args...) = iterate(W.AC, args...)
-eachsite(W::MixedCanonicalMPO) = 1:length(W)
+Base.length(W::InfiniteCanonicalMPO) = length(W.AL)
+Base.size(W::InfiniteCanonicalMPO, args...) = size(W.AL, args...)
+Base.getindex(W::InfiniteCanonicalMPO, ℓ::Integer) = W.AC[_mod1(ℓ, length(W))]
+Base.setindex!(W::InfiniteCanonicalMPO, v::Array, ℓ::Integer) = (W.AC[ℓ] = v; W)
+Base.firstindex(W::InfiniteCanonicalMPO) = 1
+Base.lastindex(W::InfiniteCanonicalMPO) = length(W)
+Base.iterate(W::InfiniteCanonicalMPO, args...) = iterate(W.AC, args...)
+eachsite(W::InfiniteCanonicalMPO) = 1:length(W)
 
-function Base.copy(W::MixedCanonicalMPO{T}) where {T}
-    return MixedCanonicalMPO{T}(PeriodicVector([copy(a) for a in W.AL]),
-                                PeriodicVector([copy(a) for a in W.AR]),
-                                PeriodicVector([copy(c) for c in W.C]),
-                                PeriodicVector([copy(a) for a in W.AC]))
+function Base.copy(W::InfiniteCanonicalMPO{T}) where {T}
+    return InfiniteCanonicalMPO{T}(PeriodicVector([copy(a) for a in W.AL]),
+                                   PeriodicVector([copy(a) for a in W.AR]),
+                                   PeriodicVector([copy(c) for c in W.C]),
+                                   PeriodicVector([copy(a) for a in W.AC]))
 end
-function Base.similar(W::MixedCanonicalMPO{T}) where {T}
-    return MixedCanonicalMPO{T}(similar(W.AL), similar(W.AR), similar(W.C), similar(W.AC))
+function Base.similar(W::InfiniteCanonicalMPO{T}) where {T}
+    return InfiniteCanonicalMPO{T}(similar(W.AL), similar(W.AR), similar(W.C), similar(W.AC))
 end
-function Base.circshift(W::MixedCanonicalMPO, n)
-    return MixedCanonicalMPO{T}(circshift(W.AL, n), circshift(W.AR, n),
-                                circshift(W.C, n), circshift(W.AC, n))
+function Base.circshift(W::InfiniteCanonicalMPO, n)
+    return InfiniteCanonicalMPO{T}(circshift(W.AL, n), circshift(W.AR, n),
+                                   circshift(W.C, n), circshift(W.AC, n))
 end
 
-scalartype(::Type{MixedCanonicalMPO{T}}) where {T} = T
-scalartype(W::MixedCanonicalMPO) = scalartype(typeof(W))
+scalartype(::Type{InfiniteCanonicalMPO{T}}) where {T} = T
+scalartype(W::InfiniteCanonicalMPO) = scalartype(typeof(W))
 
-physicaldims(W::MixedCanonicalMPO) =
+phydims(W::InfiniteCanonicalMPO) =
     [size(W.AL[ℓ], 2) * size(W.AL[ℓ], 4) for ℓ in 1:length(W)]
-bond(W::MixedCanonicalMPO, ℓ::Integer) = size(W.C[_mod1(ℓ, length(W))], 1)
-maxbond(W::MixedCanonicalMPO) = maximum(bond(W, ℓ) for ℓ in 1:length(W))
+bonddim(W::InfiniteCanonicalMPO, ℓ::Integer) = size(W.C[_mod1(ℓ, length(W))], 1)
+max_bonddim(W::InfiniteCanonicalMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 
 "`dag(W)`：逐张量共轭（用于重叠型收缩；非算符伴随网络）。"
-dag(W::MixedCanonicalMPO{T}) where {T} =
-    MixedCanonicalMPO{T}(PeriodicVector(conj.(parent(W.AL))), PeriodicVector(conj.(parent(W.AR))),
-                         PeriodicVector(conj.(parent(W.C))), PeriodicVector(conj.(parent(W.AC))))
+dag(W::InfiniteCanonicalMPO{T}) where {T} =
+    InfiniteCanonicalMPO{T}(PeriodicVector(conj.(parent(W.AL))), PeriodicVector(conj.(parent(W.AR))),
+                            PeriodicVector(conj.(parent(W.C))), PeriodicVector(conj.(parent(W.AC))))
 
-"`LinearAlgebra.norm(W) = norm(W.AC[1])`（与 MixedCanonicalMPS 一致）。"
-LinearAlgebra.norm(W::MixedCanonicalMPO) = norm(W.AC[1])
+"`LinearAlgebra.norm(W) = norm(W.AC[1])`（与 InfiniteCanonicalMPS 一致）。"
+LinearAlgebra.norm(W::InfiniteCanonicalMPO) = norm(W.AC[1])
 
 "占位：MPO 整体 scale 有物理意义，由压缩/代数流程控制归一化。"
-LinearAlgebra.normalize!(W::MixedCanonicalMPO) = W
+LinearAlgebra.normalize!(W::InfiniteCanonicalMPO) = W
 
 "`InfiniteMPO(W)`：取左规范张量串 `W.AL` 转回普通 MPO。`tr(∏AL)` 是规范变换
 （含相位）下不变的算符幅值（= 构造输入幅值 / 实正 λ），而 `tr(∏AC)` 被 C
 矩阵插入加权、依赖规范，故这里用 `AL` 保证转换的唯一性。"
-InfiniteMPO(W::MixedCanonicalMPO) = InfiniteMPO(collect(W.AL))
+InfiniteMPO(W::InfiniteCanonicalMPO) = InfiniteMPO(collect(W.AL))
 
 """
     asmps_view(Ws::Vector{<:Array{T,4}}) -> Vector{Array{T,3}}
@@ -135,7 +135,7 @@ function asmps_view(Ws::Vector{<:Array{T,4}}) where {T}
     return out
 end
 asmps_view(W::InfiniteMPO) = asmps_view(W.Ws)
-asmps_view(W::MixedCanonicalMPO) = asmps_view(collect(W.AC))
+asmps_view(W::InfiniteCanonicalMPO) = asmps_view(collect(W.AC))
 
 """
     mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus, dds) -> Vector{Array{T,4}}
@@ -155,7 +155,7 @@ function mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus::AbstractVector{Int}, dds
 end
 
 """
-    _align_scale!(x::MixedCanonicalMPS, K::Vector{<:Array{T,3}}) -> x
+    _align_scale!(x::InfiniteCanonicalMPS, K::Vector{<:Array{T,3}}) -> x
 
 变分解 `x` 与目标张量串 `K` 的 scale/相位对齐（供代数运算的 MPS 结果使用）：
 
@@ -165,7 +165,7 @@ end
   均匀分配到每个 site（使环重叠 ⟨x|K⟩ 实正且 ring⟨x|x⟩ 与之相等）；
   同时同步缩放 `C` 链，保持 `AC = AL·C = C·AR` 规范一致性。
 """
-function _align_scale!(x::MixedCanonicalMPS, K::Vector{<:Array{T,3}}) where {T}
+function _align_scale!(x::InfiniteCanonicalMPS, K::Vector{<:Array{T,3}}) where {T}
     N = length(x)
     if all(size(x.AC[ℓ]) == size(K[ℓ]) for ℓ in 1:N)
         for ℓ in 1:N
@@ -199,11 +199,31 @@ function mpo_compress(W::InfiniteMPO, D::Int;
     dus = [size(W[ℓ], 2) for ℓ in 1:N]
     dds = [size(W[ℓ], 4) for ℓ in 1:N]
     K = asmps_view(W.Ws)
-    ket = MixedCanonicalMPS(K)          # MPO 的 MPS 视图规范化为 ket
-    x0 = random_mps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D)
+    ket = InfiniteCanonicalMPS(K)       # MPO 的 MPS 视图规范化为 ket
+    x0 = randommps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D)
     x, overlap = _overlap_sweeps(nothing, ket, x0, K;
                                  tol = tol, maxiter = maxiter, verbosity = verbosity)
     c = _ring_scale(x, K)
     ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
     return (; W = InfiniteMPO([c * A for A in ALs4]), overlap = overlap)
+end
+
+"""
+    mixedcanonical_error(W) -> (ϵ_left, ϵ_right, ϵ_mixed)
+    ismixedcanonical(W; tol = 1e-8, verbosity = 0) -> Bool
+
+[`InfiniteCanonicalMPO`](@ref) 的混合规范诊断：在 MPS 视图 `(wl, u·d, wr)`
+意义下检查（核与约定见 `InfiniteCanonicalMPS` 方法）。
+"""
+mixedcanonical_error(W::InfiniteCanonicalMPO) =
+    _mixedcanonical_error(asmps_view(collect(W.AL)), asmps_view(collect(W.AR)), collect(W.C))
+
+function ismixedcanonical(W::InfiniteCanonicalMPO; tol::Real = 1.0e-8, verbosity::Int = 0)
+    ϵ_left, ϵ_right, ϵ_mixed = mixedcanonical_error(W)
+    if verbosity > 0
+        println("ismixedcanonical: ‖ΣAL†AL−I‖ = ", ϵ_left,
+                ", ‖ΣAR·AR†−I‖ = ", ϵ_right,
+                ", ‖AL·C−C·AR‖ = ", ϵ_mixed, " (tol = ", tol, ")")
+    end
+    return max(ϵ_left, ϵ_right, ϵ_mixed) ≤ tol
 end

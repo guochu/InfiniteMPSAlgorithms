@@ -78,7 +78,7 @@ end
     TransferMatrix(above::AbstractVector, below::AbstractVector)
     TransferMatrix(a::AbstractArray{T,3}, b::AbstractArray{T,3})
     TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{T,4}, b::AbstractArray{T,3})
-    TransferMatrix(ψ::MixedCanonicalMPS)
+    TransferMatrix(ψ::InfiniteCanonicalMPS)
 
 周期铺满一个单胞的融合转移映射（对标 MPSKit 的 `TransferMatrix`），
 实现 `size`、`getindex`（逐列）与 `*`；`side = :left/:right` 选择左/右作用方向。
@@ -151,7 +151,7 @@ function TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{T,4},
     return TransferMatrix{T,typeof(f)}(f, (d, d), side)
 end
 
-TransferMatrix(ψ::MixedCanonicalMPS) = TransferMatrix(ψ.AL, ψ.AL)
+TransferMatrix(ψ::InfiniteCanonicalMPS) = TransferMatrix(ψ.AL, ψ.AL)
 
 # ---------------- 本征固定点 ----------------
 
@@ -199,7 +199,7 @@ function regularize!(v::AbstractMatrix, lvec::AbstractMatrix, rvec::AbstractMatr
     return v
 end
 
-function _dominant_env_matvec(op::Union{Nothing,InfiniteMPO}, ψ::MixedCanonicalMPS, side::Symbol)
+function _dominant_env_matvec(op::Union{Nothing,InfiniteMPO}, ψ::InfiniteCanonicalMPS, side::Symbol)
     N = length(ψ)
     identity = isnothing(op)
     return function matvec(v::AbstractVector)
@@ -243,11 +243,11 @@ end
 恒等/MPO 通道转移矩阵的主导本征向量（周期铺满一个单胞）。
 恒等通道使用 AL/AR（严格规范），返回 `λ ≈ 1`。
 """
-function dominant_env(ψ::MixedCanonicalMPS; side::Symbol = :left, which::Symbol = :LM, kwargs...)
+function dominant_env(ψ::InfiniteCanonicalMPS; side::Symbol = :left, which::Symbol = :LM, kwargs...)
     return dominant_env(nothing, ψ; side = side, which = which, kwargs...)
 end
 
-function dominant_env(op::Union{Nothing,InfiniteMPO}, ψ::MixedCanonicalMPS;
+function dominant_env(op::Union{Nothing,InfiniteMPO}, ψ::InfiniteCanonicalMPS;
                       side::Symbol = :left, which::Symbol = :LM,
                       tol::Real = 1.0e-13, krylovdim::Int = 12, maxiter::Int = 200)
     identity = isnothing(op)

@@ -9,12 +9,12 @@
 """
 function correlator end
 
-function correlator(ψ::MixedCanonicalMPS, O1::AbstractMatrix, O2::AbstractMatrix,
+function correlator(ψ::InfiniteCanonicalMPS, O1::AbstractMatrix, O2::AbstractMatrix,
                     i::Int, j::Int)
     return first(correlator(ψ, O1, O2, i, j:j))
 end
 
-function correlator(ψ::MixedCanonicalMPS, O1::AbstractMatrix, O2::AbstractMatrix,
+function correlator(ψ::InfiniteCanonicalMPS, O1::AbstractMatrix, O2::AbstractMatrix,
                     i::Int, js::AbstractRange{Int})
     N = length(ψ)
     (first(js) > i) || throw(ArgumentError("i should be smaller than j ($i, $(first(js)))"))

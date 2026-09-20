@@ -123,21 +123,21 @@ end
     @test renyi_entropy([1.0, 0.0]) == 0
 end
 
-@testset "MPS 工具：dot / dag / copy / bond / regauge / gaugefix" begin
+@testset "MPS 工具：dot / dag / copy / bonddim / regauge / gaugefix" begin
     T = ComplexF64
     Random.seed!(11)
-    ψ = random_mps(T, [2, 2], 6)
+    ψ = randommps(T, [2, 2], 6)
 
     # dot：自重叠 = 1；不同态 Cauchy–Schwarz |⟨a|b⟩| ≤ 1；共轭对称
     @test real(dot(ψ, ψ)) ≈ 1 atol = 1e-10
-    ψb = random_mps(T, [2, 2], 6)
+    ψb = randommps(T, [2, 2], 6)
     @test abs(dot(ψ, ψb)) ≤ 1 + 1e-8
     @test dot(ψ, ψb) ≈ conj(dot(ψb, ψ)) atol = 1e-8
 
-    # dag / eachsite / bond
+    # dag / eachsite / bonddim
     @test norm(dag(ψ)) ≈ norm(ψ)
     @test eachsite(ψ) == 1:2
-    @test bond(ψ, 1) == bond(ψ, 2) == 6
+    @test bonddim(ψ, 1) == bonddim(ψ, 2) == 6
 
     # copy（对标 MPSKit copying）：对象与周期容器独立、值相等
     # 注：本包 copy 不深拷贝容器内部数组（与 MPSKit 的已知行为差异），
@@ -149,7 +149,7 @@ end
 
     # 规范算法对象直接驱动 gaugefix!
     As = [randn(T, 6, 2, 6), randn(T, 6, 2, 6)]
-    ψL = MixedCanonicalMPS(As)
+    ψL = InfiniteCanonicalMPS(As)
     gaugefix!(ψL, As, Matrix{T}(I, 6, 6), LeftCanonical())
     @tensor gL[a, b] := conj(ψL.AL[1][x, s, a]) * ψL.AL[1][x, s, b]
     @test gL ≈ I atol = 1e-10
@@ -172,25 +172,25 @@ end
 @testset "环境与有效哈密顿量" begin
     T = ComplexF64
     Random.seed!(23)
-    ψ = random_mps(T, [2], 4)
+    ψ = randommps(T, [2], 4)
     H = tfim_hamiltonian(T = T)
 
-    envs = environments(ψ, H)
+    envs = DMRGCache(ψ, H)
     @test envs isa DMRGCache
 
     # 无算符环境：恒等固定点 = I（纯重叠通道）
-    envs0 = environments(ψ)
+    envs0 = OverlapCache(ψ)
     @test envs0 isa OverlapCache
     I4 = Matrix{T}(I, 4, 4)
     @test leftenv(envs0, 1)[:, 1, :] ≈ I4
     @test rightenv(envs0, 1)[:, 1, :] ≈ I4
 
     # 二元稠密 MPO：哈密顿量通道（InfiniteMPO 可直接作基态哈密顿量）
-    @test environments(ψ, identity_mpo(T, [2])) isa DMRGCache
+    @test DMRGCache(ψ, identity_mpo(T, [2])) isa DMRGCache
 
     # 三元环境（below, nothing, above）：恒等通道 ∝ I（overlap 通道）
     # （主本征向量只确定到任意复相位，比较时先消去复数比例因子）
-    envs3 = environments(ψ, nothing, ψ)
+    envs3 = OverlapCache(ψ, ψ)
     @test envs3 isa OverlapCache
     L3 = leftenv(envs3, 1)[:, 1, :]
     @test size(L3) == (4, 4)
@@ -198,19 +198,19 @@ end
     @test norm(L3 - κ * I4) / norm(I4) < 1e-9
 
     # 三元 InfiniteMPO：MPO 施加通道
-    @test environments(ψ, identity_mpo(T, [2]), ψ) isa MultCache
+    @test MultCache(ψ, identity_mpo(T, [2]), ψ) isa MultCache
 
     # recalculate!：重算后能量不变
-    e_ref = real(expectation_value(ψ, H, envs))
+    e_ref = real(expectationvalue(ψ, H, envs))
     recalculate!(envs, ψ, H)
-    @test real(expectation_value(ψ, H, envs)) ≈ e_ref atol = 1e-9
+    @test real(expectationvalue(ψ, H, envs)) ≈ e_ref atol = 1e-9
 
     # transfer_leftenv!/rightenv!：增量推进必须与直接调用 push_env_* 一致
     # （全新构造的环境在恒等层还含逐 site regularize! 投影，故这里只验证
     # 包装器本身的收缩语义；算法中的物理等价性由 debug/envs_alignment.jl 覆盖）
-    ψ2 = random_mps(T, [2, 2], 4)
+    ψ2 = randommps(T, [2, 2], 4)
     H2 = tfim_hamiltonian(T = T)
-    envst = environments(ψ2, H2)
+    envst = DMRGCache(ψ2, H2)
     Lref = push_env_left(leftenv(envst, 1), tompotensor(H2[1]), ψ2.AL[1])
     transfer_leftenv!(envst, ψ2, H2, ψ2, 2)
     @test leftenv(envst, 2) ≈ Lref atol = 1e-12
@@ -225,7 +225,7 @@ end
     @test hac0(x3) ≈ x3
 
     # H_AC / H_C 厄米性：⟨x,H y⟩ = ⟨H x, y⟩
-    envsR = environments(ψ, H)
+    envsR = DMRGCache(ψ, H)
     hac = AC_hamiltonian(1, ψ, H, ψ, envsR)
     hc = C_hamiltonian(1, ψ, H, ψ, envsR)
     x = randn(T, 4, 2, 4); y = randn(T, 4, 2, 4)
@@ -254,13 +254,13 @@ end
 @testset "InfiniteMPO 构造、周期下标与标量代数" begin
     T = ComplexF64
     Random.seed!(31)
-    ψ = random_mps(T, [2, 2], 5)
+    ψ = randommps(T, [2, 2], 5)
     I2 = identity_mpo(T, [2, 2])
 
     # 周期下标与基本接口
     @test length(I2) == 2 && I2[3] == I2[1] && I2[0] == I2[2]
-    @test physicaldims(I2) == [2, 2]
-    @test mpobond(I2, 1) == 1 && maxbond(I2) == 1
+    @test phydims(I2) == [2, 2]
+    @test bonddim(I2, 1) == 1 && max_bonddim(I2) == 1
     @test scalartype(I2) == T
 
     # 标量乘法 / 负号 / 除法（对标 MPSKit scalar multiplication）：
@@ -305,7 +305,7 @@ end
 
     # FiniteMPOHamiltonian
     Hfin = FiniteMPOHamiltonian([Wmat, Wmat])
-    @test length(Hfin) == 2 && mpobond(Hfin) == 3
+    @test length(Hfin) == 2 && bonddim(Hfin) == 3
 
     # Jordan 块加法（A/B/C/D 逐块相加，恒等角点不参与）对标 MPSKit H1+H2
     Wmat2 = mpohamiltonian(-0.3 * Z, [(-0.7, X, X)])
@@ -325,7 +325,7 @@ end
 
     # 稠密转换
     Hd = InfiniteMPO(tfim_hamiltonian(T = T))
-    @test Hd isa InfiniteMPO && maxbond(Hd) == 3
+    @test Hd isa InfiniteMPO && max_bonddim(Hd) == 3
 end
 
 @testset "模型与自旋算符" begin
@@ -344,8 +344,8 @@ end
     # 无 on-site、无最近邻项的 bulk 只有恒等通道（2-site 单胞期望 = 2）
     empty_bulk = bulk_mpo(zeros(T, 2, 2), Tuple{Float64,Matrix{T},Matrix{T}}[])
     W0 = infinite_mpo(empty_bulk)
-    ρ = product_mps(T, [2, 2], [1, 1])
-    @test abs(expectation_value(ρ, W0) - 2) < 1e-12
+    ρ = prodmps(T, [2, 2], [1, 1])
+    @test abs(expectationvalue(ρ, W0) - 2) < 1e-12
 end
 
 @testset "DynamicTol / VOMPS / integrate" begin
@@ -378,7 +378,7 @@ end
     T = ComplexF64
     H = tfim_hamiltonian(T = T)
     Random.seed!(41)
-    ψg, envs_g, ϵg = find_groundstate(random_mps(T, [2], 10), H,
+    ψg, envs_g, ϵg = find_groundstate(randommps(T, [2], 10), H,
                                        VUMPS(maxiter = 300, tol = 1e-11, verbosity = 0))
     # calc_galerkin 公开接口
     @test calc_galerkin(ψg, H, envs_g) == ϵg
@@ -386,19 +386,19 @@ end
 
     # timestep（对标 MPSKit Infinite TDVP 测试）：基态上演化 dt 后能量守恒
     dt = 0.1
-    e0 = real(expectation_value(ψg, H, envs_g))
+    e0 = real(expectationvalue(ψg, H, envs_g))
     ψt, _ = timestep(ψg, H, 0.0, dt, TDVP())
-    @test abs(real(expectation_value(ψt, H)) - e0) < 1e-2
+    @test abs(real(expectationvalue(ψt, H)) - e0) < 1e-2
     @test abs(norm(ψt) - 1) < 1e-8
 
     # fuse：恒等 MPO 与 AL 融合后等于 AL
     I1 = identity_mpo(T, [2])
     @test fuse(I1[1], ψg.AL[1]) ≈ ψg.AL[1]
 
-    # approximate：恒等 MPO 作用任意态 → 不动点（overlap = 1，输出与输入同向）
+    # approximate（mult）：恒等 MPO 作用任意态 → 不动点（overlap = 1，输出与输入同向）
     Random.seed!(42)
-    ψ0 = random_mps(T, [2], 6)
-    ψa, ov = approximate(ψ0, I1, ψ0, VOMPS(maxiter = 50, tol = 1e-10))
+    ψ0 = randommps(T, [2], 6)
+    ψa, ov = mult(I1, ψ0; alg = VOMPS(maxiter = 50, tol = 1e-10))
     @test ov ≈ 1 atol = 1e-8
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
 end
@@ -408,22 +408,22 @@ end
     H = tfim_hamiltonian(T = T)
     Random.seed!(51)
     # 用 2-site 单胞，使 (1,2) 相邻双 site 期望落在同一胞元内
-    ψ, _, _ = find_groundstate(random_mps(T, [2, 2], 10), H,
+    ψ, _, _ = find_groundstate(randommps(T, [2, 2], 10), H,
                                VUMPS(maxiter = 300, tol = 1e-11, verbosity = 0))
     Z = σz(T)
 
     # 对标 MPSKit test/algorithms/correlators.jl：correlator 头值与相邻双 site
     # 局域期望一致；MPO 能量 = 双 site 项与单 site 项的逐 site 求和
     G = correlator(ψ, Z, Z, 1, 2:4)
-    @test G[1] ≈ expectation_value(ψ, (1, 2) => kron(Z, Z)) atol = 1e-10
+    @test G[1] ≈ expectationvalue(ψ, (1, 2) => kron(Z, Z)) atol = 1e-10
     # TFIM（J=h=1）：H = −Σσˣσˣ − Σσᶻ，N=2 单胞总能量 = 2·(−⟨σˣ₁σˣ₂⟩ − ⟨σᶻ₁⟩)
     X = σx(T)
-    @test real(expectation_value(ψ, H)) ≈
-          2 * real(-expectation_value(ψ, (1, 2) => kron(X, X)) -
-                   expectation_value(ψ, (1,) => Z)) atol = 1e-8
+    @test real(expectationvalue(ψ, H)) ≈
+          2 * real(-expectationvalue(ψ, (1, 2) => kron(X, X)) -
+                   expectationvalue(ψ, (1,) => Z)) atol = 1e-8
 
     # 乘积态每个 bond 熵为 0、谱归一（对标 MPSKit entropy testset）
-    ρ = product_mps(T, [2, 2], [1, 2])
+    ρ = prodmps(T, [2, 2], [1, 2])
     for loc in 1:2
         @test abs(entropy(ρ, loc)) < 1e-12
         p = entanglement_spectrum(ρ, loc)
@@ -431,16 +431,16 @@ end
     end
 end
 
-@testset "MixedCanonicalMPO 结构" begin
+@testset "InfiniteCanonicalMPO 结构" begin
     T = ComplexF64
     Random.seed!(61)
     W = random_mpo(T, [2, 2], 3)
-    M = MixedCanonicalMPO(W)
+    M = InfiniteCanonicalMPO(W)
     @test length(M) == 2 && eachsite(M) == 1:2
     @test M[3] == M[1] && M[0] == M[2]
     @test M[1] === M.AC[1]
-    @test maxbond(M) <= 3 && bond(M, 1) == size(M.C[1], 1)
-    @test physicaldims(M) == [4, 4]
+    @test max_bonddim(M) <= 3 && bonddim(M, 1) == size(M.C[1], 1)
+    @test phydims(M) == [4, 4]
     @test scalartype(M) == T
     # 左/右正交性（MPS 视图）与 AC = AL·C
     ALv = asmps_view(collect(M.AL))

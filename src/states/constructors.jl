@@ -1,29 +1,29 @@
 # ---------------- MPS 构造器 ----------------
 
 """
-    random_mps([T=Float64,] physdims, D; rng=Random.default_rng()) -> MixedCanonicalMPS
+    randommps([T=Float64,] physdims, D; rng=Random.default_rng()) -> InfiniteCanonicalMPS
 
 随机等键维 MPS，构造后规范化到混合规范形式。
 """
-function random_mps(::Type{T}, physdims::AbstractVector{Int}, D::Int;
-                    rng::AbstractRNG = Random.default_rng()) where {T<:Number}
+function randommps(::Type{T}, physdims::AbstractVector{Int}, D::Int;
+                   rng::AbstractRNG = Random.default_rng()) where {T<:Number}
     N = length(physdims)
     (N >= 1) || throw(ArgumentError("至少需要一个 site"))
     As = Vector{Array{T,3}}(undef, N)
     for ℓ in 1:N
         As[ℓ] = randn(rng, T, D, physdims[ℓ], D)
     end
-    return MixedCanonicalMPS(As)
+    return InfiniteCanonicalMPS(As)
 end
-random_mps(physdims::AbstractVector{Int}, D::Int; kwargs...) = random_mps(Float64, physdims, D; kwargs...)
+randommps(physdims::AbstractVector{Int}, D::Int; kwargs...) = randommps(Float64, physdims, D; kwargs...)
 
 """
-    product_mps([T=Float64,] physdims, states) -> MixedCanonicalMPS
+    prodmps([T=Float64,] physdims, states) -> InfiniteCanonicalMPS
 
 键维 1 的乘积态，`states[ℓ]` 给出每个 site 的基矢（默认全部为 1）。
 """
-function product_mps(::Type{T}, physdims::AbstractVector{Int},
-                     states::AbstractVector{Int} = ones(Int, length(physdims))) where {T<:Number}
+function prodmps(::Type{T}, physdims::AbstractVector{Int},
+                 states::AbstractVector{Int} = ones(Int, length(physdims))) where {T<:Number}
     N = length(physdims)
     (length(states) == N) || throw(DimensionMismatch("states 长度必须等于 site 数"))
     As = Vector{Array{T,3}}(undef, N)
@@ -32,10 +32,10 @@ function product_mps(::Type{T}, physdims::AbstractVector{Int},
         A[1, states[ℓ], 1] = one(T)
         As[ℓ] = A
     end
-    return MixedCanonicalMPS(As)
+    return InfiniteCanonicalMPS(As)
 end
-product_mps(physdims::AbstractVector{Int}, states::AbstractVector{Int} = ones(Int, length(physdims))) =
-    product_mps(Float64, physdims, states)
+prodmps(physdims::AbstractVector{Int}, states::AbstractVector{Int} = ones(Int, length(physdims))) =
+    prodmps(Float64, physdims, states)
 
 # ---------------- MPO 构造器 ----------------
 

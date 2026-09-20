@@ -27,6 +27,7 @@ struct InfiniteMPO{T}
 end
 
 InfiniteMPO(Ws::Vector{Array{T,4}}) where {T} = InfiniteMPO{T}(Ws)
+InfiniteMPO(Ws::PeriodicVector{<:Array{T,4}}) where {T} = InfiniteMPO(collect(Ws))
 
 Base.length(W::InfiniteMPO) = length(W.Ws)
 Base.getindex(W::InfiniteMPO, ℓ::Integer) = W.Ws[_mod1(ℓ, length(W))]
@@ -42,10 +43,10 @@ end
 scalartype(::Type{InfiniteMPO{T}}) where {T} = T
 scalartype(W::InfiniteMPO) = scalartype(typeof(W))
 
-physicaldims(W::InfiniteMPO) = [size(W[ℓ], 2) for ℓ in 1:length(W)]
-"`mpobond(W, ℓ)`：site ℓ 左侧 MPO 键维。"
-mpobond(W::InfiniteMPO, ℓ::Integer) = size(W[ℓ], 1)
-maxbond(W::InfiniteMPO) = maximum(mpobond(W, ℓ) for ℓ in 1:length(W))
+phydims(W::InfiniteMPO) = [size(W[ℓ], 2) for ℓ in 1:length(W)]
+"`bonddim(W, ℓ)`：site ℓ 左侧 MPO 键维。"
+bonddim(W::InfiniteMPO, ℓ::Integer) = size(W[ℓ], 1)
+max_bonddim(W::InfiniteMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 
 "`dag(W)`：逐张量共轭（用于重叠型收缩；非算符伴随网络）。"
 dag(W::InfiniteMPO) = InfiniteMPO(conj.(W.Ws))
