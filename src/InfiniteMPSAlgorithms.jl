@@ -67,6 +67,7 @@ include("algorithms/mult.jl")
 include("algorithms/add.jl")
 include("algorithms/hadamard.jl")
 include("algorithms/arithmetics.jl")
+include("algorithms/tebd.jl")
 
 # ---- observables ----
 include("observables/expval.jl")
@@ -108,6 +109,8 @@ export
     mult, naive_mult, add, naive_add, hadamard, naive_hadamard,
     exact_mult, exact_add, exact_hadamard, fuse, mpo_compress,
     DynamicTol, updatetol,
+    # TEBD quantum gates
+    AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,
     # SparseIMPO (Jordan structure) and time-evolution MPOs
     JordanMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,

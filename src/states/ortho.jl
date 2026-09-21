@@ -84,10 +84,12 @@ end
 
 function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::LeftCanonical)
     uniform_leftorth!((ψ.AL, ψ.C), A, C₀, alg)
+    ψ.AC .= _mul_ALC(ψ.AL, ψ.C)
     return ψ
 end
 function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::RightCanonical)
     uniform_rightorth!((ψ.AR, ψ.C), A, C₀, alg)
+    ψ.AC .= _mul_ALC(ψ.AL, ψ.C)
     return ψ
 end
 

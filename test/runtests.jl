@@ -37,6 +37,7 @@ end
         include("algorithms/tdvp.jl")
         include("algorithms/observables.jl")
         include("algorithms/arithmetics.jl")
+        include("algorithms/tebd.jl")
         include("algorithms/api.jl")
     end
     println("algorithms: ", round(t; digits = 2), " s")
