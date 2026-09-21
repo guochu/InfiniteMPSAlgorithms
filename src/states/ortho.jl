@@ -89,9 +89,18 @@ function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::LeftCanonical)
 end
 function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::RightCanonical)
     uniform_rightorth!((ψ.AR, ψ.C), A, C₀, alg)
-    ψ.AC .= _mul_ALC(ψ.AL, ψ.C)
+    ψ.AC .= _mul_CAR(ψ.C, ψ.AR)
     return ψ
 end
+
+"`AC[ℓ] = C[ℓ-1]·AR[ℓ]` (AR-side definition of the center tensors)."
+function _mul_CAR(C::PeriodicVector{B}, AR::PeriodicVector{A}) where {A<:Array{T,3},B<:Matrix{T}} where {T}
+    PeriodicVector(Array{T,3}[_mul_CAR(C[mod1(ℓ - 1, length(C))], AR[ℓ]) for ℓ in 1:length(AR)])
+end
+_mul_CAR(C::AbstractMatrix{T}, AR::AbstractArray{T,3}) where {T} =
+    begin
+        @tensor AC[x, s, y] := C[x, a] * AR[a, s, y]
+    end
 
 # ---------------- uniform orthogonalization iterations (mirroring uniform_leftorth!/uniform_rightorth!) ----------------
 
