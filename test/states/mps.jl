@@ -1,4 +1,4 @@
-@testset "InfiniteCanonicalMPS 数据结构与规范" begin
+@testset "CanonicalIMPS 数据结构与规范" begin
     T = ComplexF64
     ψ = randomimps(T, [2, 2], 6)
 

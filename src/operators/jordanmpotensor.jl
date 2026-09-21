@@ -1,7 +1,8 @@
-# ---------------- JordanMPOTensor（移植自 MPSKit src/operators/jordanmpotensor.jl） ----------------
+# ---------------- JordanMPOTensor (ported from MPSKit src/operators/jordanmpotensor.jl) ----------------
 #
-# MPO 的上三角块矩阵表示（无对称性、普通 Array 版本）。物理指标顺序与包内其余部分
-# 一致（TEMPO 约定 `W[wl, u, wr, d]`，键指标在 1、3 位）：
+# Upper-triangular block-matrix representation of an MPO (symmetry-free, plain
+# Array version). The physical index order matches the rest of the package
+# (TEMPO convention `W[wl, u, wr, d]`, bond indices in slots 1 and 3):
 #
 # ```math
 # \begin{pmatrix}
@@ -11,18 +12,20 @@
 # \end{pmatrix}
 # ```
 #
-# 块存储（虚拟层数 nlvls = a + 2，首末层为单位层）：
-# - `A::Array{T,4}`：`(a, d, a, d)`，中间块（第 2..end-1 行/列）；
-# - `B::Array{T,3}`：`(a, d, d)`，中间 → 末列；
-# - `C::Array{T,3}`：`(d, a, d)`，首行 → 中间；
-# - `D::Array{T,2}`：`(d, d)`，首行末列（单 site 完整项）；
-# - `[1,1]` 与 `[end,end]` 隐含为物理恒等算符（MPSKit 中的 `BraidingTensor`）。
+# Block storage (virtual level count nlvls = a + 2, with unit levels first/last):
+# - `A::Array{T,4}`: `(a, d, a, d)`, middle blocks (rows/columns 2..end-1);
+# - `B::Array{T,3}`: `(a, d, d)`, middle → last column;
+# - `C::Array{T,3}`: `(d, a, d)`, first row → middle;
+# - `D::Array{T,2}`: `(d, d)`, first row / last column (the complete on-site term);
+# - `[1,1]` and `[end,end]` are implied physical identities (the `BraidingTensor`
+#   in MPSKit).
 
 """
     JordanMPOTensor{T}
 
-MPO 的 Jordan 上三角块矩阵张量（无对称性版本），见模块注释。支持
-`W[i, j]` 的块矩阵式访问（返回 `(d, d)` 局域算符）。
+Jordan upper-triangular block-matrix tensor of an MPO (symmetry-free version);
+see the module comment. Supports block-matrix style access `W[i, j]` returning
+the `(d, d)` local operator.
 """
 struct JordanMPOTensor{T}
     A::Array{T,4}
@@ -35,10 +38,11 @@ Base.copy(W::JordanMPOTensor) = JordanMPOTensor(copy(W.A), copy(W.B), copy(W.C),
 scalartype(::Type{JordanMPOTensor{T}}) where {T} = T
 scalartype(W::JordanMPOTensor) = scalartype(typeof(W))
 
-"nlvls(W)：Jordan 张量的虚拟层数（= 键通道数 + 2 个单位层）。"
+"nlvls(W): the number of virtual levels of the Jordan tensor (= bond channels + 2
+unit levels)."
 nlvls(W::JordanMPOTensor) = size(W.A, 1) + 2
 
-# ---- 块矩阵式访问：W[i, j] → (d, d) 局域算符 ----
+# ---- block-matrix style access: W[i, j] → (d, d) local operator ----
 
 function Base.getindex(W::JordanMPOTensor{T}, i::Int, j::Int) where {T}
     n = nlvls(W)
@@ -59,10 +63,10 @@ end
 
 function Base.setindex!(W::JordanMPOTensor{T}, O::AbstractMatrix, i::Int, j::Int) where {T}
     (size(O, 1) == size(O, 2) == size(W.A, 2)) ||
-        throw(DimensionMismatch("局域算符应为 $(size(W.A, 2))×$(size(W.A, 2))"))
+        throw(DimensionMismatch("local operator must be $(size(W.A, 2))×$(size(W.A, 2))"))
     n = nlvls(W)
     if (i == 1 && j == 1) || (i == n && j == n)
-        # 单位角块：不允许覆盖（保持恒等）
+        # unit diagonal blocks: overwriting is not allowed (identity preserved)
         return W
     elseif i == 1 && j == n
         W.D .= O
@@ -73,12 +77,12 @@ function Base.setindex!(W::JordanMPOTensor{T}, O::AbstractMatrix, i::Int, j::Int
     elseif 1 < i < n && 1 < j < n
         W.A[i - 1, :, j - 1, :] .= O
     else
-        throw(ArgumentError("Jordan 张量下三角块 ($i, $j) 恒为零，不可赋值"))
+        throw(ArgumentError("lower-triangular Jordan block ($i, $j) is identically zero and cannot be assigned"))
     end
     return W
 end
 
-# ---- 构造器 ----
+# ---- constructors ----
 
 function _mpoham_scalar_type(W::AbstractMatrix)
     T = Union{}
@@ -92,16 +96,17 @@ end
 """
     JordanMPOTensor(W::AbstractMatrix) -> JordanMPOTensor
 
-从 `n × n` 算符矩阵构造：`W[i, j]` 为第 `i` 行（左层）到第 `j` 列（右层）的
-`(d, d)` 局域算符，条目可为 `Missing`、`Number` 或矩阵。`[1,1]` 与
-`[end,end]` 隐含为恒等（条目应为 1 或 `Missing`）。
+Construct from an `n × n` operator matrix: `W[i, j]` is the `(d, d)` local
+operator from row `i` (left level) to column `j` (right level); entries may be
+`Missing`, `Number`s, or matrices. `[1,1]` and `[end,end]` are implied
+identities (entries should be `1` or `Missing`).
 """
 function JordanMPOTensor(W::AbstractMatrix)
-    (size(W, 1) == size(W, 2)) || throw(ArgumentError("W 应为方阵"))
+    (size(W, 1) == size(W, 2)) || throw(ArgumentError("W must be a square matrix"))
     n = size(W, 1)
-    (n >= 2) || throw(ArgumentError("W 至少要有 2 层（首末为单位层）"))
+    (n >= 2) || throw(ArgumentError("W needs at least 2 levels (unit levels first/last)"))
     T = _mpoham_scalar_type(W)
-    # 物理维度：取第一个矩阵条目
+    # physical dimension: taken from the first matrix entry
     d = 0
     for v in W
         if v isa AbstractMatrix
@@ -109,12 +114,12 @@ function JordanMPOTensor(W::AbstractMatrix)
             break
         end
     end
-    (d > 0) || throw(ArgumentError("W 中找不到 (d, d) 局域算符条目"))
-    # 校验单位角
+    (d > 0) || throw(ArgumentError("no (d, d) local operator entry found in W"))
+    # validate the unit corners
     for (i, j) in ((1, 1), (n, n))
         v = W[i, j]
         (v isa Missing || v isa Number && isone(v)) ||
-            throw(ArgumentError("W[$i, $j] 应为 1 或 Missing（单位层隐含恒等）"))
+            throw(ArgumentError("W[$i, $j] must be 1 or Missing (unit levels imply identity)"))
     end
     J = JordanMPOTensor(zeros(T, n - 2, d, n - 2, d), zeros(T, n - 2, d, d),
                         zeros(T, d, n - 2, d), zeros(T, d, d))
@@ -130,8 +135,9 @@ end
 """
     tompotensor(W::JordanMPOTensor) -> Array{T,4}
 
-稠密化为本包约定的 4 维 MPO 张量 `(wl, u, wr, d)`：恒等通道置于层 `1` 与层
-`nlvls`，即 `Wd[1,:,1,:] = Wd[end,:,end,:] = I`。
+Densify into the package's 4-index MPO tensor `(wl, u, wr, d)`: the identity
+channels live at level `1` and level `nlvls`, i.e.
+`Wd[1,:,1,:] = Wd[end,:,end,:] = I`.
 """
 function tompotensor(W::JordanMPOTensor)
     T = scalartype(W)
@@ -156,11 +162,12 @@ end
 function Base.:+(W₁::JordanMPOTensor, W₂::JordanMPOTensor)
     n₁, n₂ = nlvls(W₁), nlvls(W₂)
     (n₁ == n₂ && size(W₁.A, 2) == size(W₂.A, 2)) ||
-        throw(ArgumentError("Jordan 张量层数/物理维度不匹配"))
+        throw(ArgumentError("Jordan tensor level counts / physical dimensions do not match"))
     return JordanMPOTensor(W₁.A + W₂.A, W₁.B + W₂.B, W₁.C + W₂.C, W₁.D + W₂.D)
 end
 
 function Base.:*(λ::Number, W::JordanMPOTensor)
-    # 只缩放物理项（C、D 块与 B 的闭合端），恒等通道保持不变
+    # scale only the physical terms (the C, D blocks and the closed end of B);
+    # the identity channel is left untouched
     return JordanMPOTensor(copy(W.A), λ .* W.B, λ .* W.C, λ .* W.D)
 end

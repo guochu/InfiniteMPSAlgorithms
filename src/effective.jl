@@ -1,15 +1,18 @@
-# ---------------- 有效局域哈密顿量（对标 MPSKit AC_hamiltonian / C_hamiltonian） ----------------
+# ---------------- effective local Hamiltonians (mirroring MPSKit AC_hamiltonian / C_hamiltonian) ----------------
 #
-# 环境指标约定（与 MPSKit 一致）：
-#   GL = leftenv[ℓ]  = (bra键, w, ket键)
-#   GR = rightenv[ℓ] = (ket键, w, bra键)
-# 有效哈密顿量为严格的线性算子（不对 x 取共轭，MPSKit 形式；复数下亦正确）。
+# Environment index conventions (consistent with MPSKit):
+#   GL = leftenv[ℓ]  = (bra bond, w, ket bond)
+#   GR = rightenv[ℓ] = (ket bond, w, bra bond)
+# The effective Hamiltonians are strictly linear operators (no conjugation of
+# x, MPSKit form; correct for complex data as well).
 
 """
     MPODerivativeOperator(leftenv, operators::Tuple, rightenv)
 
-MPS-MPO-MPS 三明治对局域张量求导得到的有效算子（对标 MPSKit 同名结构）。
-`operators` 为空 → C 问题；单算子 → AC 问题；双算子 → AC2 问题。
+Effective operator obtained by differentiating an MPS-MPO-MPS sandwich with
+respect to the local tensor (mirrors MPSKit's structure of the same name).
+Empty `operators` → the C problem; one operator → the AC problem; two
+operators → the AC2 problem.
 """
 struct MPODerivativeOperator{L,O<:Tuple,R}
     leftenv::L
@@ -25,8 +28,8 @@ MPO_AC_Hamiltonian(GL, O, GR) = MPODerivativeOperator(GL, (O,), GR)
 """
     C_hamiltonian(site, below, operator, above, envs) -> callable
 
-bond `site` 的有效哈密顿量（对标 MPSKit）：使用 `leftenv(envs, site + 1)` 与
-`rightenv(envs, site)`，作用为
+Effective Hamiltonian on bond `site` (mirrors MPSKit): uses
+`leftenv(envs, site + 1)` and `rightenv(envs, site)`, with action
 
 ```julia
 C′[α, β] = Σ GL[α, w, α′] · C[α′, β′] · GR[β′, w, β]
@@ -39,8 +42,8 @@ end
 """
     AC_hamiltonian(site, below, operator, above, envs) -> callable
 
-site `site` 的有效哈密顿量（对标 MPSKit）：使用 `leftenv(envs, site)`、
-`operator[site]` 与 `rightenv(envs, site)`，作用为
+Effective Hamiltonian on site `site` (mirrors MPSKit): uses
+`leftenv(envs, site)`, `operator[site]`, and `rightenv(envs, site)`, with action
 
 ```julia
 AC′[b, u_out, b′] = Σ GL[b, wl, ā] · x[ā, u_in, b̄] · W[wl, u_out, wr, u_in] · GR[b̄, wr, b′]
@@ -49,15 +52,15 @@ AC′[b, u_out, b′] = Σ GL[b, wl, ā] · x[ā, u_in, b̄] · W[wl, u_out, wr,
 function AC_hamiltonian(site::Int, below, operator, above, envs::Environments)
     O = if isnothing(operator)
         nothing
-    elseif operator isa MPOHamiltonian
-        tompotensor(operator[site])   # Jordan 张量稠密化后进入统一 kernel
+    elseif operator isa SparseIMPO
+        tompotensor(operator[site])   # densify the Jordan tensor into the unified kernel
     else
         operator[site]
     end
     return MPO_AC_Hamiltonian(leftenv(envs, site), O, rightenv(envs, site))
 end
 
-# ---- 作用（MPSKit 形式，线性算子） ----
+# ---- action (MPSKit form, linear operators) ----
 
 function (h::MPO_C_Hamiltonian)(x::AbstractMatrix{T}) where {T}
     GL, GR = h.leftenv, h.rightenv

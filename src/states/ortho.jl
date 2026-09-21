@@ -1,9 +1,10 @@
-# ---------------- 规范化算法（对标 MPSKit src/states/ortho.jl） ----------------
+# ---------------- gauge-fixing algorithms (mirroring MPSKit src/states/ortho.jl) ----------------
 
 """
     LeftCanonical(; tol, maxiter, verbosity, alg_orth, alg_eigsolve, eig_miniter)
 
-将 `InfiniteCanonicalMPS` 化为左规范形式的算法（对标 MPSKit 的 `LeftCanonical`）。
+Algorithm bringing an `CanonicalIMPS` to the left-canonical form
+(mirrors MPSKit's `LeftCanonical`).
 """
 @kwdef struct LeftCanonical <: Algorithm
     tol::Float64 = Defaults.tolgauge
@@ -17,7 +18,8 @@ end
 """
     RightCanonical(; tol, maxiter, verbosity, alg_orth, alg_eigsolve, eig_miniter)
 
-将 `InfiniteCanonicalMPS` 化为右规范形式的算法（对标 MPSKit 的 `RightCanonical`）。
+Algorithm bringing an `CanonicalIMPS` to the right-canonical form
+(mirrors MPSKit's `RightCanonical`).
 """
 @kwdef struct RightCanonical <: Algorithm
     tol::Float64 = Defaults.tolgauge
@@ -31,7 +33,8 @@ end
 """
     MixedCanonical(; order = :LR, kwargs...)
 
-混合规范化算法（对标 MPSKit 的 `MixedCanonical`）：先左后右（`:LR`）或先右后左（`:RL`）。
+Mixed-canonicalization algorithm (mirrors MPSKit's `MixedCanonical`):
+left-then-right (`:LR`) or right-then-left (`:RL`).
 """
 struct MixedCanonical <: Algorithm
     alg_leftcanonical::LeftCanonical
@@ -46,13 +49,14 @@ function MixedCanonical(; tol::Real = Defaults.tolgauge, maxiter::Int = Defaults
 end
 
 """
-    gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...) -> ψ
-    gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::Algorithm) -> ψ
+    gaugefix!(ψ::CanonicalIMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...) -> ψ
+    gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::Algorithm) -> ψ
 
-把 `A`（普通 site 张量串或左/右规范张量串）的规范信息写入 `ψ`
-（对标 MPSKit 的 `gaugefix!`）。`order` 可为 `:L`、`:R`、`:LR`、`:RL`。
+Write the gauge information of `A` (plain site tensors or left/right-canonical
+tensors) into `ψ` (mirrors MPSKit's `gaugefix!`). `order` is one of
+`:L`, `:R`, `:LR`, `:RL`.
 """
-function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...)
+function gaugefix!(ψ::CanonicalIMPS, A, C₀ = ψ.C[end]; order = :LR, kwargs...)
     alg = if order === :LR || order === :RL
         MixedCanonical(; order = order, kwargs...)
     elseif order === :L
@@ -65,7 +69,7 @@ function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀ = ψ.C[end]; order = :LR, k
     return gaugefix!(ψ, A, C₀, alg)
 end
 
-function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::MixedCanonical)
+function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::MixedCanonical)
     if alg.order === :LR
         gaugefix!(ψ, A, C₀, alg.alg_leftcanonical)
         gaugefix!(ψ, ψ.AL, ψ.C[end], alg.alg_rightcanonical)
@@ -78,16 +82,16 @@ function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::MixedCanonical)
     return ψ
 end
 
-function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::LeftCanonical)
+function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::LeftCanonical)
     uniform_leftorth!((ψ.AL, ψ.C), A, C₀, alg)
     return ψ
 end
-function gaugefix!(ψ::InfiniteCanonicalMPS, A, C₀, alg::RightCanonical)
+function gaugefix!(ψ::CanonicalIMPS, A, C₀, alg::RightCanonical)
     uniform_rightorth!((ψ.AR, ψ.C), A, C₀, alg)
     return ψ
 end
 
-# ---------------- uniform 正交化迭代（对标 uniform_leftorth!/uniform_rightorth!） ----------------
+# ---------------- uniform orthogonalization iterations (mirroring uniform_leftorth!/uniform_rightorth!) ----------------
 
 function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
     N = length(AL)
@@ -99,7 +103,7 @@ function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
     while true
         iter += 1
         C_old = copy(C[N])
-        # 逐 site 左正交化：C[i-1]·A[i] → QR → AL[i], C[i]
+        # per-site left orthogonalization: C[i-1]·A[i] → QR → AL[i], C[i]
         for i in 1:N
             Ai = A[i]
             Dli, d, Dri = size(Ai)
@@ -123,7 +127,7 @@ function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
     while true
         iter += 1
         C_old = copy(C[N])
-        # 逐 site 右正交化：A[i]·C[i] → LQ → C[i-1], AR[i]
+        # per-site right orthogonalization: A[i]·C[i] → LQ → C[i-1], AR[i]
         alg_right = LQpos()
         for i in N:-1:1
             Ai = A[i]
@@ -140,14 +144,15 @@ function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
     return AR, C
 end
 
-# ---------------- regauge!（对标 MPSKit 的 regauge!） ----------------
+# ---------------- regauge! (mirroring MPSKit's regauge!) ----------------
 
 """
     regauge!(AC, C; alg = Defaults.alg_orth()) -> AL
     regauge!(CL, AC; alg = Defaults.alg_orth()) -> AR
 
-把更新后的 `(AC, C)` 张量对重新规范成一致的 `AL`（或 `(CL, AC)` → `AR`），
-最小化 `‖AC_i − AL_i·C_i‖`（或 `‖AC_i − C_{i-1}·AR_i‖`）。
+Re-canonicalize an updated `(AC, C)` tensor pair into a consistent `AL`
+(or `(CL, AC)` into `AR`), minimizing `‖AC_i − AL_i·C_i‖`
+(respectively `‖AC_i − C_{i-1}·AR_i‖`).
 """
 function regauge!(AC::AbstractArray{T,3}, C::AbstractMatrix{T}; alg = Defaults.alg_orth()) where {T}
     Dl, d, Dr = size(AC)
@@ -166,3 +171,7 @@ end
 function regauge!(ACs::AbstractVector, Cs::AbstractVector; kwargs...)
     return Array{eltype(ACs[1]),3}[regauge!(ACs[i], Cs[i]; kwargs...) for i in eachindex(ACs)]
 end
+
+# The gaugefix!/rank-4 regauge! methods for CanonicalIMPO live in
+# states/canonicalmpo.jl (that file is included after this one — the
+# CanonicalIMPO type is defined there)

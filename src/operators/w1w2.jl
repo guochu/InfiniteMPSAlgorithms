@@ -1,12 +1,15 @@
-# W^I / W^II 时间演化 MPO —— 接口对齐 MPSKit（`WI`/`WII`/`make_time_mpo`，作用于
-# JordanMPOTensor）。参考 arXiv:1407.1832 "Time-evolving a matrix product state
-# with long-ranged interactions"。W^II 的块算符矩阵指数：拼成稠密 (4d)×(4d) 矩阵
-# 调 LinearAlgebra.exp，与 TEMPO 经 ExpExp 的块指数等价。
+# W^I / W^II time-evolution MPOs — interface aligned with MPSKit (`WI`/`WII`/
+# `make_time_mpo`, acting on JordanMPOTensor). Reference: arXiv:1407.1832
+# "Time-evolving a matrix product state with long-ranged interactions". The
+# block-operator matrix exponential of W^II is assembled into a dense
+# (4d)×(4d) matrix and passed to LinearAlgebra.exp, equivalent to TEMPO's
+# ExpExp block exponential.
 
 """
     WI(; tol, maxiter)
 
-W^I 一阶时间演化步进器（一阶 MPO 近似；对标 MPSKit 的 `WI`）。
+W^I first-order time-evolution stepper (first-order MPO approximation;
+mirrors MPSKit's `WI`).
 """
 @kwdef struct WI <: Algorithm
     tol::Float64 = Defaults.tol
@@ -16,14 +19,15 @@ end
 """
     WII(; tol, maxiter)
 
-W^II 二阶时间演化步进器（块指数 MPO 近似；对标 MPSKit 的 `WII`）。
+W^II second-order time-evolution stepper (block-exponential MPO approximation;
+mirrors MPSKit's `WII`).
 """
 @kwdef struct WII <: Algorithm
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
 end
 
-# ---- Jordan 块提取 ----
+# ---- Jordan block extraction ----
 
 get_A(W::JordanMPOTensor) = [W.A[i, :, j, :] for i in 1:size(W.A, 1), j in 1:size(W.A, 3)]
 get_B(W::JordanMPOTensor) = [W.B[i, :, :] for i in 1:size(W.B, 1)]
@@ -45,7 +49,8 @@ function _sqrt2(dt::Real)
     end
 end
 
-# 演化后的恒等通道载荷 `WD`（`Wd[1,:,1,:] = WD`），传播块按原 Jordan 块位置放置。
+# The evolved identity-channel payload `WD` (`Wd[1,:,1,:] = WD`); propagation
+# blocks are placed at their original Jordan block positions.
 function _timempo_dense(WA, WB, WC, WD)
     a1, a2 = size(WA)
     T = promote_type(eltype(WD), eltype(eltype(WA)),
@@ -110,25 +115,28 @@ end
 
 """
     make_time_mpo(bulk::JordanMPOTensor, dt, alg::Union{WI,WII};
-                  imaginary_evolution = false) -> InfiniteMPO
-    make_time_mpo(H::MPOHamiltonian, dt, alg; kwargs...) -> InfiniteMPO
+                  imaginary_evolution = false) -> DenseIMPO
+    make_time_mpo(H::SparseIMPO, dt, alg; kwargs...) -> DenseIMPO
 
-构造近似 `exp(-i·H·dt)` 的周期时间演化 MPO（对标 MPSKit 的 `make_time_mpo`；
-`imaginary_evolution = true` 时为 `exp(-H·dt)`）。内部为 W^I/W^II 块指数算法；
-`MPOHamiltonian` 对单胞内**每个 site** 的 Jordan 张量分别演化（对标 MPSKit 的
-`tmap(parent(H)) do W ... end` + `InfiniteMPO(PeriodicArray(O))`），支持任意
-单胞长度。
+Build the periodic time-evolution MPO approximating `exp(-i·H·dt)` (mirrors
+MPSKit's `make_time_mpo`; with `imaginary_evolution = true` it is
+`exp(-H·dt)`). Internally implements the W^I/W^II block-exponential schemes;
+for an `SparseIMPO`, the Jordan tensor of **every site** in the unit cell
+is evolved separately (mirroring MPSKit's
+`tmap(parent(H)) do W ... end` + `DenseIMPO(PeriodicArray(O))`), supporting
+arbitrary unit-cell lengths.
 """
 function make_time_mpo(bulk::JordanMPOTensor, dt::Number, alg::Union{WI,WII};
                        imaginary_evolution::Bool = false)
     δ = imaginary_evolution ? -dt : -im * dt
-    return InfiniteMPO([_timempo_dense(bulk, δ, alg)])
+    return DenseIMPO([_timempo_dense(bulk, δ, alg)])
 end
 
-function make_time_mpo(H::MPOHamiltonian, dt::Number, alg::Union{WI,WII};
+function make_time_mpo(H::SparseIMPO, dt::Number, alg::Union{WI,WII};
                        imaginary_evolution::Bool = false)
     δ = imaginary_evolution ? -dt : -im * dt
-    # 对标 MPSKit：逐 site 演化单胞内每个 Jordan 张量（支持任意单胞长度）
+    # mirroring MPSKit: evolve the Jordan tensor of every site in the unit cell
+    # (supports arbitrary unit-cell lengths)
     O = [_timempo_dense(W, δ, alg) for W in parent(H)]
-    return InfiniteMPO(O)
+    return DenseIMPO(O)
 end

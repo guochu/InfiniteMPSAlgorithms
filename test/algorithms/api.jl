@@ -149,7 +149,7 @@ end
 
     # 规范算法对象直接驱动 gaugefix!
     As = [randn(T, 6, 2, 6), randn(T, 6, 2, 6)]
-    ψL = InfiniteCanonicalMPS(As)
+    ψL = CanonicalIMPS(As)
     gaugefix!(ψL, As, Matrix{T}(I, 6, 6), LeftCanonical())
     @tensor gL[a, b] := conj(ψL.AL[1][x, s, a]) * ψL.AL[1][x, s, b]
     @test gL ≈ I atol = 1e-10
@@ -185,7 +185,7 @@ end
     @test leftenv(envs0, 1)[:, 1, :] ≈ I4
     @test rightenv(envs0, 1)[:, 1, :] ≈ I4
 
-    # 二元稠密 MPO：哈密顿量通道（InfiniteMPO 可直接作基态哈密顿量）
+    # 二元稠密 MPO：哈密顿量通道（DenseIMPO 可直接作基态哈密顿量）
     @test DMRGCache(ψ, identityimpo(T, [2])) isa DMRGCache
 
     # 三元环境（below, nothing, above）：恒等通道 ∝ I（overlap 通道）
@@ -197,7 +197,7 @@ end
     κ = dot(I4, L3) / dot(I4, I4)
     @test norm(L3 - κ * I4) / norm(I4) < 1e-9
 
-    # 三元 InfiniteMPO：MPO 施加通道
+    # 三元 DenseIMPO：MPO 施加通道
     @test MultCache(ψ, identityimpo(T, [2]), ψ) isa MultCache
 
     # recalculate!：重算后能量不变
@@ -251,7 +251,7 @@ end
     @test contract_mpo_expval(ψ.AC[1], GL, I1[1], GR) ≈ norm(ψ.AC[1])^2 atol = 1e-10
 end
 
-@testset "InfiniteMPO 构造、周期下标与标量代数" begin
+@testset "DenseIMPO 构造、周期下标与标量代数" begin
     T = ComplexF64
     Random.seed!(31)
     ψ = randomimps(T, [2, 2], 5)
@@ -277,7 +277,7 @@ end
     @test Wc !== I2 && Wc[1] == I2[1] && Wc[1] !== I2[1]
 
     # bond 不匹配抛错
-    @test_throws DimensionMismatch InfiniteMPO([randn(T, 2, 2, 3, 2), randn(T, 2, 2, 2, 2)])
+    @test_throws DimensionMismatch DenseIMPO([randn(T, 2, 2, 3, 2), randn(T, 2, 2, 2, 2)])
 end
 
 @testset "Jordan / Schur / Sparse MPO 层与 Hamiltonian 块代数" begin
@@ -303,8 +303,8 @@ end
     @test Wd[1, :, 3, :] ≈ -h * Z
     @test copy(Wj) isa JordanMPOTensor
 
-    # FiniteMPOHamiltonian
-    Hfin = FiniteMPOHamiltonian([Wmat, Wmat])
+    # 有限 SparseIMPO（Jordan 矩阵构造）
+    Hfin = SparseIMPO([Wmat, Wmat])
     @test length(Hfin) == 2 && bonddim(Hfin) == 3
 
     # Jordan 块加法（A/B/C/D 逐块相加，恒等角点不参与）对标 MPSKit H1+H2
@@ -324,8 +324,8 @@ end
     @test tompotensor(Jm)[1, :, 1, :] ≈ Matrix{T}(I, 2, 2)
 
     # 稠密转换
-    Hd = InfiniteMPO(tfim_hamiltonian(T = T))
-    @test Hd isa InfiniteMPO && max_bonddim(Hd) == 3
+    Hd = DenseIMPO(tfim_hamiltonian(T = T))
+    @test Hd isa DenseIMPO && max_bonddim(Hd) == 3
 end
 
 @testset "模型与自旋算符" begin
@@ -338,8 +338,8 @@ end
 
     # tfim 便捷模型返回三件套
     m = tfim(; J = 1.0, h = 1.0, T = T)
-    @test m.mpo isa InfiniteMPO && m.bulk isa JordanMPOTensor
-    @test m.hamiltonian isa InfiniteMPOHamiltonian
+    @test m.mpo isa DenseIMPO && m.bulk isa JordanMPOTensor
+    @test m.hamiltonian isa SparseIMPO
 
     # 无 on-site、无最近邻项的 bulk 只有恒等通道（2-site 单胞期望 = 2）
     empty_bulk = bulk_mpo(zeros(T, 2, 2), Tuple{Float64,Matrix{T},Matrix{T}}[])
@@ -431,11 +431,11 @@ end
     end
 end
 
-@testset "InfiniteCanonicalMPO 结构" begin
+@testset "CanonicalIMPO 结构" begin
     T = ComplexF64
     Random.seed!(61)
     W = randomimpo(T, [2, 2], 3)
-    M = InfiniteCanonicalMPO(W)
+    M = CanonicalIMPO(W)
     @test length(M) == 2 && eachsite(M) == 1:2
     @test M[3] == M[1] && M[0] == M[2]
     @test M[1] === M.AC[1]
@@ -449,9 +449,9 @@ end
     ACv = asmps_view(collect(M.AC))
     @tensor rec[a, p, c] := ALv[1][a, p, b] * M.C[1][b, c]
     @test rec ≈ ACv[1] atol = 1e-9
-    # 构造经 MPS 规范化：InfiniteMPO(M) 收集 AL，与输入 W 平行即可——
+    # 构造经 MPS 规范化：DenseIMPO(M) 收集 AL，与输入 W 平行即可——
     # 整体相位/比例是规范自由度（λ 被 normalize!(C) 吸收），不作要求
-    dM = _dense_mpo_repr(InfiniteMPO(M))
+    dM = _dense_mpo_repr(DenseIMPO(M))
     dW = _dense_mpo_repr(W)
     ls = dot(vec(dM), vec(dW)) / dot(vec(dM), vec(dM))
     @test norm(vec(dW) .- ls .* vec(dM)) / norm(vec(dW)) < 1e-8

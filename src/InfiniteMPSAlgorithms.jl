@@ -1,15 +1,20 @@
 """
     InfiniteMPSAlgorithms
 
-无对称性的无限 MPS/MPO 张量网络算法包（MPSKit 核心算法的干净稠密实现）。
+Symmetry-free infinite MPS/MPO tensor-network algorithms (a clean dense
+implementation of the core MPSKit algorithms).
 
-- 张量为普通 `Array`，收缩用 `TensorOperations`（`@tensor`）；
-- 低层张量操作复用 TEMPO 的 `tensorops`（`tsvd`/`leftorth`/`rightorth`/截断方案）；
-- `InfiniteCanonicalMPS` 数据布局与 MPSKit 的 `InfiniteMPS` 一致
-  （`AL`/`AR`/`C`/`AC` + 周期下标），函数名尽可能与 MPSKit 对齐；
-- MPO site 张量指标与 TEMPO 对齐：`W[wl, u, wr, d]`（键指标在 1、3 位）；
-- 算法：single-site VUMPS / IDMRG、TDVP（`timestep`/`time_evolve`）、
-  W^I/W^II（`make_time_mpo`）+ 迭代 MPO 乘法 `mult`、MPO 压缩。
+- Site tensors are plain `Array`s; contractions use `TensorOperations` (`@tensor`);
+- Low-level tensor operations reuse TEMPO's `tensorops` (`tsvd`, `leftorth`,
+  `rightorth`, truncation schemes);
+- The `CanonicalIMPS` data layout mirrors MPSKit's `InfiniteMPS`
+  (`AL`/`AR`/`C`/`AC` families with periodic indexing); function names follow
+  MPSKit wherever possible;
+- MPO site tensors follow TEMPO's convention: `W[wl, u, wr, d]` (bond indices
+  in slots 1 and 3);
+- Algorithms: single-site VUMPS / IDMRG, TDVP (`timestep`/`time_evolve`),
+  W^I/W^II time-evolution MPOs (`make_time_mpo`) + iterative MPO
+  multiplication `mult` and MPO compression.
 """
 module InfiniteMPSAlgorithms
 
@@ -20,36 +25,40 @@ using TensorOperations
 using KrylovKit
 using MatrixAlgebraKit
 
-# ---- 低层张量操作（复制自 TEMPO/src/tensorops）----
+# ---- low-level tensor operations (ported from TEMPO/src/tensorops) ----
 include("tensorops/tensorops.jl")
 
 include("utility.jl")
 
-# ---- 数据结构（states）----
-include("states/mixedcanonicalmps.jl")
+# ---- data structures (states) ----
+include("states/canonicalmps.jl")
 include("states/ortho.jl")
 include("states/constructors.jl")
 
-# ---- 算子（operators）----
+# ---- operators ----
 include("operators/infinitempo.jl")
 include("operators/jordanmpotensor.jl")
 include("operators/mpohamiltonian.jl")
-# InfiniteCanonicalMPO（数据结构上属于 states，含 MPS 视图变换与 mpo_compress；
-# 依赖 InfiniteMPO，故在 infinitempo.jl 之后 include）
-include("states/mixedcanonicalmpo.jl")
+include("operators/longrangeop.jl")
+# CanonicalIMPO (a "states" data structure; contains the MPS view
+# transforms and mpo_compress; depends on DenseIMPO, hence included after
+# infinitempo.jl)
+include("states/canonicalmpo.jl")
 include("operators/w1w2.jl")
 
-# ---- 转移矩阵 ----
+# ---- transfer matrices ----
 include("transfermatrix.jl")
 
-# ---- 环境机制（抽象类型与共享 kernel；具体 Cache 定义在 algorithms/ 各算法内）----
+# ---- environment machinery (abstract type and shared kernels; concrete
+#      caches are defined inside their algorithm files) ----
 include("environments.jl")
 include("effective.jl")
 
-# ---- 算法 ----
-# algdefs：VUMPS / IDMRG / VOMPS 参数对象（含 trunc 字段）；
-# mult：迭代 MPO 乘法（压缩引擎）；add / hadamard：迭代算术（与 mult 共用引擎）；
-# arithmetics：朴素精确构造 exact_*（仅供 debug）
+# ---- algorithms ----
+# algdefs: VUMPS / IDMRG / VOMPS parameter objects;
+# mult: iterative MPO multiplication (compression engine);
+# add / hadamard: iterative arithmetic (sharing the same engine);
+# arithmetics: naive exact constructors exact_* (debug only)
 include("algorithms/algdefs.jl")
 include("algorithms/vumps.jl")
 include("algorithms/idmrg.jl")
@@ -59,58 +68,60 @@ include("algorithms/add.jl")
 include("algorithms/hadamard.jl")
 include("algorithms/arithmetics.jl")
 
-# ---- 观测量 ----
+# ---- observables ----
 include("observables/expval.jl")
 include("observables/correlators.jl")
 include("observables/toolbox.jl")
 
-# ---- 模型 ----
+# ---- models ----
 include("models.jl")
 
-# ---- 导出（命名与 MPSKit 对齐；MPO 稀疏层保留 TEMPO 命名）----
+# ---- exports (names aligned with MPSKit; the sparse MPO layer keeps TEMPO names) ----
 export
-    # 周期容器
+    # periodic containers
     PeriodicVector, PeriodicArray,
-    # 截断与分解（tensorops）
+    # truncation and factorizations (tensorops)
     TruncationScheme, NoTruncation, TruncateDim, truncdim,
     TruncateRelError, truncrelerr, TruncateDimCutoff, truncdimcutoff,
     tsvd, tsvd!, leftorth, leftorth!, rightorth, rightorth!,
     OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD, Polar,
-    # 数据结构
-    InfiniteCanonicalMPS, InfiniteMPO, InfiniteCanonicalMPO,
+    # data structures
+    CanonicalIMPS, DenseIMPO, CanonicalIMPO,
     scalartype, phydims, max_bonddim, bonddim, dag, eachsite,
     ismixedcanonical, mixedcanonical_error,
     norm, normalize!, dot,
-    # 构造器
+    # constructors
     randomimps, prodimps, identityimpo, randomimpo,
-    # 规范
+    # gauges
     gaugefix!, regauge!,
     LeftCanonical, RightCanonical, MixedCanonical,
-    # 转移矩阵与固定点
+    # transfer matrices and fixed points
     TransferMatrix, push_env_left, push_env_right, fixedpoint, linsolve, regularize!,
     transfer_leftenv!, transfer_rightenv!,
-    # 环境缓存（具体类型定义在所属算法文件内）
+    # environment caches (concrete types live in their algorithm files)
     Environments, OverlapCache, MultCache, DMRGCache,
     recalculate!, leftenv, rightenv,
     AC_hamiltonian, C_hamiltonian, calc_galerkin,
-    # 基态与演化算法
+    # ground-state and time-evolution algorithms
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS,
     find_groundstate, timestep, time_evolve, integrate,
-    mult, exact_mult, exact_add, exact_hadamard, add, hadamard, fuse, mpo_compress,
+    mult, naive_mult, add, naive_add, hadamard, naive_hadamard,
+    exact_mult, exact_add, exact_hadamard, fuse, mpo_compress,
     DynamicTol, updatetol,
-    # MPOHamiltonian（Jordan 结构）与时间演化 MPO
-    JordanMPOTensor, MPOHamiltonian, FiniteMPOHamiltonian, InfiniteMPOHamiltonian,
+    # SparseIMPO (Jordan structure) and time-evolution MPOs
+    JordanMPOTensor, SparseIMPO,
+    ExpDecayOpTerm, ExpDecayOpSum,
     isidentitylevel, isemptylevel, nlvls,
     tompotensors, tompotensor, infinite_mpo,
     WI, WII, make_time_mpo,
-    # 观测量
+    # observables
     expectationvalue, correlator, entropy, entanglement_spectrum,
     contract_mpo_expval,
-    # 模型
+    # models
     bulk_mpo, mpohamiltonian, heisenberg_xxz, heisenberg_hamiltonian,
     tfim, tfim_hamiltonian, fermi_hubbard,
     σx, σy, σz, Sx, Sy, Sz,
-    # 其他
+    # misc
     Defaults, renyi_entropy, isometry, permute, distance, distance2
 
 end # module

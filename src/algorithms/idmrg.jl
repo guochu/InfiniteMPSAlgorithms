@@ -8,15 +8,16 @@
     DMRGCache(operator, ket, lefts, rights)
     DMRGCache(ψ, operator) -> DMRGCache
 
-哈密顿量通道环境缓存（基态搜索 VUMPS / IDMRG / TDVP 与能量计算）：
-`operator::Union{MPOHamiltonian,InfiniteMPO}`——`MPOHamiltonian` 的 w 维 =
-Jordan 层数（逐 level 求解）；`InfiniteMPO` 为稠密 MPO 哈密顿量
-（转移矩阵主本征向量）。
+Environment cache of the Hamiltonian channel (ground-state VUMPS / IDMRG /
+TDVP and energy evaluation): `operator::Union{SparseIMPO,DenseIMPO}` —
+the `w` dimension of an `SparseIMPO` equals the number of Jordan levels
+(per-level solves); an `DenseIMPO` is a dense MPO Hamiltonian
+(transfer-matrix dominant eigenvector).
 
-- `lefts[ℓ]`：site ℓ 左环境 `(ket键, w, ket键)`；
-- `rights[ℓ]`：site ℓ 右环境 `(ket键, w, ket键)`。
+- `lefts[ℓ]`: the left environment of site ℓ, `(ket bond, w, ket bond)`;
+- `rights[ℓ]`: the right environment of site ℓ, `(ket bond, w, ket bond)`.
 """
-struct DMRGCache{H<:Union{MPOHamiltonian,InfiniteMPO},K<:InfiniteCanonicalMPS,T} <: Environments
+struct DMRGCache{H<:Union{SparseIMPO,DenseIMPO},K<:CanonicalIMPS,T} <: Environments
     operator::H
     ket::K
     lefts::Vector{Array{T,3}}
@@ -24,12 +25,13 @@ struct DMRGCache{H<:Union{MPOHamiltonian,InfiniteMPO},K<:InfiniteCanonicalMPS,T}
 end
 
 """
-    DMRGCache(ψ, W::InfiniteMPO; kwargs...) -> DMRGCache
+    DMRGCache(ψ, W::DenseIMPO; kwargs...) -> DMRGCache
 
-稠密 MPO 哈密顿量通道：转移矩阵主本征向量（Krylov Arnoldi）。`InfiniteMPO`
-可直接作为基态搜索的哈密顿量，也用于 `expectationvalue(ψ, W)`。
+Dense MPO Hamiltonian channel: transfer-matrix dominant eigenvector
+(Krylov Arnoldi). An `DenseIMPO` can be used directly as the Hamiltonian of
+a ground-state search, as well as in `expectationvalue(ψ, W)`.
 """
-function DMRGCache(ψ::InfiniteCanonicalMPS, operator::InfiniteMPO; kwargs...)
+function DMRGCache(ψ::CanonicalIMPS, operator::DenseIMPO; kwargs...)
     N = length(ψ)
     T = scalartype(ψ)
     lefts = Vector{Array{T,3}}(undef, N)
@@ -44,7 +46,7 @@ function DMRGCache(ψ::InfiniteCanonicalMPS, operator::InfiniteMPO; kwargs...)
     for ℓ in N-1:-1:1
         rights[ℓ] = push_env_right(rights[ℓ+1], operator[ℓ+1], ψ.AR[ℓ+1])
     end
-    # 对标 MPSKit normalize!(::InfiniteMPO)：先把每个 GR 做 Frobenius 归一，
+    # 对标 MPSKit normalize!(::DenseIMPO)：先把每个 GR 做 Frobenius 归一，
     # 再逐 site 用配分函数 λ_i = ⟨AC_i | GL_{i+1}·W_i·GR_i | AC_i⟩ 缩放 GL_{i+1}，
     # 使每个 site 的局部收缩恰好为 1（恒等 MPO 期望 = N）。
     for ℓ in 1:N
@@ -59,14 +61,15 @@ function DMRGCache(ψ::InfiniteCanonicalMPS, operator::InfiniteMPO; kwargs...)
 end
 
 """
-    DMRGCache(ψ, H::MPOHamiltonian; tol, maxiter, krylovdim, init_lefts, init_rights)
+    DMRGCache(ψ, H::SparseIMPO; tol, maxiter, krylovdim, init_lefts, init_rights)
         -> DMRGCache
 
-Jordan 哈密顿量环境：逐 level 线性求解（对标 MPSKit 的
-`compute_leftenvs!/compute_rightenvs!(::InfiniteMPOHamiltonian)`）。
-`init_lefts`/`init_rights` 提供热启动初值（见 [`recalculate!`](@ref)）。
+Jordan Hamiltonian environments: per-level linear solves (mirroring MPSKit's
+`compute_leftenvs!/compute_rightenvs!(::SparseIMPO)`).
+`init_lefts`/`init_rights` provide warm-started initial values (see
+[`recalculate!`](@ref)).
 """
-function DMRGCache(ψ::InfiniteCanonicalMPS, H::MPOHamiltonian;
+function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
                    tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                    krylovdim::Int = Defaults.krylovdim,
                    init_lefts::Union{Nothing,Vector{<:AbstractArray}} = nothing,
@@ -206,18 +209,20 @@ end
 """
     recalculate!(envs::DMRGCache, ψ, operator = envs.operator; kwargs...) -> envs
 
-按（可能已更新的）`ψ` 从头重算固定点并重新展开局部环境（热启动：旧环境作为
-逐 level linsolve 的初值，对标 MPSKit 原地 recalculate!）。
-`kwargs`（如 `tol`、`maxiter`、`krylovdim`）透传给 `DMRGCache` 构造器，
-对标 MPSKit `recalculate!(...; alg_environments.tol)` 的动态环境容差。
+Recompute the fixed points from scratch for the (possibly updated) `ψ` and
+re-expand the local environments (warm start: the old environments serve as
+the initial values of the per-level linsolves, mirroring MPSKit's in-place
+recalculate!). `kwargs` (e.g. `tol`, `maxiter`, `krylovdim`) are forwarded to
+the `DMRGCache` constructor, mirroring the dynamic environment tolerance of
+MPSKit's `recalculate!(...; alg_environments.tol)`.
 """
-function recalculate!(envs::DMRGCache, ψ::InfiniteCanonicalMPS,
-                      operator::Union{MPOHamiltonian,InfiniteMPO} = envs.operator;
+function recalculate!(envs::DMRGCache, ψ::CanonicalIMPS,
+                      operator::Union{SparseIMPO,DenseIMPO} = envs.operator;
                       kwargs...)
     # 热启动：把旧环境作为逐 level linsolve 的初值（对标 MPSKit 原地 recalculate!）
     old_lefts = envs.lefts
     old_rights = envs.rights
-    if operator isa MPOHamiltonian
+    if operator isa SparseIMPO
         envs2 = DMRGCache(ψ, operator;
                           init_lefts = old_lefts, init_rights = old_rights, kwargs...)
     else
@@ -229,25 +234,13 @@ function recalculate!(envs::DMRGCache, ψ::InfiniteCanonicalMPS,
     return envs
 end
 
-"_transpose_tail(A) / _transpose_front(A)：前后端指标交换 `(Dl, d, Dr) ↔ (Dr, d, Dl)`。"
+"_transpose_tail(A) / _transpose_front(A): swap the front and back indices
+`(Dl, d, Dr) ↔ (Dr, d, Dl)`."
 _transpose_tail(A::AbstractArray{T,3}) where {T} = permutedims(A, (3, 2, 1))
 _transpose_front(A::AbstractArray{T,3}) where {T} = permutedims(A, (3, 2, 1))
 
-"_left_orth3(AC; alg)：`(Dl·d, Dr)` QR 分裂 → `(AL, C)`（`positive = true` 即 `QRpos`）。"
-function _left_orth3(AC::AbstractArray{T,3}; alg = Defaults.alg_orth()) where {T}
-    Dl, d, Dr = size(AC)
-    Q, R = leftorth(reshape(AC, Dl * d, Dr); alg = alg)
-    return reshape(Q, Dl, d, size(Q, 2)), R
-end
-
-"_right_orth3(AC; alg)：`(Dl, d·Dr)` LQ 分裂 → `(C, AR)`。"
-function _right_orth3(AC::AbstractArray{T,3}; alg = LQpos()) where {T}
-    Dl, d, Dr = size(AC)
-    L, Q = rightorth(reshape(AC, Dl, d * Dr); alg = alg)
-    return L, reshape(Q, size(L, 2), d, Dr)
-end
-
-"MPSKit 的 `_localupdate_sweep_idmrg!`：前向 + 后向扫描，返回 `(ψ, envs, C_old, E)`。"
+"MPSKit's `_localupdate_sweep_idmrg!`: forward + backward sweep; returns
+`(ψ, envs, C_old, E)`."
 function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve)
     N = length(ψ)
     local E
@@ -256,20 +249,20 @@ function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve)
     for pos in 1:N
         h = AC_hamiltonian(pos, ψ, H, ψ, envs)
         _, ψ.AC[pos] = fixedpoint(h, ψ.AC[pos], :SR, alg_eigsolve)
-        ψ.AL[pos], ψ.C[pos] = _left_orth3(ψ.AC[pos])
+        ψ.AL[pos], ψ.C[pos] = leftorth(ψ.AC[pos], (1, 2), (3,))
         transfer_leftenv!(envs, ψ, H, ψ, pos + 1)
     end
     # right to left sweep
     for pos in N:-1:1
         h = AC_hamiltonian(pos, ψ, H, ψ, envs)
         E, ψ.AC[pos] = fixedpoint(h, ψ.AC[pos], :SR, alg_eigsolve)
-        ψ.C[pos - 1], ψ.AR[pos] = _right_orth3(ψ.AC[pos])
+        ψ.C[pos - 1], ψ.AR[pos] = rightorth(ψ.AC[pos], (1,), (2, 3))
         transfer_rightenv!(envs, ψ, H, ψ, pos - 1)
     end
     return ψ, envs, C_old, E
 end
 
-function find_groundstate(ψ₀::InfiniteCanonicalMPS, operator, alg::IDMRG,
+function find_groundstate(ψ₀::CanonicalIMPS, operator, alg::IDMRG,
                           envs::Environments = DMRGCache(ψ₀, operator))
     ψ = copy(ψ₀)
     ϵ = calc_galerkin(ψ, operator, envs)
@@ -291,7 +284,7 @@ function find_groundstate(ψ₀::InfiniteCanonicalMPS, operator, alg::IDMRG,
     # 规范恢复：从 AR 重建（对标 MPSKit 的 `InfiniteMPS(mps.AR)`）
     N = length(ψ)
     alg_gauge = updatetol(alg.alg_gauge, iter, ϵ)
-    ψ′ = InfiniteCanonicalMPS([ψ.AR[ℓ] for ℓ in 1:N];
+    ψ′ = CanonicalIMPS([ψ.AR[ℓ] for ℓ in 1:N];
                            tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
     recalculate!(envs, ψ′, operator)
     return ψ′, envs, ϵ

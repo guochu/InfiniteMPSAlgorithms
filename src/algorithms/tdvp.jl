@@ -1,12 +1,13 @@
-# ---------------- TDVP（对标 MPSKit src/algorithms/timestep/tdvp.jl + time_evolve.jl） ----------------
+# ---------------- TDVP (mirrors MPSKit src/algorithms/timestep/tdvp.jl + time_evolve.jl) ----------------
 #
-# 算法定义（TDVP 参数对象）见 algdefs.jl。
+# The algorithm definition (the TDVP parameter object) lives in algdefs.jl.
 
 """
     integrate(H, x, t, dt, alg; imaginary_evolution = false) -> x′
 
-对有效哈密顿量 `H` 做局部时间演化：`x′ = exp(δ·H)·x`，
-`δ = -im·dt`（实时间）或 `δ = -dt`（虚时间）。`alg` 为 KrylovKit 求解器。
+Local time evolution under the effective Hamiltonian `H`:
+`x′ = exp(δ·H)·x` with `δ = -im·dt` (real time) or `δ = -dt` (imaginary time).
+`alg` is a KrylovKit solver.
 """
 function integrate(H, x, t::Number, dt::Number, alg::KrylovKit.KrylovAlgorithm;
                    imaginary_evolution::Bool = false)
@@ -18,9 +19,9 @@ end
 """
     timestep(ψ, H, t, dt, [alg], [envs]; imaginary_evolution = false) -> (ψ, envs)
 
-以步长 `dt` 在时刻 `t` 演化一步（解 `i∂ψ/∂t = Hψ`）。
+Evolve one step of size `dt` at time `t` (solving `i∂ψ/∂t = Hψ`).
 """
-function timestep(ψ::InfiniteCanonicalMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(),
+function timestep(ψ::CanonicalIMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(),
                   envs::Environments = DMRGCache(ψ, H);
                   imaginary_evolution::Bool = false)
     N = length(ψ)
@@ -33,7 +34,7 @@ function timestep(ψ::InfiniteCanonicalMPS, H, t::Number, dt::Number, alg::TDVP 
         temp_Cs[loc] = integrate(Hc, ψ.C[loc], t, dt, alg.integrator; imaginary_evolution)
     end
     ALs = regauge!(temp_ACs, temp_Cs; alg = Defaults.alg_orth())
-    ψ′ = InfiniteCanonicalMPS(ALs, ψ.C[end]; tol = alg.tolgauge, maxiter = alg.gaugemaxiter)
+    ψ′ = CanonicalIMPS(ALs, ψ.C[end]; tol = alg.tolgauge, maxiter = alg.gaugemaxiter)
     recalculate!(envs, ψ′, H)
     return ψ′, envs
 end
@@ -42,16 +43,17 @@ end
     time_evolve(ψ₀, H, t_span, [alg], [envs]; verbosity = 0, imaginary_evolution = false, observer = nothing)
         -> (ψ, envs)
 
-在时间点序列 `t_span` 上逐步演化（对标 MPSKit 的 `time_evolve`）。
-`imaginary_evolution = true` 时为虚时间演化 `exp(-H·dt)`。
-`observer(ψ, iter, t)` 回调逐步收集数据。
+Step through the evolution over the time points `t_span` (mirrors MPSKit's
+`time_evolve`). With `imaginary_evolution = true` this is imaginary-time
+evolution `exp(-H·dt)`. The `observer(ψ, iter, t)` callback collects data at
+each step.
 """
-function time_evolve(ψ₀::InfiniteCanonicalMPS, H, t_span::AbstractVector{<:Number},
+function time_evolve(ψ₀::CanonicalIMPS, H, t_span::AbstractVector{<:Number},
                      alg::TDVP = TDVP(), envs::Environments = DMRGCache(ψ₀, H);
                      verbosity::Int = 0, imaginary_evolution::Bool = false, observer = nothing)
     ψ = copy(ψ₀)
     if scalartype(ψ) <: Real && (!imaginary_evolution || !isreal(dt_span_diff(t_span)))
-        ψ = InfiniteCanonicalMPS(PeriodicVector(complex.(parent(ψ.AL))),
+        ψ = CanonicalIMPS(PeriodicVector(complex.(parent(ψ.AL))),
                               PeriodicVector(complex.(parent(ψ.AR))),
                               PeriodicVector(complex.(parent(ψ.C))),
                               PeriodicVector(complex.(parent(ψ.AC))))

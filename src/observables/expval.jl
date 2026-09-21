@@ -1,61 +1,65 @@
-# ---------------- 期望值（对标 MPSKit src/algorithms/expval.jl） ----------------
+# ---------------- expectation values (mirrors MPSKit src/algorithms/expval.jl) ----------------
 
 """
     expectationvalue(ψ, O, [envs])
     expectationvalue(ψ, inds => O)
 
-算符期望值：
+Operator expectation values:
 
-- `O::InfiniteMPO`：MPO 全收缩，返回单位胞总期望（如 `expectationvalue(ψ, H)` = 总能量）；
-- `O = (i,) => A`：单 site 局域算符；
-- `O = ((i, i+1),) => A12`：相邻双 site 算符（`A12` 为 `d²×d²` 矩阵，
-  指标序 `(u1, u2; d1, d2)`）；
-- `expectationvalue(ψ)`：`⟨ψ|ψ⟩`。
+- `O::DenseIMPO`: full MPO contraction, returning the total expectation over
+  the unit cell (e.g. `expectationvalue(ψ, H)` = total energy);
+- `O = (i,) => A`: single-site local operator;
+- `O = ((i, i+1),) => A12`: nearest-neighbor two-site operator (`A12` is a
+  `d²×d²` matrix with index order `(u1, u2; d1, d2)`);
+- `expectationvalue(ψ)`: `⟨ψ|ψ⟩`.
 """
 function expectationvalue end
 
-expectationvalue(ψ::InfiniteCanonicalMPS) = dot(ψ, ψ)
+expectationvalue(ψ::CanonicalIMPS) = dot(ψ, ψ)
 
-expectationvalue(ψ::InfiniteCanonicalMPS, operator::Nothing, envs...) = dot(ψ, ψ)
+expectationvalue(ψ::CanonicalIMPS, operator::Nothing, envs...) = dot(ψ, ψ)
 
-function expectationvalue(ψ::InfiniteCanonicalMPS, (inds, O)::Pair)
+function expectationvalue(ψ::CanonicalIMPS, (inds, O)::Pair)
     sites = Tuple(inds)
     (length(sites) == 1) && return _local_expectation1(ψ, sites[1], O)
     (length(sites) == 2) && return _local_expectation2(ψ, sites[1], sites[2], O)
-    throw(ArgumentError("仅支持单 site 或相邻双 site 局域算符"))
+    throw(ArgumentError("only single-site or nearest-neighbor two-site local operators are supported"))
 end
 
-function _local_expectation1(ψ::InfiniteCanonicalMPS, site::Int, O::AbstractMatrix)
+function _local_expectation1(ψ::CanonicalIMPS, site::Int, O::AbstractMatrix)
     AC = ψ.AC[site]
     @tensor E[] := conj(AC[a, u, b]) * O[u, s] * AC[a, s, b]
     return E[] / dot(ψ, ψ)
 end
 
-function _local_expectation2(ψ::InfiniteCanonicalMPS, i::Int, j::Int, O12::AbstractMatrix)
+function _local_expectation2(ψ::CanonicalIMPS, i::Int, j::Int, O12::AbstractMatrix)
     N = length(ψ)
-    (j == _mod1(i + 1, N)) || throw(ArgumentError("双 site 算符仅支持相邻 site"))
+    (j == _mod1(i + 1, N)) || throw(ArgumentError("two-site operators only support adjacent sites"))
     d1 = size(ψ.AC[i], 2)
     d2 = size(ψ.AR[j], 2)
     (size(O12, 1) == size(O12, 2) == d1 * d2) ||
-        throw(DimensionMismatch("O12 应为 $(d1*d2)×$(d1*d2) 矩阵"))
+        throw(DimensionMismatch("O12 must be a $(d1*d2)×$(d1*d2) matrix"))
     T = reshape(O12, d1, d2, d1, d2)   # (u1, u2; d1, d2)
     AC = ψ.AC[i]
     AR = ψ.AR[j]
-    # 混合规范下 AC[i] 左环境与 AR[j] 右环境均为 I：bra/ket 链上
-    # AC 右键与 AR 左键直接相连（对标 MPSKit expectation_value (i,j)=>O）
+    # in the mixed canonical form the left environment of AC[i] and the right
+    # environment of AR[j] are both I: on the bra/ket chains the AC right bond
+    # connects directly to the AR left bond (mirrors MPSKit expectation_value
+    # (i,j)=>O)
     @tensor E[] := conj(AC[a, u1, x]) * conj(AR[x, u2, b̄]) * T[u1, u2, d1, d2] *
                    AC[a, d1, y] * AR[y, d2, b̄]
     return E[] / dot(ψ, ψ)
 end
 
-"MPS-MPO-MPS 单 site 三明治收缩（对标 MPSKit 的 contract_mpo_expval）。"
+"MPS-MPO-MPS single-site sandwich contraction (mirrors MPSKit's
+contract_mpo_expval)."
 function contract_mpo_expval(AC, GL, O, GR, ACbar = AC)
     @tensor E[] := GL[ā, w, b] * AC[b, d, b′] * GR[b′, w′, b̄] *
                    O[w, ū, w′, d] * conj(ACbar[ā, ū, b̄])
     return E[]
 end
 
-function expectationvalue(ψ::InfiniteCanonicalMPS, mpo::InfiniteMPO,
+function expectationvalue(ψ::CanonicalIMPS, mpo::DenseIMPO,
                           envs::Environments = DMRGCache(ψ, mpo))
     N = length(ψ)
     E = zero(promote_type(scalartype(ψ), scalartype(mpo)))
@@ -66,18 +70,20 @@ function expectationvalue(ψ::InfiniteCanonicalMPS, mpo::InfiniteMPO,
 end
 
 """
-    expectationvalue(ψ, H::MPOHamiltonian, [envs])
+    expectationvalue(ψ, H::SparseIMPO, [envs])
 
-Jordan 哈密顿量能量（对标 MPSKit）：每 site 只收缩**闭合列**
-`H[site][:, 1, 1, end]`（on-site `D`、闭合 `B`、恒等簿记项），即
+Jordan-Hamiltonian energy (mirrors MPSKit): per site only the **closed
+column** `H[site][:, 1, 1, end]` is contracted (the on-site `D`, the closing
+`B`, and the identity bookkeeping terms), i.e.
 
 ```julia
 E = Σ_site Σ_l ⟨GL_l · W[l → end] · GR_end⟩
 ```
 
-恒等层环境的固定点分量已在环境构建中投影掉，`(end → end)` 项因此为零。
+The fixed-point components of the identity-level environments were projected
+out during environment construction, so the `(end → end)` terms vanish.
 """
-function expectationvalue(ψ::InfiniteCanonicalMPS, H::MPOHamiltonian,
+function expectationvalue(ψ::CanonicalIMPS, H::SparseIMPO,
                           envs::Environments = DMRGCache(ψ, H))
     N = length(ψ)
     nl = bonddim(H)

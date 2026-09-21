@@ -14,8 +14,8 @@
     # ---- 2-site 单胞 Jordan 哈密顿量 ----
     Wd(J) = mpohamiltonian(zeros(T, 2, 2),
                            [(J, Sx(T), Sx(T)), (J, Sy(T), Sy(T)), (J, Sz(T), Sz(T))])
-    H = InfiniteMPOHamiltonian([Wd(1.0), Wd(1.0)])          # 均匀
-    Hd = InfiniteMPOHamiltonian([Wd(1.0), Wd(0.5)])         # dimerized（J₁=1, J₂=1/2）
+    H = SparseIMPO([Wd(1.0), Wd(1.0)])          # 均匀
+    Hd = SparseIMPO([Wd(1.0), Wd(0.5)])         # dimerized（J₁=1, J₂=1/2）
 
     @testset "结构" begin
         @test length(H) == 2
@@ -34,7 +34,7 @@
 
     # TFIM 2-site 单胞：e₀ = −4/π（临界点解析解）
     Wt = mpohamiltonian(-σz(T), [(-1.0, σx(T), σx(T))])
-    Ht = InfiniteMPOHamiltonian([Wt, Wt])
+    Ht = SparseIMPO([Wt, Wt])
     ψt2, _, _ = find_groundstate(randomimps(T, [2, 2], 12), Ht,
                                  VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
     @test abs(real(expectationvalue(ψt2, Ht) / 2) + 4 / π) < 1e-6

@@ -1,19 +1,22 @@
-# ---------------- 算法定义（VUMPS / IDMRG / VOMPS / TDVP） ----------------
+# ---------------- algorithm definitions (VUMPS / IDMRG / VOMPS / TDVP) ----------------
 #
-# 变分基态与时间演化算法的参数对象集中定义于此。
+# Parameter objects of the variational ground-state and time-evolution
+# algorithms are collected here.
 
 """
     VUMPS(; tol, maxiter, verbosity, alg_gauge, alg_eigsolve, alg_environments, finalize)
 
-均匀 MPS 变分基态算法（Zaletel–Pollmann / Vanderstraeten 等，对标 MPSKit 的 `VUMPS`）。
+Uniform-MPS variational ground-state algorithm (Zaletel–Pollmann /
+Vanderstraeten et al.; mirrors MPSKit's `VUMPS`).
 
-每轮迭代（MPSKit 模板）：
-1. `localupdate_step!`：逐 site 解 `AC_hamiltonian` 与 `C_hamiltonian` 最小本征对
-   （`fixedpoint`，热启动），`regauge!` 得到候选 `AL`；
-2. `gauge_step!`：`gaugefix!(ψ, ALs, ψ.C[end]; order = :R)` 恢复整体右规范，
-   随后 `AC = AL·C`；
-3. `envs_step!`：`recalculate!` 重算环境；
-4. `finalize` 回调；收敛判据 `calc_galerkin ≤ tol`。
+Each iteration (MPSKit template):
+1. `localupdate_step!`: solve the smallest-eigenpair problems of
+   `AC_hamiltonian` and `C_hamiltonian` site by site (`fixedpoint`, warm
+   started), then `regauge!` to obtain candidate `AL`s;
+2. `gauge_step!`: `gaugefix!(ψ, ALs, ψ.C[end]; order = :R)` restores the global
+   right gauge, followed by `AC = AL·C`;
+3. `envs_step!`: `recalculate!` recomputes the environments;
+4. the `finalize` callback; convergence criterion `calc_galerkin ≤ tol`.
 """
 @kwdef struct VUMPS{F} <: Algorithm
     tol::Float64 = Defaults.tol
@@ -28,16 +31,20 @@ end
 """
     IDMRG(; tol, maxiter, verbosity, alg_gauge, alg_eigsolve)
 
-single-site 无限 DMRG（对标 MPSKit 的 `IDMRG`）。
+Single-site infinite DMRG (mirrors MPSKit's `IDMRG`).
 
-每轮迭代（MPSKit 模板）：
-1. 前向扫描：逐 site 解 `AC_hamiltonian` 最小本征对，`left_orth` 分裂为 `AL/C`，
-   `transfer_leftenv!` 增量推进环境；
-2. 后向扫描：逐 site 再解 AC，`right_orth` 分裂为 `C/AR`，
-   `transfer_rightenv!` 增量推进环境；
-3. 收敛判据 `ϵ = ‖C − C_old‖`（取 bond 0 的中心矩阵），能量增量 `ΔE = ΔE_iter/2`。
+Each iteration (MPSKit template):
+1. forward sweep: solve the `AC_hamiltonian` smallest-eigenpair problem site by
+   site, split via `left_orth` into `AL/C`, and push the environments
+   incrementally with `transfer_leftenv!`;
+2. backward sweep: solve the AC problem again site by site, split via
+   `right_orth` into `C/AR`, and push the environments incrementally with
+   `transfer_rightenv!`;
+3. convergence criterion `ϵ = ‖C − C_old‖` (the center matrix on bond 0), with
+   energy increment `ΔE = ΔE_iter/2`.
 
-结束后从 `AR` 重建混合规范态（对标 `InfiniteMPS(mps.AR)`）并重算环境。
+Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
+`InfiniteMPS(mps.AR)`) and the environments are recomputed.
 """
 @kwdef struct IDMRG{A} <: Algorithm
     tol::Float64 = Defaults.tol
@@ -50,8 +57,10 @@ end
 """
     VOMPS(; tol, maxiter, verbosity)
 
-MPO·MPS / MPO·MPO 迭代乘法的重叠最大化算法参数（命名对标 MPSKit 的 `VOMPS` 家族）。
-键维由初态决定（变分流形上最大化重叠，与 MPSKit 一致）。
+Overlap-maximization algorithm parameters for the iterative
+MPO·MPS / MPO·MPO multiplication (named after MPSKit's `VOMPS` family). The
+bond dimension is fixed by the initial state (overlap maximization over the
+variational manifold, consistent with MPSKit).
 """
 @kwdef struct VOMPS <: Algorithm
     tol::Float64 = Defaults.tol
@@ -62,9 +71,10 @@ end
 """
     TDVP(; integrator, tolgauge, gaugemaxiter, finalize)
 
-single-site TDVP 时间演化（Haegeman et al.，对标 MPSKit 的 `TDVP`）。
-无限系统版本：每步将所有 `AC` 与 `C` 用同一个 `dt` 独立演化，随后
-`regauge!` 成对重新规范并整体 `gaugefix!`（右规范）重建状态。
+Single-site TDVP time evolution (Haegeman et al.; mirrors MPSKit's `TDVP`).
+Infinite-system version: each step evolves all `AC`s and `C`s independently
+with the same `dt`, then re-canonicalizes pairwise via `regauge!` and rebuilds
+the state with a global `gaugefix!` (right-canonical).
 """
 @kwdef struct TDVP{I,F} <: Algorithm
     integrator::I = Defaults.alg_expsolve()

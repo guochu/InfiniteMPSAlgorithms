@@ -1,22 +1,24 @@
 const TO = TensorOperations
 
-# scalartype 复用 TensorOperations（VectorInterface）的既有函数：`Number` 与
-# `AbstractArray` 的方法已存在，这里仅 import 后为包内自定义类型扩展方法。
+# scalartype reuses the existing TensorOperations (VectorInterface) function:
+# methods for `Number` and `AbstractArray` already exist; we import it here and
+# only extend it for the package's custom types.
 import TensorOperations: scalartype
 
 _mod1(ℓ::Integer, N::Integer) = mod1(Int(ℓ), Int(N))
 
-# ---------------- 周期数组（对标 MPSKit 的 PeriodicArray/PeriodicVector） ----------------
+# ---------------- periodic arrays (mirroring MPSKit's PeriodicArray/PeriodicVector) ----------------
 
 """
     PeriodicVector{T}(v::Vector{T})
 
-周期向量：越界下标按 `mod1` 循环（对标 MPSKit 的 `PeriodicVector`）。
+Periodic vector: out-of-range indices wrap around via `mod1`
+(mirrors MPSKit's `PeriodicVector`).
 """
 struct PeriodicVector{T} <: AbstractVector{T}
     data::Vector{T}
 end
-# 注意：struct 已自动生成 PeriodicVector(v::Vector{T}) 外部构造器
+# Note: the struct auto-generates the outer constructor PeriodicVector(v::Vector{T})
 
 Base.size(p::PeriodicVector) = size(p.data)
 Base.length(p::PeriodicVector) = length(p.data)
@@ -35,12 +37,13 @@ _parent(p::PeriodicVector) = p.data
 """
     PeriodicArray{T,N}(a::Array{T,N})
 
-周期数组：第 1 维按 `mod1` 循环（对标 MPSKit 的 `PeriodicArray`）。
+Periodic array: the first dimension wraps around via `mod1`
+(mirrors MPSKit's `PeriodicArray`).
 """
 struct PeriodicArray{T,N} <: AbstractArray{T,N}
     data::Array{T,N}
 end
-# 注意：struct 已自动生成 PeriodicArray(a::Array{T,N}) 外部构造器
+# Note: the struct auto-generates the outer constructor PeriodicArray(a::Array{T,N})
 
 Base.size(p::PeriodicArray) = size(p.data)
 Base.getindex(p::PeriodicArray, i::Integer, args...) = p.data[_mod1(i, size(p.data, 1)), args...]
@@ -51,27 +54,28 @@ Base.iterate(p::PeriodicArray, args...) = iterate(p.data, args...)
 Base.copy(p::PeriodicArray) = PeriodicArray(copy(p.data))
 _parent(p::PeriodicArray) = p.data
 
-# ---------------- 算法抽象与默认参数 ----------------
+# ---------------- algorithm abstractions and default parameters ----------------
 
 """
     Algorithm
 
-所有算法参数类型的抽象父类（VUMPS、IDMRG、TDVP、VOMPS、WI、WII、LeftCanonical 等），
-与 MPSKit 的 `Algorithm` 对齐。
+Abstract supertype of all algorithm parameter types (`VUMPS`, `IDMRG`, `TDVP`,
+`VOMPS`, `WI`, `WII`, `LeftCanonical`, ...), aligned with MPSKit's `Algorithm`.
 """
 abstract type Algorithm end
 
-# ---------------- DynamicTol（对标 MPSKit DynamicTols） ----------------
+# ---------------- DynamicTol (mirroring MPSKit's DynamicTols) ----------------
 
 """
     DynamicTol(alg, tol_min, tol_max, tol_factor)
 
-迭代算法的动态容差包装器（对标 MPSKit 的 `DynamicTol`）：
-每轮按当前误差 ϵ 与迭代数更新内部求解器容差
+Dynamic tolerance wrapper for iterative algorithms (mirrors MPSKit's `DynamicTol`):
+at each iteration the inner solver tolerance is updated from the current error
+ϵ and the iteration count via
 
     new_tol = clamp(ϵ · tol_factor / √iter, tol_min, tol_max)
 
-经 [`updatetol`](@ref) 作用后返回更新了 `tol` 字段的内部算法对象。
+[`updatetol`](@ref) returns the inner algorithm object with its `tol` field updated.
 """
 struct DynamicTol{A}
     alg::A
@@ -80,14 +84,14 @@ struct DynamicTol{A}
     tol_factor::Float64
     function DynamicTol(alg::A, tol_min::Real, tol_max::Real, tol_factor::Real) where {A}
         0 <= tol_min <= tol_max ||
-            throw(ArgumentError("tol_min 必须满足 0 ≤ tol_min ≤ tol_max"))
+            throw(ArgumentError("DynamicTol requires 0 ≤ tol_min ≤ tol_max"))
         return new{A}(alg, tol_min, tol_max, tol_factor)
     end
 end
 DynamicTol(alg; tol_min::Real = 1.0e-6, tol_max::Real = 1.0e-2, tol_factor::Real = 0.1) =
     DynamicTol(alg, tol_min, tol_max, tol_factor)
 
-"未包装的算法：动态容差为空操作（对标 MPSKit）。"
+"Unwrapped algorithm: dynamic tolerance is a no-op (mirrors MPSKit)."
 updatetol(alg, iter::Integer, ϵ::Real) = alg
 
 function updatetol(alg::DynamicTol, iter::Integer, ϵ::Real)
@@ -96,7 +100,8 @@ function updatetol(alg::DynamicTol, iter::Integer, ϵ::Real)
     return _updatetol(alg.alg, new_tol)
 end
 
-"更新 KrylovKit Lanczos/Arnoldi 的 `tol` 字段（重建对象，等价于 MPSKit 的 Accessors.@set）。"
+"Update the `tol` field of a KrylovKit Lanczos/Arnoldi solver (rebuilds the object,
+equivalent to MPSKit's Accessors.@set)."
 function _updatetol(alg::KrylovKit.Lanczos, tol::Real)
     return KrylovKit.Lanczos(; tol = tol, maxiter = alg.maxiter,
                              krylovdim = alg.krylovdim, eager = alg.eager,
@@ -112,7 +117,8 @@ _updatetol(alg::NamedTuple, tol::Real) = merge(alg, (tol = tol,))
 """
     module Defaults
 
-默认参数与默认算法构造器，字段与 MPSKit 的 `Defaults` 对齐。
+Default parameters and default algorithm constructors; fields align with
+MPSKit's `Defaults`.
 """
 module Defaults
 
@@ -131,7 +137,7 @@ const tolgauge = 1.0e-13
 const tol = 1.0e-10
 const verbosity = 0
 const krylovdim = 30
-# 动态容差（对标 MPSKit Defaults）
+# dynamic tolerances (mirroring MPSKit Defaults)
 const dynamic_tols = true
 const tol_min = 1.0e-14
 const tol_max = 1.0e-4
@@ -141,11 +147,12 @@ const envs_tolfactor = 1.0e-4
 
 _finalize(iter, state, opp, envs) = (state, envs)
 
-# 正交化 / SVD 默认算法的桩（具体实现在模块外挂载）
+# stubs for the default orthonalization / SVD algorithms (attached outside the module)
 function alg_orth end
 function alg_svd end
 
-"本征求解器（KrylovKit 算法对象）。`ishermitian=true` 用 Lanczos，否则 Arnoldi。"
+"Eigenvalue solver (a KrylovKit algorithm object). `ishermitian=true` uses
+Lanczos, otherwise Arnoldi."
 function alg_eigsolve(; ishermitian = true, tol = tol, maxiter = maxiter,
                       eager = true, krylovdim = krylovdim,
                       dynamic_tols′ = dynamic_tols, tol_min′ = tol_min,
@@ -158,7 +165,7 @@ function alg_eigsolve(; ishermitian = true, tol = tol, maxiter = maxiter,
     return dynamic_tols′ ? DynamicTol(alg, tol_min′, tol_max′, tol_factor) : alg
 end
 
-"指数求解器（TDVP 局部时间演化用）。"
+"Exponential solver (for local time evolution in TDVP)."
 function alg_expsolve(; ishermitian = true, tol = tol, maxiter = maxiter, krylovdim = krylovdim)
     return ishermitian ?
            KrylovKit.Lanczos(; tol = tol, maxiter = maxiter, krylovdim = krylovdim) :
@@ -177,11 +184,12 @@ alg_environments(; tol = tol, maxiter = maxiter,
     (; tol = tol, maxiter = maxiter)
 end
 
-# 正交化 / SVD 默认算法（QRpos/SDD 在 tensorops 中定义，挂到 Defaults 上）
+# default orthogonalization / SVD algorithms (QRpos/SDD are defined in tensorops,
+# attached to Defaults here)
 Defaults.alg_orth() = QRpos()
 Defaults.alg_svd() = SDD()
 
-# ---------------- 迭代日志 ----------------
+# ---------------- iteration logging ----------------
 
 function _logiter(io::IO, name::AbstractString, iter::Int, err::Real, extra::Pair...)
     str = join(["$k = $(repr(round(v; sigdigits = 8)))" for (k, v) in extra], ", ")

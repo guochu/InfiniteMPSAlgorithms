@@ -21,14 +21,14 @@
     P = exact_mult(W1.Ws, W2.Ws)
     @test P isa PeriodicVector && length(P) == 2
     @test size(P[1]) == (6, 2, 6, 2)
-    @test reshape(_dense_mpo_repr(InfiniteMPO(P)), 4, 4) ≈
+    @test reshape(_dense_mpo_repr(DenseIMPO(P)), 4, 4) ≈
           reshape(_dense_mpo_repr(W1), 4, 4) * reshape(_dense_mpo_repr(W2), 4, 4) atol = 1e-10
 
     # mpo*mps：键维 = W 键维 × ψ 键维，波形 ∝ W·ψ（稠密算符作用在波形上）
     Kψ = exact_mult(W1.Ws, ψ1.AL)
     @test Kψ isa PeriodicVector && length(Kψ) == 2
     @test size(Kψ[1]) == (6, 2, 6)
-    cψf = vec(_dense_mps_repr(InfiniteCanonicalMPS(collect(Kψ))))
+    cψf = vec(_dense_mps_repr(CanonicalIMPS(collect(Kψ))))
     M = reshape(_dense_mpo_repr(W1), 4, 4)
     dψ = vec(_dense_mps_repr(ψ1))
     ls = dot(M * dψ, cψf) / dot(cψf, cψf)
@@ -45,12 +45,12 @@ end
 
     K = exact_add(ψ1.AL, ψ2.AL)
     @test length(K) == 2 && size(K[1]) == (7, 2, 7)
-    @test _dense_mps_repr(InfiniteCanonicalMPS(collect(K))) ≈
+    @test _dense_mps_repr(CanonicalIMPS(collect(K))) ≈
           _dense_mps_repr(ψ1) + _dense_mps_repr(ψ2) atol = 1e-10
 
     K4 = exact_add(W1.Ws, W2.Ws)
     @test size(K4[1]) == (5, 2, 5, 2)
-    @test _dense_mpo_repr(InfiniteMPO(K4)) ≈
+    @test _dense_mpo_repr(DenseIMPO(K4)) ≈
           _dense_mpo_repr(W1) + _dense_mpo_repr(W2) atol = 1e-10
 
     # 长度不匹配抛错
@@ -76,7 +76,7 @@ end
     ψu = prodimps(T, [2, 2], [1, 1])   # |00⟩
     ψd = prodimps(T, [2, 2], [2, 2])   # |11⟩
     s = add(ψu, ψd)
-    @test s isa InfiniteCanonicalMPS && max_bonddim(s) == 2
+    @test s isa CanonicalIMPS && max_bonddim(s) == 2
     # 波形 = |00⟩ + |11⟩（trace 表示的振幅矩阵 = 单位阵）
     @test _dense_mps_repr(s) ≈ Matrix{T}(I, 2, 2) atol = 1e-12
     # 长度 / 逐 site 物理维不匹配
@@ -91,7 +91,7 @@ end
     d1 = _dense_mps_repr(ψ1)
     for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
         Random.seed!(1)
-        s2 = add(ψ1, ψ1; D = 3, alg = alg)      # ψ1 + ψ1 = 2ψ1（键 6 → 3 无损）
+        s2, _ = add(ψ1, ψ1; D = 3, alg = alg)   # ψ1 + ψ1 = 2ψ1（键 6 → 3 无损）
         @test max_bonddim(s2) == 3
         # 同射线：|dot| = 1（Cauchy–Schwarz 饱和）。相位是规范自由度：
         # IDMRG 的 C 链本征解相位不钉定，cross-dot 可带 twist 相位（VOMPS 继承
@@ -112,7 +112,7 @@ end
     dW2 = _dense_mpo_repr(W2)
     # 朴素：键维直和、稠密算符可加
     s = add(W1, W2)
-    @test s isa InfiniteMPO && bonddim(s, 1) == 5 && bonddim(s, 2) == 5
+    @test s isa DenseIMPO && bonddim(s, 1) == 5 && bonddim(s, 2) == 5
     @test _dense_mpo_repr(s) ≈ dW1 + dW2 atol = 1e-10
     # 与 -W1 相加 = 零（符号经首张量缩放折入，MPSKit 标量乘约定）
     z = add(W1, -W1)
@@ -124,7 +124,7 @@ end
     tgt = 2 .* dI
     for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
         Random.seed!(1)
-        s2 = add(I2, I2; D = 1, alg = alg)
+        s2, _ = add(I2, I2; D = 1, alg = alg)
         @test bonddim(s2, 1) == 1
         d = _dense_mpo_repr(s2)
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
@@ -140,15 +140,15 @@ end
     I2 = identityimpo(T, [2, 2])
     # 朴素乘法 = 稠密算符矩阵乘法，键维 = 两键维乘积
     P = exact_mult(W1.Ws, W2.Ws)
-    @test bonddim(InfiniteMPO(P), 1) == 6
-    @test reshape(_dense_mpo_repr(InfiniteMPO(P)), 4, 4) ≈
+    @test bonddim(DenseIMPO(P), 1) == 6
+    @test reshape(_dense_mpo_repr(DenseIMPO(P)), 4, 4) ≈
           reshape(_dense_mpo_repr(W1), 4, 4) * reshape(_dense_mpo_repr(W2), 4, 4) atol = 1e-10
     # 迭代乘法：W1·I = W1（D = 2 = 目标键维）。与目标平行即可（整体相位/尺度是
     # 输出射线规范的自由度）
     P1, ov1 = mult(W1, I2; D = 2)
-    @test P1 isa InfiniteCanonicalMPO && bonddim(P1, 1) == 2
+    @test P1 isa CanonicalIMPO && bonddim(P1, 1) == 2
     @test real(ov1) > 2 - 1e-6   # overlap = N 即方向一致
-    dP1 = vec(_dense_mpo_repr(InfiniteMPO(P1)))
+    dP1 = vec(_dense_mpo_repr(DenseIMPO(P1)))
     dW1v = vec(_dense_mpo_repr(W1))
     ls1 = dot(dP1, dW1v) / dot(dP1, dP1)
     @test norm(dW1v .- ls1 .* dP1) / norm(dW1v) < 1e-8
@@ -161,7 +161,7 @@ end
         Random.seed!(1)
         Pc, ov = mult(s2, I2; D = 1, alg = alg)
         @test bonddim(Pc, 1) == 1
-        d = _dense_mpo_repr(InfiniteMPO(Pc))
+        d = _dense_mpo_repr(DenseIMPO(Pc))
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
         @test norm(vec(tgt) .- ls .* vec(d)) / norm(vec(tgt)) < 1e-6
     end
@@ -178,7 +178,7 @@ end
     # 精确路径（D = nothing）：波形 ∝ 逐点乘积 c1 .* c2，物理维不变、键维 = 3·3。
     # 注：朴素 zip 一般非规范，构造器规范化后与 c1.*c2 相差一个正实标量（射线代表）
     H12 = hadamard(ψ1, ψ2)
-    @test H12 isa InfiniteCanonicalMPS
+    @test H12 isa CanonicalIMPS
     @test phydims(H12) == [2, 2]
     @test max_bonddim(H12) == 9
     dH = vec(_dense_mps_repr(H12))
@@ -188,7 +188,7 @@ end
 
     # 压缩路径（两算法）：D = 9 = 精确键维 → 无损，与 exact 平行
     for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
-        Hc = hadamard(ψ1, ψ2; D = 9, alg = alg)
+        Hc, _ = hadamard(ψ1, ψ2; D = 9, alg = alg)
         @test max_bonddim(Hc) == 9
         @test abs(dot(Hc, H12)) > 1 - 1e-8
     end

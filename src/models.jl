@@ -1,14 +1,16 @@
-# ---------------- 物理模型（Jordan bulk → InfiniteMPO；Jordan 层矩阵 → MPOHamiltonian） ----------------
+# ---------------- physical models (Jordan bulk → DenseIMPO; Jordan level matrices → SparseIMPO) ----------------
 #
-# H = Σᵢ h1ᵢ + Σᵢ Σₚ coeffₚ · aₚ,ᵢ ⊗ bₚ,ᵢ₊₁ （on-site + 最近邻；周期边界）
+# H = Σᵢ h1ᵢ + Σᵢ Σₚ coeffₚ · aₚ,ᵢ ⊗ bₚ,ᵢ₊₁ (on-site + nearest neighbor;
+# periodic boundary conditions)
 
 """
     bulk_mpo(h1, pairs) -> JordanMPOTensor
 
-构造 on-site + 最近邻 Hamiltonian 的 Jordan bulk 张量：
+Build the Jordan bulk tensor of an on-site + nearest-neighbor Hamiltonian:
 
-- `h1`：on-site 算符（可为 0）；
-- `pairs`：`(coeff, a, b)` 元组列表，对应 `coeff·aᵢ⊗bᵢ₊₁` 最近邻项。
+- `h1`: the on-site operator (may be 0);
+- `pairs`: a list of `(coeff, a, b)` tuples, corresponding to the
+  nearest-neighbor terms `coeff·aᵢ⊗bᵢ₊₁`.
 """
 function bulk_mpo(h1, pairs::Vector{<:Tuple})
     N = length(pairs)
@@ -36,7 +38,7 @@ function bulk_mpo(h1, pairs::Vector{<:Tuple})
     return JordanMPOTensor(cell)
 end
 
-# ---- 常用算符（Pauli，自旋 1/2） ----
+# ---- common operators (Pauli matrices, spin 1/2) ----
 
 σx(::Type{T} = ComplexF64) where {T} = Matrix{T}([0 1; 1 0])
 σy(::Type{T} = ComplexF64) where {T} = Matrix{T}([0 -im; im 0])
@@ -48,9 +50,9 @@ Sz(::Type{T} = ComplexF64) where {T} = σz(T) ./ 2
 """
     mpohamiltonian(h1, pairs) -> Matrix
 
-on-site + 最近邻 Hamiltonian 的 Jordan 层矩阵（供 `InfiniteMPOHamiltonian`）：
-层 `1`/`n` 为单位层，`[1, n] = h1`，通道 `k`：`[1, k+1] = coeffₖ·aₖ`、
-`[k+1, n] = bₖ`。
+Jordan level matrix of an on-site + nearest-neighbor Hamiltonian (for
+`SparseIMPO`): levels `1`/`n` are the unit levels, `[1, n] = h1`,
+and channel `k`: `[1, k+1] = coeffₖ·aₖ`, `[k+1, n] = bₖ`.
 """
 function mpohamiltonian(h1::AbstractMatrix, pairs::Vector{<:Tuple})
     N = length(pairs)
@@ -60,8 +62,9 @@ function mpohamiltonian(h1::AbstractMatrix, pairs::Vector{<:Tuple})
     W = Matrix{Union{Missing,T,Matrix{T}}}(missing, n, n)
     W[1, 1] = one(T)
     W[n, n] = one(T)
-    # 包 Matrix{T}：pairs 中的算符可为 Adjoint（如 fermi_hubbard 的 c†），
-    # 存储层要求 Matrix{T} 而非惰性包装类型
+    # wrap in Matrix{T}: operators in pairs may be Adjoints (e.g. the c† of
+    # fermi_hubbard); the storage layer requires Matrix{T} rather than lazy
+    # wrapper types
     W[1, n] = Matrix{T}(h1)
     for (k, (coeff, a, b)) in enumerate(pairs)
         W[1, k+1] = Matrix{T}(coeff * a)
@@ -71,32 +74,34 @@ function mpohamiltonian(h1::AbstractMatrix, pairs::Vector{<:Tuple})
 end
 
 """
-    heisenberg_hamiltonian(; J=1.0, Δ=1.0, h=0.0, T=ComplexF64) -> InfiniteMPOHamiltonian
+    heisenberg_hamiltonian(; J=1.0, Δ=1.0, h=0.0, T=ComplexF64) -> SparseIMPO
 
-`H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ` 的 Jordan 形式。
+Jordan form of `H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`.
 """
 function heisenberg_hamiltonian(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0,
                                 T::Type = ComplexF64)
     W = mpohamiltonian(-h * Sz(T), [(J, Sx(T), Sx(T)), (J, Sy(T), Sy(T)), (J * Δ, Sz(T), Sz(T))])
-    return InfiniteMPOHamiltonian([W])
+    return SparseIMPO([W])
 end
 
 """
-    tfim_hamiltonian(; J=1.0, h=1.0, T=ComplexF64) -> InfiniteMPOHamiltonian
+    tfim_hamiltonian(; J=1.0, h=1.0, T=ComplexF64) -> SparseIMPO
 
-横场 Ising 模型 `H = −J Σ σˣσˣ − h Σ σᶻ` 的 Jordan 形式。
+Jordan form of the transverse-field Ising model
+`H = −J Σ σˣσˣ − h Σ σᶻ`.
 """
 function tfim_hamiltonian(; J::Real = 1.0, h::Real = 1.0, T::Type = ComplexF64)
     W = mpohamiltonian(-h * σz(T), [(-J, σx(T), σx(T))])
-    return InfiniteMPOHamiltonian([W])
+    return SparseIMPO([W])
 end
 
 """
     heisenberg_xxz(; J=1.0, Δ=1.0, h=0.0, T=ComplexF64) -> (; mpo, bulk, hamiltonian)
 
-`H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`。J=Δ=1 时基态能量密度 `1/4 − ln2`。
-返回 `(; mpo, bulk)`：`mpo` 为周期 `InfiniteMPO`，`bulk` 为 Jordan bulk
-（供 `make_time_mpo` 做时间演化）。
+`H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`. For J=Δ=1 the ground-state energy
+density is `1/4 − ln2`. Returns `(; mpo, bulk)`: `mpo` is the periodic
+`DenseIMPO` and `bulk` the Jordan bulk (for time evolution via
+`make_time_mpo`).
 """
 function heisenberg_xxz(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0, T::Type = ComplexF64)
     bulk = bulk_mpo(-h * Sz(T), [(J, Sx(T), Sx(T)), (J, Sy(T), Sy(T)), (J * Δ, Sz(T), Sz(T))])
@@ -107,7 +112,8 @@ end
 """
     tfim(; J=1.0, h=1.0, T=ComplexF64) -> (; mpo, bulk)
 
-横场 Ising 模型 `H = −J Σ σˣσˣ − h Σ σᶻ`。J=h=1 时基态能量密度 `−4/π`。
+Transverse-field Ising model `H = −J Σ σˣσˣ − h Σ σᶻ`. For J=h=1 the
+ground-state energy density is `−4/π`.
 """
 function tfim(; J::Real = 1.0, h::Real = 1.0, T::Type = ComplexF64)
     bulk = bulk_mpo(-h * σz(T), [(-J, σx(T), σx(T))])
@@ -118,13 +124,14 @@ end
 """
     fermi_hubbard(; t=1.0, U=0.0, μ=0.0, T=ComplexF64) -> (; mpo, bulk)
 
-Fermi-Hubbard 模型，局域空间 `(|0⟩,|↑⟩,|↓⟩,|↑↓⟩)`（JW 符号按 ↑<↓ 排序）：
+Fermi-Hubbard model with local space `(|0⟩,|↑⟩,|↓⟩,|↑↓⟩)` (JW signs ordered
+with ↑<↓):
 
-`H = −t Σσ (c†σ,ᵢ cσ,ᵢ₊₁ + h.c.) + U Σᵢ n↑,ᵢn↓,ᵢ − μ Σᵢ nᵢ`。
+`H = −t Σσ (c†σ,ᵢ cσ,ᵢ₊₁ + h.c.) + U Σᵢ n↑,ᵢn↓,ᵢ − μ Σᵢ nᵢ`.
 """
 function fermi_hubbard(; t::Real = 1.0, U::Real = 0.0, μ::Real = 0.0, T::Type = ComplexF64)
     z, o, m = zero(T), one(T), -one(T)
-    # 湮灭算符（行 = 输出/bra，列 = 输入/ket）
+    # annihilation operators (row = output/bra, column = input/ket)
     a_up = T[z o z z; z z z m; z z z z; z z z z]      # c↑ : |↑⟩→|0⟩, |↑↓⟩→−|↓⟩
     a_dn = T[z z o z; z z z o; z z z z; z z z z]      # c↓ : |↓⟩→|0⟩, |↑↓⟩→+|↑⟩
     c_up = a_up'                                      # c†↑
@@ -135,5 +142,5 @@ function fermi_hubbard(; t::Real = 1.0, U::Real = 0.0, μ::Real = 0.0, T::Type =
     pairs = [(-t, a_up, c_up), (-t, a_dn, c_dn)]
     bulk = bulk_mpo(h1, pairs)
     return (; mpo = infinite_mpo(bulk), bulk = bulk,
-            hamiltonian = InfiniteMPOHamiltonian([mpohamiltonian(h1, pairs)]))
+            hamiltonian = SparseIMPO([mpohamiltonian(h1, pairs)]))
 end

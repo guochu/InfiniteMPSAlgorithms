@@ -1,20 +1,20 @@
-@testset "MPOHamiltonian 与 infinite_mpo" begin
+@testset "SparseIMPO 与 infinite_mpo" begin
     T = ComplexF64
 
-    # bulk → InfiniteMPO 构造
+    # bulk → DenseIMPO 构造
     Hm, bulk = heisenberg_xxz(T = T)
-    @test Hm isa InfiniteMPO
+    @test Hm isa DenseIMPO
     @test length(Hm) == 1
     @test bonddim(Hm, 1) == 4   # identity + 3 个通道（SxSx/SySy/SzSz 共 3 个 NN 项）
 
-    # 稠密 InfiniteMPO 路径可运行（能量收敛性与 MPSKit 保持一致：
+    # 稠密 DenseIMPO 路径可运行（能量收敛性与 MPSKit 保持一致：
     # 恒等通道主导本征向量污染，见 PLAN §9；收敛断言只在 Jordan 路径检查）
     ψd, envsd, ϵd = find_groundstate(randomimps(T, [2, 2], 10), Hm,
                                      VUMPS(maxiter = 10, tol = 1e-9, verbosity = 0))
     @test expectationvalue(ψd, Hm, envsd) isa Number
 
     # tompotensors（有限稠密 MPO）的形状（全部虚拟层，无端点收缩）
-    toms = tompotensors(FiniteMPOHamiltonian([bulk, bulk]))
+    toms = tompotensors(SparseIMPO([bulk, bulk]))
     @test size(toms[1]) == (5, 2, 5, 2)
     @test size(toms[1], 2) == 2
 
@@ -24,13 +24,13 @@
     @test abs(imag(expectationvalue(ψf, Hf))) < 1e-12
 end
 
-@testset "Jordan MPOHamiltonian" begin
+@testset "Jordan SparseIMPO" begin
     T = ComplexF64
     e_exact = 0.25 - log(2)
 
     # 构造与稠密化
     H = heisenberg_hamiltonian(T = T)
-    @test H isa InfiniteMPOHamiltonian
+    @test H isa SparseIMPO
     @test bonddim(H) == 5        # 2 单位层 + 3 通道
     @test isidentitylevel(H, 1) && isidentitylevel(H, 5)
     @test !isemptylevel(H, 2)
@@ -69,5 +69,5 @@ end
 
     # make_time_mpo 路径（Jordan → Schur bulk）
     U = make_time_mpo(H, 0.01, WII(); imaginary_evolution = true)
-    @test U isa InfiniteMPO
+    @test U isa DenseIMPO
 end

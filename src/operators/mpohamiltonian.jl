@@ -1,6 +1,6 @@
-# ---------------- MPOHamiltonian（移植自 MPSKit src/operators/mpohamiltonian.jl） ----------------
+# ---------------- SparseIMPO (ported from MPSKit src/operators/mpohamiltonian.jl) ----------------
 #
-# Jordan 上三角块矩阵形式的哈密顿量 MPO：
+# Hamiltonian MPO in Jordan upper-triangular block-matrix form:
 #
 # ```math
 # \begin{pmatrix}
@@ -10,67 +10,61 @@
 # \end{pmatrix}
 # ```
 #
-# 首末虚拟层为单位层（恒等通道），`isidentitylevel`/`isemptylevel` 支撑
-# DMRGCache 的逐层线性求解（见 algorithms/idmrg.jl）。
+# The first/last virtual levels are unit levels (identity channels);
+# `isidentitylevel`/`isemptylevel` support the per-level linear solves of the
+# DMRGCache (see algorithms/idmrg.jl).
 
 """
-    MPOHamiltonian(W) -> MPOHamiltonian
-    InfiniteMPOHamiltonian(Ws::Vector{<:Matrix}) -> InfiniteMPOHamiltonian
+    SparseIMPO(Ws) -> SparseIMPO
 
-哈密顿量 MPO（`MPOHamiltonian` 的有限/无限别名）。`Ws[i][j, k]` 表示 site `i`
-上左层 `j` 到右层 `k` 的局域算符，条目可为 `Missing`、`Number` 或 `(d, d)` 矩阵。
+Infinite Hamiltonian MPO in Jordan (sparse) form, stored as a
+`PeriodicVector` of [`JordanMPOTensor`](@ref)s (the periodic tiling is built
+into the type; plain `Vector` inputs are converted automatically).
+`Ws[i][j, k]` is the local operator at site `i` from left level `j` to right
+level `k`; entries may be `Missing`, `Number`s, or `(d, d)` matrices.
 """
-struct MPOHamiltonian{TO<:JordanMPOTensor,V<:AbstractVector{TO}}
-    W::V
+struct SparseIMPO{TO<:JordanMPOTensor}
+    W::PeriodicVector{TO}
+    SparseIMPO{TO}(W::PeriodicVector{TO}) where {TO} = new{TO}(W)
 end
 
-const FiniteMPOHamiltonian{TO} = MPOHamiltonian{TO,Vector{TO}}
-const InfiniteMPOHamiltonian{TO} = MPOHamiltonian{TO,PeriodicVector{TO}}
+Base.length(H::SparseIMPO) = length(H.W)
+Base.getindex(H::SparseIMPO, i::Int) = getindex(H.W, i)
+Base.getindex(H::SparseIMPO, i::Int, j::Int, k::Int) = H[i][j, k]
+Base.firstindex(H::SparseIMPO) = firstindex(H.W)
+Base.lastindex(H::SparseIMPO) = lastindex(H.W)
+Base.parent(H::SparseIMPO) = H.W
+Base.copy(H::SparseIMPO) = SparseIMPO(map(copy, parent(H)))
+Base.iterate(H::SparseIMPO, args...) = iterate(H.W, args...)
+Base.eltype(::Type{SparseIMPO{TO}}) where {TO} = TO
 
-Base.length(H::MPOHamiltonian) = length(H.W)
-Base.getindex(H::MPOHamiltonian, i::Int) = getindex(H.W, i)
-Base.getindex(H::MPOHamiltonian, i::Int, j::Int, k::Int) = H[i][j, k]
-Base.firstindex(H::MPOHamiltonian) = firstindex(H.W)
-Base.lastindex(H::MPOHamiltonian) = lastindex(H.W)
-Base.parent(H::MPOHamiltonian) = H.W
-Base.copy(H::MPOHamiltonian) = MPOHamiltonian(map(copy, parent(H)))
-Base.iterate(H::MPOHamiltonian, args...) = iterate(H.W, args...)
-Base.eltype(::Type{MPOHamiltonian{TO,V}}) where {TO,V} = TO
-
-function MPOHamiltonian(Ws::Vector{<:Matrix})
-    return MPOHamiltonian([JordanMPOTensor(W) for W in Ws])
+function SparseIMPO(Ws::PeriodicVector{TO}) where {TO<:JordanMPOTensor}
+    return SparseIMPO{TO}(Ws)
 end
-
-function FiniteMPOHamiltonian(Ws::Vector{TO}) where {TO<:JordanMPOTensor}
-    return MPOHamiltonian{TO,Vector{TO}}(Ws)
+function SparseIMPO(Ws::Vector{TO}) where {TO<:JordanMPOTensor}
+    return SparseIMPO{TO}(PeriodicVector(Ws))
 end
-function FiniteMPOHamiltonian(Ws::Vector{<:Matrix})
-    return FiniteMPOHamiltonian([JordanMPOTensor(W) for W in Ws])
-end
-
-function InfiniteMPOHamiltonian(Ws::PeriodicVector{TO}) where {TO<:JordanMPOTensor}
-    return MPOHamiltonian{TO,PeriodicVector{TO}}(Ws)
-end
-function InfiniteMPOHamiltonian(Ws::Vector{<:Matrix})
-    N = length(Ws)
+function SparseIMPO(Ws::Vector{<:Matrix})
     for W in Ws
-        (size(W, 1) == size(W, 2)) || throw(ArgumentError("无限哈密顿量的层矩阵应为方阵"))
-        (size(W, 1) == size(Ws[1], 1)) || throw(ArgumentError("所有层矩阵尺寸应相同"))
+        (size(W, 1) == size(W, 2)) || throw(ArgumentError("level matrices of an infinite Hamiltonian must be square"))
+        (size(W, 1) == size(Ws[1], 1)) || throw(ArgumentError("all level matrices must have the same size"))
     end
-    return InfiniteMPOHamiltonian(PeriodicVector([JordanMPOTensor(W) for W in Ws]))
+    return SparseIMPO(PeriodicVector([JordanMPOTensor(W) for W in Ws]))
 end
 
-"bonddim(H, ℓ)：site ℓ 的 Jordan 虚拟层数（键维语义 per-bond，对标 MPSKit 的
-`size(mpo[i], 1)`）。"
-bonddim(H::MPOHamiltonian, ℓ::Integer) = nlvls(H[ℓ])
-"bonddim(H)：单胞均匀层数（上三角方块结构 + 周期闭合要求各 site 层一致，由构造器保证）。"
-bonddim(H::MPOHamiltonian) = nlvls(H[1])
+"bonddim(H, ℓ): the number of Jordan virtual levels at site ℓ (per-bond bond
+dimension semantics, mirroring MPSKit's `size(mpo[i], 1)`)."
+bonddim(H::SparseIMPO, ℓ::Integer) = nlvls(H[ℓ])
+"bonddim(H): the uniform level count of the unit cell (the upper-triangular
+block structure plus periodic closure require identical levels across sites,
+guaranteed by the constructors)."
+bonddim(H::SparseIMPO) = nlvls(H[1])
 
-scalartype(::Type{MPOHamiltonian{TO,V}}) where {TO,V} = scalartype(TO)
-scalartype(H::MPOHamiltonian) = scalartype(typeof(H))
+scalartype(::Type{SparseIMPO{TO}}) where {TO} = scalartype(TO)
+scalartype(H::SparseIMPO) = scalartype(typeof(H))
 
-# MPSKit 风格的 A/B/C/D 块访问（对每个 site 返回对应块数组）
-function Base.getproperty(H::MPOHamiltonian, sym::Symbol)
+# MPSKit-style A/B/C/D block access (returns the corresponding block arrays per site)
+function Base.getproperty(H::SparseIMPO, sym::Symbol)
     if sym === :A
         return [getfield(W, :A) for W in parent(H)]
     elseif sym === :B
@@ -86,10 +80,11 @@ end
 """
     isidentitylevel(H, i) -> Bool
 
-层 `i` 是否为恒等层（转移仅含物理恒等算符）：首末层恒真；
-中间层要求所有 site 的 `(i,i)` 对角块为恒等。
+Whether level `i` is an identity level (its transfer contains only the physical
+identity operator): always true for the first/last levels; middle levels
+require the `(i,i)` diagonal block to be the identity on every site.
 """
-function isidentitylevel(H::MPOHamiltonian, i::Int)
+function isidentitylevel(H::SparseIMPO, i::Int)
     n = bonddim(H)
     (i == 1 || i == n) && return true
     return all(parent(H)) do W
@@ -101,11 +96,14 @@ end
 """
     isemptylevel(H, i) -> Bool
 
-层 `i` 是否为完全未使用的通道（对标 MPSKit：任意 site 上该层对角块结构性缺失即为空）。
-本包稠密表示下等价于：所有 site 的对角块、首行 C 块、末列 B 块全为零。
-注意显式存储的零对角块（如严格最近邻 MPO 的中间层）不算空层。
+Whether level `i` is a completely unused channel (mirroring MPSKit: a level is
+empty if its diagonal block is structurally absent on any site). In this
+package's dense representation this is equivalent to: on every site, the
+diagonal block, the first-row C block, and the last-column B block are all
+zero. Note that explicitly stored zero diagonal blocks (e.g. middle levels of
+a strictly nearest-neighbor MPO) do not count as empty.
 """
-function isemptylevel(H::MPOHamiltonian, i::Int)
+function isemptylevel(H::SparseIMPO, i::Int)
     n = bonddim(H)
     (i == 1 || i == n) && return false
     return all(parent(H)) do W
@@ -115,21 +113,21 @@ function isemptylevel(H::MPOHamiltonian, i::Int)
     end
 end
 
-# ---- 线性代数 ----
+# ---- linear algebra ----
 
-function Base.:+(H₁::MPOHamiltonian, H₂::MPOHamiltonian)
-    (length(H₁) == length(H₂)) || throw(DimensionMismatch("单胞长度不匹配"))
+function Base.:+(H₁::SparseIMPO, H₂::SparseIMPO)
+    (length(H₁) == length(H₂)) || throw(DimensionMismatch("unit-cell lengths do not match"))
     W = [H₁[i] + H₂[i] for i in 1:length(H₁)]
-    return MPOHamiltonian(typeof(H₁.W)(W))
+    return SparseIMPO(typeof(H₁.W)(W))
 end
 
 """
-    H + λs::AbstractVector（或 `λs + H`）
+    H + λs::AbstractVector (or `λs + H`)
 
-逐 site 加 `λᵢ·I`（对标 MPSKit 的 `H + λs`）。
+Add `λᵢ·I` per site (mirrors MPSKit's `H + λs`).
 """
-function Base.:+(H::InfiniteMPOHamiltonian, λs::AbstractVector{<:Number})
-    (length(H) == length(λs)) || throw(DimensionMismatch("单胞长度不匹配"))
+function Base.:+(H::SparseIMPO, λs::AbstractVector{<:Number})
+    (length(H) == length(λs)) || throw(DimensionMismatch("unit-cell lengths do not match"))
     Ws = Vector{Matrix{Any}}(undef, length(H))
     for i in 1:length(H)
         n = bonddim(H)
@@ -139,51 +137,52 @@ function Base.:+(H::InfiniteMPOHamiltonian, λs::AbstractVector{<:Number})
         W[1, n] = λs[i] isa AbstractMatrix ? λs[i] : Matrix(λs[i] * I, phydim(H), phydim(H))
         Ws[i] = W
     end
-    return H + InfiniteMPOHamiltonian(Ws)
+    return H + SparseIMPO(Ws)
 end
-Base.:+(λs::AbstractVector{<:Number}, H::InfiniteMPOHamiltonian) = H + λs
+Base.:+(λs::AbstractVector{<:Number}, H::SparseIMPO) = H + λs
 
-"phydim(H)：局域物理维度。"
-phydim(H::MPOHamiltonian) = size(H[1].A, 2)
-
-"""
-    tompotensors(H::MPOHamiltonian) -> Vector{<:Array{T,4}}
-
-稠密化为本包约定 `(wl, u, wr, d)` 的 MPO 张量串。
-"""
-tompotensors(H::MPOHamiltonian) = [tompotensor(H[i]) for i in 1:length(H)]
+"phydim(H): the local physical dimension."
+phydim(H::SparseIMPO) = size(H[1].A, 2)
 
 """
-    InfiniteMPO(H::MPOHamiltonian) -> InfiniteMPO
+    tompotensors(H::SparseIMPO) -> Vector{<:Array{T,4}}
 
-稠密周期 MPO 转换（对标 MPSKit 的 `DenseMPO(H)`）。
-注意：恒等通道随之显式出现，环境将退化为转移矩阵主本征向量路径。
+Densify into the package's `(wl, u, wr, d)` MPO tensor string.
 """
-InfiniteMPO(H::MPOHamiltonian) = InfiniteMPO(tompotensors(H))
+tompotensors(H::SparseIMPO) = [tompotensor(H[i]) for i in 1:length(H)]
 
 """
-    infinite_mpo(bulk::JordanMPOTensor) -> InfiniteMPO
+    DenseIMPO(H::SparseIMPO) -> DenseIMPO
 
-周期 bulk 的 Jordan 张量 → `InfiniteMPO`（键态 1 = identity 通道，on-site 项
-`D` 并入 identity→identity 通道）：
+Dense periodic MPO conversion (mirrors MPSKit's `DenseMPO(H)`).
+Note: the identity channel becomes explicit, so environments fall back to the
+transfer-matrix dominant-eigenvector path.
+"""
+DenseIMPO(H::SparseIMPO) = DenseIMPO(tompotensors(H))
 
-- `W[1, ·, 1, ·] = I + D`（on-site 项并入 identity→identity 通道）；
-- `W[1, ·, j+1, ·] = C[:, j, :]`，`W[j+1, ·, 1, ·] = B[j, :, :]`，
-  `W[i+1, ·, j+1, ·] = A[i, :, j, :]`。
+"""
+    infinite_mpo(bulk::JordanMPOTensor) -> DenseIMPO
+
+Jordan tensor of a periodic bulk → `DenseIMPO` (bond state 1 = the identity
+channel; the on-site term `D` is merged into the identity→identity channel):
+
+- `W[1, ·, 1, ·] = I + D` (on-site term merged into identity→identity);
+- `W[1, ·, j+1, ·] = C[:, j, :]`, `W[j+1, ·, 1, ·] = B[j, :, :]`,
+  `W[i+1, ·, j+1, ·] = A[i, :, j, :]`.
 """
 function infinite_mpo(bulk::JordanMPOTensor)
     T = scalartype(bulk)
     d = size(bulk.A, 2)
     a = size(bulk.A, 1)
-    nb = a + 1                       # 键态数：identity + 中间算符
+    nb = a + 1                       # number of bond states: identity + middle operators
     W = zeros(T, nb, d, nb, d)
     W[1, :, 1, :] = Matrix{T}(I, d, d) + bulk.D
     for j in 1:a
-        W[1, :, j+1, :] = bulk.C[:, j, :]           # aⱼ（通道开启）
-        W[j+1, :, 1, :] = bulk.B[j, :, :]           # bⱼ（通道闭合）
+        W[1, :, j+1, :] = bulk.C[:, j, :]           # aⱼ (channel opening)
+        W[j+1, :, 1, :] = bulk.B[j, :, :]           # bⱼ (channel closing)
         for i in 1:a
-            W[j+1, :, i+1, :] = bulk.A[j, :, i, :]  # 通道传播
+            W[j+1, :, i+1, :] = bulk.A[j, :, i, :]  # channel propagation
         end
     end
-    return InfiniteMPO([W])
+    return DenseIMPO([W])
 end
