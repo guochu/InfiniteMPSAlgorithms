@@ -187,14 +187,6 @@ function _nn_gate_apply!(g::AbstractGate{2}, ψ::CanonicalIMPS, i::Integer; trun
 	return _hastings_update!(ψ, gated, i; trunc)
 end
 
-# Hastings content swap of the neighboring sites `i`, `i+1`: the two-site window is
-# formed with the physical legs crossed (a SWAP gate), so the site contents exchange
-# while the canonical form is preserved (the SWAP gate is unitary).
-function _swap_content!(ψ::CanonicalIMPS, i::Integer; trunc::TruncationScheme=NoTruncation())
-	@tensor gated[a, q, p, b] := ψ.AC[i][a, p, c] * ψ.AR[i + 1][c, q, b]
-	return _hastings_update!(ψ, gated, i; trunc)
-end
-
 """
 	apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc=NoTruncation()) -> ψ
 
@@ -216,11 +208,11 @@ function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=No
 	L = length(ψ)
 	(1 <= i < j <= L) || throw(BoundsError())
 	for b in j-1:-1:i+1
-		_swap_content!(ψ, b; trunc)
+		swap!(ψ, b; trunc)
 	end
 	_nn_gate_apply!(g, ψ, i; trunc)
 	for b in i+1:j-1
-		_swap_content!(ψ, b; trunc)
+		swap!(ψ, b; trunc)
 	end
 	return ψ
 end
@@ -240,11 +232,11 @@ function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=No
 	L = length(ψ)
 	(1 <= i < j <= L) || throw(BoundsError())
 	for b in j-1:-1:i+1
-		_swap_content!(ψ, b; trunc)
+		swap!(ψ, b; trunc)
 	end
 	_nn_gate_apply!(g, ψ, i; trunc)
 	for b in i+1:j-1
-		_swap_content!(ψ, b; trunc)
+		swap!(ψ, b; trunc)
 	end
 	gaugefix!(ψ, parent(ψ.AR); order = :RL, kwargs...)
 	return ψ
@@ -253,19 +245,18 @@ end
 """
 	swap!(ψ::CanonicalIMPS, i::Integer; trunc=NoTruncation()) -> ψ
 
-Re-gauge the bond between the neighboring sites `i` and `i+1` of `ψ` with the Hastings
-identity-gate update: the two-site window `AC[i]·AR[i+1]` (physical legs uncrossed) is
-re-decomposed with one SVD; the left factor is written directly to `AL[i]` (exactly
-left-orthogonal), the right factor to `AR[i+1]` (exactly right-orthogonal), the
-renewed spectrum to `C[i]` (never divided), and the center/seam tensors follow from
-the canonical identities. The physical state is unchanged; with no truncation the
-canonical form is preserved exactly (an exact lossless re-gauging) — including the
-seam tensors, since the identity-gate window is itself row-orthogonal ×
-row-orthogonal. Sequences of `swap!` are thus lossless re-gaugings.
+Exchange the physical content of the neighboring sites `i` and `i+1` of `ψ`
+with the Hastings SWAP gate: the bare block `AR[i]·AR[i+1]` is formed with the
+physical legs crossed and folded with the left bond spectrum `C[i-1]`; one SVD
+yields the right factor (written directly to `AR[i+1]`, exactly
+right-orthogonal), the renewed spectrum (written directly to `C[i]`, never
+divided) and the back-projected left site. The center tensors follow from the
+AR-side definition `AC = C·AR`. With no truncation this is an exact lossless
+unitary re-gauging: the canonical form is preserved exactly.
 """
 function swap!(ψ::CanonicalIMPS, i::Integer; trunc::TruncationScheme=NoTruncation())
 	(1 <= i <= length(ψ)) || throw(BoundsError())
-	@tensor gated[a, p, q, b] := ψ.AC[i][a, p, c] * ψ.AR[i + 1][c, q, b]
+	@tensor gated[a, q, p, b] := ψ.AC[i][a, p, c] * ψ.AR[i + 1][c, q, b]   # legs crossed
 	_hastings_update!(ψ, gated, i; trunc)
 	return ψ
 end

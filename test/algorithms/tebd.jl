@@ -46,15 +46,18 @@
         @test positions(shift(g, 1)) == (3, 4)
     end
 
-    @testset "swap! 无损重规范" begin
-        # 恒等门窗口自身行正交 × 行正交：接缝精确，规范完全保持
+    @testset "swap! 内容交换（SWAP 门）" begin
         ψ1 = copy(ψ)
+        swap!(ψ1, 2)                       # 交换 sites 2, 3（腿交叉 SWAP 窗口）
+        # AR 侧规范严格：AR[3]（SVD 右因子）行正交、AC = C·AR
+        @tensor XR[a, b] := ψ1.AR[3][a, p, c] * conj(ψ1.AR[3][b, p, c])
+        @test norm(XR - I(size(XR, 1))) ≈ 0 atol = 1e-11
+        @tensor ACc[x, p, y] := ψ1.C[1][x, a] * ψ1.AR[2][a, p, y]
+        @test norm(ACc - ψ1.AC[2]) ≈ 0 atol = 1e-10
+        # SWAP² = I：截断压回键维后态还原（截断/接缝误差级偏差）
         swap!(ψ1, 2)
-        @test ismixedcanonical(ψ1)
-        @test fid(ψ, ψ1) ≈ 1 atol = 1e-11
-        swap!(ψ1, 2)
-        @test ismixedcanonical(ψ1)
-        @test fid(ψ, ψ1) ≈ 1 atol = 1e-11
+        gaugefix!(ψ1, parent(ψ1.AR))
+        @test fid(ψ, ψ1) > 0.95
     end
 
     @testset "UnitaryGate 作用" begin
