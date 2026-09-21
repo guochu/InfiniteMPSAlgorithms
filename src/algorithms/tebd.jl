@@ -206,7 +206,9 @@ up to `min(Dl·d, d·Dr)` on the gate bond before truncation.
 function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=NoTruncation())
 	i, j = g.positions
 	L = length(ψ)
-	(1 <= i < j <= L) || throw(BoundsError())
+	# positions may run one past the cell (bond wrapping: (L, L+1) ≡ the
+	# bond between sites L and 1)
+	(1 <= i < j <= L + 1) || throw(BoundsError())
 	for b in j-1:-1:i+1
 		swap!(ψ, b; trunc)
 	end
@@ -230,7 +232,8 @@ forwarded). Initializes the canonical form if needed.
 function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=NoTruncation(), kwargs...)
 	i, j = g.positions
 	L = length(ψ)
-	(1 <= i < j <= L) || throw(BoundsError())
+	# positions may run one past the cell (bond wrapping, as in apply!(::UnitaryGate))
+	(1 <= i < j <= L + 1) || throw(BoundsError())
 	for b in j-1:-1:i+1
 		swap!(ψ, b; trunc)
 	end
