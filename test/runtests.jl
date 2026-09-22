@@ -38,6 +38,7 @@ end
         include("algorithms/tdvp.jl")
         include("algorithms/observables.jl")
         include("algorithms/arithmetics.jl")
+        include("algorithms/compress.jl")
         include("algorithms/tebd.jl")
         include("algorithms/api.jl")
     end

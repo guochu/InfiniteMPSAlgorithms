@@ -41,3 +41,26 @@
     # 乘积态的 ⟨Z⟩（site 1 处于 |0⟩ = |↑⟩）
     @test real(expectationvalue(ρ, (1,) => σz(T))) ≈ 1 atol = 1e-12
 end
+
+@testset "fidelity / infidelity" begin
+    T = ComplexF64
+    Random.seed!(7)
+    ψ1 = randomimps(T, [2, 2], 6)
+    ψ2 = randomimps(T, [2, 2], 6)
+
+    f11 = fidelity(ψ1, ψ1)
+    @test f11 ≈ 1 atol = 1e-12
+    @test infidelity(ψ1, ψ1) ≈ 0 atol = 1e-12
+    f12 = fidelity(ψ1, ψ2)
+    @test 0 ≤ f12 ≤ 1
+    @test infidelity(ψ1, ψ2) ≈ 1 - f12 atol = 1e-12
+
+    # 相位不变：位点 1 的三族张量同乘 e^{iθ}（保持正交性与恒等式网络的规范旋转）
+    ψ1p = copy(ψ1)
+    ph = exp(0.9im)
+    ψ1p.AL[1] .*= ph
+    ψ1p.AR[1] .*= ph
+    ψ1p.AC[1] .*= ph
+    @test fidelity(ψ1, ψ1p) ≈ 1 atol = 1e-11
+    @test infidelity(ψ1, ψ1p) ≈ 0 atol = 1e-11
+end

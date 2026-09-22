@@ -64,8 +64,8 @@ include("algorithms/vumps.jl")
 include("algorithms/idmrg.jl")
 include("algorithms/tdvp.jl")
 include("algorithms/mult.jl")
-include("algorithms/add.jl")
 include("algorithms/hadamard.jl")
+include("algorithms/compress.jl")
 include("algorithms/arithmetics.jl")
 include("algorithms/tebd.jl")
 
@@ -106,9 +106,12 @@ export
     # ground-state and time-evolution algorithms
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS,
     find_groundstate, timestep, time_evolve, integrate,
-    mult, naive_mult, add, naive_add, hadamard, naive_hadamard,
+    mult, naive_mult, hadamard, naive_hadamard,
     exact_mult, exact_add, exact_hadamard, fuse, mpo_compress,
+    compress, mult!, hadamard!, compress!,
+    changebond!, svdguess_mult, svdguess_hadamard, svdguess_compress,
     vectorize, devectorize, superoperator,
+    fidelity, infidelity,
     DynamicTol, updatetol,
     # TEBD quantum gates
     AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,

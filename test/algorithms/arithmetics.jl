@@ -70,68 +70,6 @@ end
     @test _dense_trace(collect(K)) ≈ c1 .* c2 atol = 1e-10
 end
 
-@testset "add：MPS 加法（朴素精确，对标 MPSKit）" begin
-    T = ComplexF64
-    Random.seed!(42)
-    ψu = prodimps(T, [2, 2], [1, 1])   # |00⟩
-    ψd = prodimps(T, [2, 2], [2, 2])   # |11⟩
-    s = add(ψu, ψd)
-    @test s isa CanonicalIMPS && max_bonddim(s) == 2
-    # 波形 = |00⟩ + |11⟩（trace 表示的振幅矩阵 = 单位阵）
-    @test _dense_mps_repr(s) ≈ Matrix{T}(I, 2, 2) atol = 1e-12
-    # 长度 / 逐 site 物理维不匹配
-    @test_throws DimensionMismatch add(ψu, randomimps(T, [2, 2, 2], 2))
-    @test_throws DimensionMismatch add(ψu, randomimps(T, [3, 2], 2))
-end
-
-@testset "add：MPS 加法压缩（VOMPS 与 IDMRG）" begin
-    T = ComplexF64
-    Random.seed!(42)
-    ψ1 = randomimps(T, [2, 2], 3)
-    d1 = _dense_mps_repr(ψ1)
-    for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
-        Random.seed!(1)
-        s2, _ = add(ψ1, ψ1; D = 3, alg = alg)   # ψ1 + ψ1 = 2ψ1（键 6 → 3 无损）
-        @test max_bonddim(s2) == 3
-        # 同射线：|dot| = 1（Cauchy–Schwarz 饱和）。相位是规范自由度：
-        # IDMRG 的 C 链本征解相位不钉定，cross-dot 可带 twist 相位（VOMPS 继承
-        # ket 相位故恰好为 1）；环迹输出公式中 twist 自动抵消，不影响幅值。
-        @test abs(dot(s2, ψ1)) ≈ 1 atol = 1e-6
-        # 波形与 ψ1 平行（twist 相位鲁棒）：因子 2 被射线规范化吸收
-        ds2 = _dense_mps_repr(s2)
-        @test abs(dot(vec(ds2), vec(d1))) / (norm(ds2) * norm(d1)) ≈ 1 atol = 1e-6
-    end
-end
-
-@testset "add：MPO 加法（朴素精确 + 压缩）" begin
-    T = ComplexF64
-    Random.seed!(43)
-    W1 = randomimpo(T, [2, 2], 2)
-    W2 = randomimpo(T, [2, 2], 3)
-    dW1 = _dense_mpo_repr(W1)
-    dW2 = _dense_mpo_repr(W2)
-    # 朴素：键维直和、稠密算符可加
-    s = add(W1, W2)
-    @test s isa DenseIMPO && bonddim(s, 1) == 5 && bonddim(s, 2) == 5
-    @test _dense_mpo_repr(s) ≈ dW1 + dW2 atol = 1e-10
-    # 与 -W1 相加 = 零（符号经首张量缩放折入，MPSKit 标量乘约定）
-    z = add(W1, -W1)
-    @test _dense_mpo_repr(z) ≈ zeros(T, 2, 2, 2, 2) atol = 1e-10
-    # 压缩：I + I = 2I（键 2 → 1 精确，两算法）。与目标平行即可——整体相位是
-    # 规范自由度不作要求（幅值要求保留在复比例残差中）
-    I2 = identityimpo(T, [2, 2])
-    dI = _dense_mpo_repr(I2)
-    tgt = 2 .* dI
-    for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
-        Random.seed!(1)
-        s2, _ = add(I2, I2; D = 1, alg = alg)
-        @test bonddim(s2, 1) == 1
-        d = _dense_mpo_repr(s2)
-        ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
-        @test norm(vec(tgt) .- ls .* vec(d)) / norm(vec(tgt)) < 1e-6
-    end
-end
-
 @testset "mult：MPO 乘法（朴素精确对照 + 压缩）" begin
     T = ComplexF64
     Random.seed!(44)
@@ -156,7 +94,7 @@ end
     wa = randomimpo(T, [2, 2], 1)
     dwa = _dense_mpo_repr(wa)
     tgt = 2 .* dwa
-    s2 = add(wa, wa)
+    s2 = DenseIMPO(collect(exact_add(wa.Ws, wa.Ws)))
     for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
         Random.seed!(1)
         Pc, ov = mult(s2, I2; D = 1, alg = alg)

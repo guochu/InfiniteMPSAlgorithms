@@ -21,7 +21,6 @@
     ψ = randomimps(T, fill(d, L), chi)
     gaugefix!(ψ, parent(ψ.AR))
     @test ismixedcanonical(ψ)
-    fid(ψ1, ψ2) = abs(dot(ψ1, ψ2)) / (norm(ψ1) * norm(ψ2))
 
     @testset "gate 类型" begin
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
@@ -60,7 +59,7 @@
         # SWAP² = I：截断压回键维后态还原（截断/接缝误差级偏差）
         swap!(ψ1, 2)
         gaugefix!(ψ1, parent(ψ1.AR))
-        @test fid(ψ, ψ1) > 0.95
+        @test fidelity(ψ, ψ1) > 0.95
     end
 
     @testset "UnitaryGate 作用" begin
@@ -69,18 +68,18 @@
         # 无截断：门改变态
         ψ1 = copy(ψ)
         ψ1 = apply!(g, ψ1)
-        @test fid(ψ, ψ1) < 1 - 1e-3
+        @test fidelity(ψ, ψ1) < 1 - 1e-3
         # g† 回到原态（无截断时 Hastings 更新保态精确）
         ψ1 = apply!(adjoint(g), ψ1)
         @test ismixedcanonical(ψ1)
-        @test fid(ψ, ψ1) ≈ 1 atol = 1e-9
+        @test fidelity(ψ, ψ1) ≈ 1 atol = 1e-9
         # 非相邻门：swap 移动 + 门 + swap 移回，g† 后精确还原
         ψ2 = copy(ψ)
         gn = UnitaryGate(Pair(1, 4), G)
         ψ2 = apply!(gn, ψ2)
         ψ2 = apply!(adjoint(gn), ψ2)
         @test ismixedcanonical(ψ2)
-        @test fid(ψ, ψ2) ≈ 1 atol = 1e-9
+        @test fidelity(ψ, ψ2) ≈ 1 atol = 1e-9
         # 截断：gate bond 维数受 trunc 控制
         ψ3 = copy(ψ)
         ψ3 = apply!(g, ψ3; trunc = truncdim(chi))
@@ -105,7 +104,7 @@
             ψD = copy(ψ)
             apply!(g, ψD; trunc = truncdim(D))
             apply!(adjoint(g), ψD; trunc = truncdim(D))
-            f = fid(ψ, ψD)
+            f = fidelity(ψ, ψD)
             @test f >= prev - 1e-12          # 单调不降
             D >= 3 && @test f > 0.9          # D ≥ 3 时接近无损
             prev = f
@@ -113,7 +112,7 @@
         ψD = copy(ψ)
         apply!(g, ψD)                        # NoTruncation
         apply!(adjoint(g), ψD)
-        @test fid(ψ, ψD) ≈ 1 atol = 1e-9     # 无截断极限：精确无损
+        @test fidelity(ψ, ψD) ≈ 1 atol = 1e-9     # 无截断极限：精确无损
     end
 
     @testset "大截断下正则形式保持" begin
@@ -167,7 +166,7 @@
         ψb = copy(ψa)
         swap!(ψb, 2)
         swap!(ψb, 2)
-        @test fid(ψa, ψb) ≈ 1 atol = 1e-9                # SWAP² = I：无损
+        @test fidelity(ψa, ψb) ≈ 1 atol = 1e-9                # SWAP² = I：无损
         @tensor XR[a, b] := ψb.AR[2][a, p, c] * conj(ψb.AR[2][b, p, c])
         @test norm(XR - I(size(XR, 1))) ≈ 0 atol = 1e-9  # 左接缝：右正交
         @tensor XL[c, d] := ψb.AL[3][a, p, c] * conj(ψb.AL[3][a, p, d])
@@ -185,14 +184,14 @@
         ψc2 = copy(ψa)
         apply!(g, ψc2)
         apply!(adjoint(g), ψc2)
-        @test fid(ψa, ψc2) ≈ 1 atol = 1e-9
+        @test fidelity(ψa, ψc2) ≈ 1 atol = 1e-9
         @test ismixedcanonical(ψc2)
         # 非相邻门 roundtrip 同样精确保正则
         ψd = copy(ψa)
         gn = UnitaryGate(Pair(1, 4), G)
         apply!(gn, ψd)
         apply!(adjoint(gn), ψd)
-        @test fid(ψa, ψd) ≈ 1 atol = 1e-9
+        @test fidelity(ψa, ψd) ≈ 1 atol = 1e-9
         @test ismixedcanonical(ψd)
 
         # (3c) iTEBD 用法（见 apply!/swap! 文档）：先用 spectralize! 初始化

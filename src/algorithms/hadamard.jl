@@ -3,8 +3,8 @@
 # Elementwise waveform product `c₁₂ = c₁ .* c2`: virtual legs zipped per site,
 # physical leg shared (kernel `_naive_hadamard_tensor` in arithmetics.jl);
 # the physical dimension is unchanged and the bond dimension becomes the product
-# of the two. The compression assembly is shared with add
-# (_compress_ket / _algebra_result in add.jl).
+# of the two. The compression assembly is shared with the algebra operations
+# (_compress_ket / _algebra_result in compress.jl).
 
 """
     hadamard(ψ₁, ψ₂; D = nothing, alg = VOMPS()) -> CanonicalIMPS
@@ -34,7 +34,8 @@ amplitudes. For a naive reference implementation (construct the whole family,
 then compress) see [`naive_hadamard`](@ref).
 """
 function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS;
-                  D::Union{Nothing,Int} = nothing, alg::Union{VOMPS,IDMRG} = VOMPS())
+                  D::Union{Nothing,Int} = nothing, alg::Union{VOMPS,IDMRG} = VOMPS(),
+                  x0::Union{Nothing,CanonicalIMPS} = nothing)
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
@@ -56,7 +57,7 @@ function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS;
         ℓ -> _naive_hadamard_tensor(ψ1.AC[ℓ], ψ2.AC[ℓ]),
         ℓ -> kron(ψ2.C[ℓ], ψ1.C[ℓ]),
     )
-    x0 = randomimps(T, phydims(ψ1), D)
+    x0 = x0 === nothing ? svdguess_hadamard(ψ1, ψ2, D) : x0
     # lazy zip engine + naive fallback (see _lazy_or_fallback; the naive family
     # is only materialized when the fallback fires)
     return _lazy_or_fallback(
@@ -86,4 +87,38 @@ function naive_hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS;
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
     K = [_naive_hadamard_tensor(ψ1.AL[ℓ], ψ2.AL[ℓ]) for ℓ in 1:length(ψ1)]
     return _algebra_result(K, D, alg)
+end
+
+# ---------------- svdguess_hadamard (deterministic initial guess) & hadamard! (in-place) ----------------
+
+"""
+    svdguess_hadamard(ψ₁, ψ₂, D) -> CanonicalIMPS
+
+Deterministic initial guess of the iterative [`hadamard`](@ref) (reference:
+FiniteMPSAlgorithms' `svdguess_hadamard`): the naive per-site zip (the same
+tensor string as [`exact_hadamard`](@ref), with the exact pointwise product
+amplitudes) followed by the bond-wise SVD truncation to `D`.
+"""
+function svdguess_hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, D::Int)
+    (length(ψ1) == length(ψ2)) ||
+        throw(DimensionMismatch("hadamard requires equal lengths"))
+    all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
+        throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
+    K = [_naive_hadamard_tensor(ψ1.AL[ℓ], ψ2.AL[ℓ]) for ℓ in 1:length(ψ1)]
+    x = CanonicalIMPS(K)
+    return max_bonddim(x) ≤ D ? x : _truncate_bonddim(x, D)
+end
+
+"""
+    hadamard!(out, ψ₁, ψ₂; D, alg = VOMPS()) -> out
+
+In-place [`hadamard`](@ref): `out` is the user-provided state to be optimized
+as the initial guess (its bond profile is first brought to `D` with
+[`changebond!`](@ref)); the optimized result is written back into `out`.
+"""
+function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS;
+                   D::Int, alg::Union{VOMPS,IDMRG} = VOMPS())
+    changebond!(out; D = D)
+    y, _ = hadamard(ψ1, ψ2; D = D, alg = alg, x0 = out)
+    return _copyinto!(out, y)
 end

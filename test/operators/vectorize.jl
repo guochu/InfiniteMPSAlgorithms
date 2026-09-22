@@ -13,7 +13,6 @@
 @testset "vectorize / devectorize / superoperator" begin
     T = ComplexF64
     Random.seed!(2026)
-    fid(ψ1, ψ2) = abs(dot(ψ1, ψ2)) / (norm(ψ1) * norm(ψ2))
 
     @testset "vectorize ⇄ devectorize 精确往返" begin
         Ws = [randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)]      # L=2, d=2, 键 3→3→3
@@ -63,8 +62,10 @@
         ψb, ovb = mult(superoperator(W2; side = :right), vectorize(CanonicalIMPO(W1)))
         @test ova ≈ 2 atol = 1e-10                   # 精确路径 overlap = N
         @test ovb ≈ 2 atol = 1e-10
-        @test fid(ψa, ψref) ≈ 1 atol = 1e-9          # Hilbert–Schmidt 内积下同态
-        @test fid(ψb, ψref) ≈ 1 atol = 1e-9
-        @test fid(ψa, ψb) ≈ 1 atol = 1e-9
+        @test fidelity(ψa, ψref) ≈ 1 atol = 1e-9          # Hilbert–Schmidt 内积下同态
+        @test fidelity(ψb, ψref) ≈ 1 atol = 1e-9
+        @test fidelity(ψa, ψb) ≈ 1 atol = 1e-9
+        # MPO 版 fidelity：devectorize 回算符后的 HS 保真度
+        @test fidelity(devectorize(ψa), CanonicalIMPO(P)) ≈ 1 atol = 1e-9
     end
 end

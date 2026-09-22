@@ -135,8 +135,12 @@ LinearAlgebra.norm(ψ::CanonicalIMPS) = norm(ψ.AC[1])
 """
     LinearAlgebra.normalize!(ψ::CanonicalIMPS)
 
-Normalize `C` and `AC` (consistent with MPSKit: the canonical shape is carried
-by AL/AR).
+Mirror of MPSKit's `normalize!(ψ::InfiniteMPS)` (`normalize!.(ψ.C);
+normalize!.(ψ.AC)`): every bond matrix `C[ℓ]` and every center tensor `AC[ℓ]`
+is normalized to unit Frobenius norm. For a mixed-canonical state the two
+normalizations coincide (`‖AL·C‖ = ‖C‖` for left-orthogonal `AL`), so this is
+exactly the ring normalization `⟨ψ, ψ⟩ = 1` (and
+`norm(ψ) = norm(ψ.AC[1]) = 1`).
 """
 function LinearAlgebra.normalize!(ψ::CanonicalIMPS)
     normalize!.(parent(ψ.C))
@@ -158,6 +162,20 @@ function LinearAlgebra.dot(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS; krylovdim
     λ = vals[1]
     return λ isa Number ? λ : only(λ)
 end
+
+"""
+    fidelity(ψ₁, ψ₂) -> Real
+    infidelity(ψ₁, ψ₂) -> Real
+
+`fidelity = |⟨ψ₁|ψ₂⟩| / (‖ψ₁‖·‖ψ₂‖) ∈ [0, 1]`: the normalized ring overlap.
+Invariant under independent overall phases **and** normalizations of the two
+states, so it compares rays rather than representatives — the natural accuracy
+measure for variational algebra results (which are only defined up to a global
+phase). `infidelity = 1 − fidelity`.
+"""
+fidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS) =
+    abs(dot(ψ₁, ψ₂)) / (norm(ψ₁) * norm(ψ₂))
+infidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS) = 1 - fidelity(ψ₁, ψ₂)
 
 # ---------------- mixed-canonical diagnostics (after InfiniteTEMPO's ismixedcanonical) ----------------
 

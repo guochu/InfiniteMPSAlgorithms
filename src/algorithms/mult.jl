@@ -213,22 +213,6 @@ function _ring_overlap(ketf1::F, ketf2::G, N::Int) where {F,G}
     return tr(reshape(E, D1 * D2, D1 * D2))
 end
 
-"""
-    _ring_scale(x::CanonicalIMPS, K) -> Scalar
-
-Ring-trace alignment scalar `c = (⟨x.AL|K⟩ / ⟨x.AL|x.AL⟩)^(1/N)` (the principal
-N-th root of the [`_ring_overlap`](@ref) ratio). `c^N` is the projection
-coefficient of the target `K` onto the ray of `x` (including phase): after
-multiplying each site by `c`, the output amplitude `c^N·tr(∏x.AL)` exactly
-restores the amplitude of `K` (any bond dimension, gauge robust). Used by the
-mpo*mpo output of `mult`, `_mpo_algebra_result`, and `mpo_compress`.
-"""
-function _ring_scale(x::CanonicalIMPS, K::Vector{<:Array{T,3}}) where {T}
-    N = length(x)
-    xALs = [x.AL[ℓ] for ℓ in 1:N]
-    return (_ring_overlap(xALs, collect(K)) / _ring_overlap(xALs, xALs))^(1 / N)
-end
-
 "Uniform norm normalization (AC and C are scaled together, preserving the
 consistency of `AC = AL·C` and `AR = C[ℓ-1]⁻¹·AC`)."
 function _global_normalize!(x::CanonicalIMPS)
@@ -700,7 +684,7 @@ function _lazy_mpo_result(fams::Vector{<:Tuple}, x0::CanonicalIMPS,
                     fam[4]) for fam in fams]
     x, overlap = _lazy_sweeps(kets, x0, N; alg = alg, tol = alg.tol,
                               maxiter = alg.maxiter, verbosity = alg.verbosity)
-    x = _align_scale_lazy!(x, kets, N)
+    _global_normalize!(x)
     return _mpo_from_mps(x, dus, dds), overlap
 end
 
@@ -748,10 +732,10 @@ function mult(W, ψ::CanonicalIMPS; ψ₀ = nothing, D = nothing,
         # the target ray itself → fidelity = N)
         K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:N]
         y = CanonicalIMPS(collect(K))
-        return y, real(T)(N)
+        return _global_normalize!(y), real(T)(N)
     end
     # D::Int: MPO-channel VOMPS/IDMRG (compute-on-the-fly, no naive target family)
-    x0 = ψ₀ !== nothing ? ψ₀ : randomimps(T, phydims(ψ), D)
+    x0 = ψ₀ !== nothing ? ψ₀ : svdguess_mult(Wm, ψ, D)
     y, _ = if alg isa VOMPS
         _overlap_sweeps(Wm, ψ, x0, nothing; tol = alg.tol, maxiter = alg.maxiter,
                         verbosity = alg.verbosity)
@@ -760,8 +744,9 @@ function mult(W, ψ::CanonicalIMPS; ψ₀ = nothing, D = nothing,
                       verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve)
     end
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
-    # (preserving the ray)
+    # (preserving the ray), then normalize to the package norm convention
     y = CanonicalIMPS(collect(y.AL), y.C[end])
+    _global_normalize!(y)
     # overlap = ring-trace fidelity in [0, N] (the target fuse tensors are
     # generated on demand; the naive family is not materialized)
     yALs = [y.AL[ℓ] for ℓ in 1:N]
@@ -788,6 +773,7 @@ function mult(W, W2::Union{DenseIMPO,CanonicalIMPO}; ψ₀ = nothing, D = nothin
         dds = [size(K4[ℓ], 4) for ℓ in 1:N]
         K3 = asmps_view(K4)
         x = CanonicalIMPS(collect(K3))
+        _global_normalize!(x)
         y = _mpo_from_mps(x, dus, dds)
         return y, real(T)(N)
     end
@@ -802,7 +788,7 @@ function mult(W, W2::Union{DenseIMPO,CanonicalIMPO}; ψ₀ = nothing, D = nothin
     dds = [size(W2c.AL[ℓ], 4) for ℓ in 1:N]
     physdims = dus .* dds
     x0 = _mult_init(CanonicalIMPS(collect(asmps_view(collect(W2c.AC)))),
-                    ψ₀, D, physdims, T)
+                    ψ₀, svdguess_mult(Wm, W2m, D), D)
     f = (fam1, fam2) -> ℓ -> _naive_mul_tensor(fam1[_mod1(ℓ, NW)], fam2[ℓ])
     # the C bond order matches the column-major reshape: composite bond
     # (wl2 major, wl1 minor)
@@ -828,42 +814,18 @@ function _compress_mpo_result(K4::Vector{<:Array{T,4}}, D::Int, alg::Algorithm) 
     dds = [size(K4[ℓ], 4) for ℓ in 1:N]
     K3 = asmps_view(K4)
     x, overlap = _compress_ket(K3, [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D, alg)
-    c = _ring_scale(x, K3)
+    _global_normalize!(x)
     ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
-    return DenseIMPO([c * A for A in ALs4]), overlap
+    return DenseIMPO(ALs4), overlap
 end
 
-"""
-    _align_scale_lazy!(x, ketf, N) -> x
-
-Lazy version of the ring-trace branch of [`_align_scale!`](@ref):
-`c = (⟨x|ket⟩/⟨x|x⟩)^(1/N)`, with the ket tensors generated on demand by
-`ketf(ℓ)` (the ring accumulation keeps only the fused transfer matrix `E`);
-`c` is distributed uniformly over the sites and the `C` chain is scaled in
-sync, preserving gauge consistency.
-"""
-function _align_scale_lazy!(x::CanonicalIMPS, ket::LazyKet, N::Int)
-    return _align_scale_lazy!(x, [ket], N)
-end
-
-function _align_scale_lazy!(x::CanonicalIMPS, kets::Vector{<:LazyKet}, N::Int)
-    xALs = [x.AL[ℓ] for ℓ in 1:N]
-    num = sum(_ring_overlap(xALs, k.ALf, N) for k in kets)   # linear in the target
-    c = (num / _ring_overlap(xALs, xALs))^(1 / N)
-    for ℓ in 1:N
-        x.AC[ℓ] .= x.AC[ℓ] .* c
-        x.C[ℓ] .= x.C[ℓ] .* c
-    end
-    return x
-end
-
-"Initial-state assembly for mult: explicit `ψ₀` takes precedence, then a random
-state of bond dimension `D`, then `default`."
-function _mult_init(default::CanonicalIMPS, ψ₀, D::Union{Nothing,Int},
-                    physdims::AbstractVector{Int}, T::Type)
+"Initial-state assembly for mult: explicit `ψ₀` takes precedence, then the
+`svdguess` SVD-truncation state, then `default`."
+function _mult_init(default::CanonicalIMPS, ψ₀, svdguess::CanonicalIMPS,
+                    D::Union{Nothing,Int})
     isnothing(ψ₀) || return ψ₀
     isnothing(D) && return default
-    return randomimps(T, physdims, D)
+    return svdguess
 end
 
 # ---------------- naive_mult (debug: naive family construction + optional compression) ----------------
@@ -887,11 +849,12 @@ function naive_mult(W, ψ::CanonicalIMPS; ψ₀ = nothing, D = nothing,
     T = promote_type(scalartype(Wm), scalartype(ψ))
     K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:N]        # naive target ray (fuse of W·ψ)
     ket = CanonicalIMPS(K)                   # canonical storage of the target (for the sweeps)
-    x0 = _mult_init(copy(ψ), ψ₀, D, phydims(ψ), T)
+    x0 = _mult_init(copy(ψ), ψ₀, svdguess_mult(Wm, ψ, D), D)
     y, overlap = _mult_compress(alg, ket, x0, K)
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
-    # (preserving the ray)
+    # (preserving the ray), then normalize to the package norm convention
     y = CanonicalIMPS(collect(y.AL), y.C[end])
+    _global_normalize!(y)
     return y, overlap
 end
 
@@ -910,9 +873,9 @@ function naive_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}; ψ₀ = nothing, D = 
     ket = CanonicalIMPS(K3)
     physdims = [size(K3[ℓ], 2) for ℓ in 1:N]
     default0 = CanonicalIMPS(asmps_view(collect(W2m.Ws)))   # keep the W2 bond dimension
-    x0 = _mult_init(default0, ψ₀, D, physdims, T)
+    x0 = _mult_init(default0, ψ₀, svdguess_mult(Wm, W2m, D), D)
     x, overlap = _mult_compress(alg, ket, x0, K3)
-    x = _align_scale!(x, K3)                        # align amplitude/phase onto the target ray
+    _global_normalize!(x)                           # 归一化输出（MPSKit 约定）
     y = _mpo_from_mps(x, dus, dds)                  # → CanonicalIMPO (re-canonicalized)
     return y, overlap
 end
@@ -927,4 +890,58 @@ function _mult_compress(alg::IDMRG, ket, x0, K)
     return _idmrg_sweeps(ket, x0, K;
                          tol = alg.tol, maxiter = alg.maxiter, verbosity = alg.verbosity,
                          alg_eigsolve = alg.alg_eigsolve)
+end
+
+# ---------------- svdguess_mult (deterministic initial guess) & mult! (in-place) ----------------
+
+"""
+    svdguess_mult(W, ψ, D) -> CanonicalIMPS
+    svdguess_mult(W, W2, D) -> CanonicalIMPS
+
+Deterministic initial guess of the iterative [`mult`](@ref) (reference:
+FiniteMPSAlgorithms' `svdguess_mult`): the naive fuse/composition target (the
+same tensor string as [`exact_mult`](@ref)) followed by the bond-wise SVD
+truncation to `D` (the truncation factors act on orthogonality-protected
+bonds, preserving the mixed-canonical form).
+"""
+function svdguess_mult(W, ψ::CanonicalIMPS, D::Int)
+    Wm = W isa DenseIMPO ? W : DenseIMPO(W)
+    (length(ψ) % length(Wm) == 0) ||
+        throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
+    K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:length(ψ)]
+    x = CanonicalIMPS(collect(K))
+    return max_bonddim(x) ≤ D ? x : _truncate_bonddim(x, D)
+end
+
+function svdguess_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, D::Int)
+    Wm = W isa DenseIMPO ? W : DenseIMPO(W)
+    W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
+    (length(W2m) % length(Wm) == 0) ||
+        throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
+    K4 = [_naive_mul_tensor(Wm[_mod1(ℓ, length(Wm))], W2m[ℓ]) for ℓ in 1:length(W2m)]
+    x = CanonicalIMPS(asmps_view(K4))
+    return max_bonddim(x) ≤ D ? x : _truncate_bonddim(x, D)
+end
+
+"""
+    mult!(out, W, ψ; D, alg = VOMPS()) -> out
+    mult!(out, W, W2; D, alg = VOMPS()) -> out
+
+In-place [`mult`](@ref): `out` is the user-provided state/operator to be
+optimized as the initial guess (its bond profile is first brought to `D` with
+[`changebond!`](@ref)); the optimized result is written back into `out`.
+"""
+function mult!(out::CanonicalIMPS, W, ψ::CanonicalIMPS; D::Int,
+               alg::Union{VOMPS,IDMRG} = VOMPS())
+    changebond!(out; D = D)
+    y, _ = mult(W, ψ; ψ₀ = out, D = D, alg = alg)
+    return _copyinto!(out, y)
+end
+
+function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO};
+               D::Int, alg::Union{VOMPS,IDMRG} = VOMPS())
+    changebond!(out; D = D)
+    ψ0 = CanonicalIMPS(asmps_view(collect(out.AC)))
+    y, _ = mult(W, W2; ψ₀ = ψ0, D = D, alg = alg)
+    return _copyinto!(out, y)
 end

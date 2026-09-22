@@ -75,3 +75,83 @@ function randomimpo(::Type{T}, phydims::AbstractVector{Int}, Dw::Int;
     return DenseIMPO(Ws)
 end
 randomimpo(phydims::AbstractVector{Int}, Dw::Int; kwargs...) = randomimpo(ComplexF64, phydims, Dw; kwargs...)
+
+# ---------------- changebond! (bond-profile adjustment; reference: FiniteMPSAlgorithms) ----------------
+
+"`A` 沿维度 `dim` 零填充（截取）到尺寸 `d`（首部子块保留；填充块恒为零）。"
+function _resize_dim(A::AbstractArray{T,N}, dim::Int, d::Int) where {T,N}
+    d0 = size(A, dim)
+    d == d0 && return A
+    sz = ntuple(i -> i == dim ? d : size(A, i), N)
+    B = zeros(T, sz)
+    v = ntuple(i -> i == dim ? (1:min(d, d0)) : (1:size(A, i)), N)
+    B[v...] = A
+    return B
+end
+
+"_bond_feasible_profile(phydims, D)：周期链的均匀可行键 profile（键维不超全环
+物理维乘积；周期闭合要求各 bond 一致，无有限链的首尾边界约束）。"
+function _bond_feasible_profile(phydims::AbstractVector{Int}, D::Int)
+    return fill(min(D, prod(phydims)), length(phydims))
+end
+
+"""
+    changebond!(ψ::CanonicalIMPS; D::Int) -> ψ
+
+把键 profile 调到 `min(D, feasible)`（参考 FiniteMPSAlgorithms 的同名函数）：
+大于目标的键截取前导键指标（混合规范下 `C` 的奇异值降序，前导子块即最优
+截断，正交性由 U/V 的正交性保持），小于目标的键零填充（态不变）。
+用于构造迭代压缩（`mult!` / `compress!`）的初猜。
+"""
+function changebond!(ψ::CanonicalIMPS; D::Int)
+    N = length(ψ)
+    b = _bond_feasible_profile(phydims(ψ), D)
+    T = scalartype(ψ)
+    # 截断超键：逐 bond 在原态上独立 SVD、统一应用（U/V 正交 ⇒ AR 串仍右规范），
+    # 再从 AR 串重建混合规范
+    svds = Dict{Int,Any}()
+    for ℓ in 1:N
+        bonddim(ψ, ℓ) > b[ℓ] || continue
+        svds[ℓ] = tsvd(ψ.C[ℓ]; trunc = truncdim(b[ℓ]))
+    end
+    if !isempty(svds)
+        for ℓ in 1:N
+            ℓm = _mod1(ℓ - 1, N)
+            if haskey(svds, ℓ)
+                U, s, V, _ = svds[ℓ]
+                ψ.AL[ℓ] = @tensor A[a, s2, c] := ψ.AL[ℓ][a, s2, bb] * U[bb, c]
+                ψ.AR[ℓ] = @tensor A[a, s2, c] := ψ.AR[ℓ][a, s2, bb] * U[bb, c]
+                ψ.C[ℓ] = Matrix{T}(Diagonal(s))
+            end
+            if haskey(svds, ℓm)
+                _, _, Vm, _ = svds[ℓm]
+                ψ.AL[ℓ] = @tensor A[a, s2, b] := Vm[a, bb] * ψ.AL[ℓ][bb, s2, b]
+                ψ.AR[ℓ] = @tensor A[a, s2, b] := Vm[a, bb] * ψ.AR[ℓ][bb, s2, b]
+            end
+        end
+        y = CanonicalIMPS(collect(ψ.AR))
+        copy!(ψ.AL, y.AL)
+        copy!(ψ.AR, y.AR)
+        copy!(ψ.C, y.C)
+        copy!(ψ.AC, y.AC)
+    end
+    # 零填充不足的键：在 AC 串（键位 1、3）上扩展（态不变）。零填充破坏
+    # AL/AR 的正交性，随后从填充后的 AC 串整体重建混合规范（FiniteMPSAlgorithms
+    # 同样以无截断 canonicalize! 收尾）。
+    anypad = false
+    for ℓ in 1:N
+        b[ℓ] > bonddim(ψ, ℓ) || continue
+        anypad = true
+        ℓm = _mod1(ℓ - 1, N)
+        ψ.AC[ℓ] = _resize_dim(ψ.AC[ℓ], 1, b[ℓm])
+        ψ.AC[ℓ] = _resize_dim(ψ.AC[ℓ], 3, b[ℓ])
+    end
+    if anypad
+        y = CanonicalIMPS(collect(ψ.AC))
+        copy!(ψ.AL, y.AL)
+        copy!(ψ.AR, y.AR)
+        copy!(ψ.C, y.C)
+        copy!(ψ.AC, y.AC)
+    end
+    return ψ
+end

@@ -122,9 +122,20 @@ dag(W::CanonicalIMPO{T}) where {T} =
 "`LinearAlgebra.norm(W) = norm(W.AC[1])` (consistent with CanonicalIMPS)."
 LinearAlgebra.norm(W::CanonicalIMPO) = norm(W.AC[1])
 
-"Placeholder: the overall scale of an MPO carries physical meaning and its
-normalization is controlled by the compression/algebra pipelines."
-LinearAlgebra.normalize!(W::CanonicalIMPO) = W
+"""
+    LinearAlgebra.normalize!(W) -> W
+
+Mirror of MPSKit's `normalize!(ψ::InfiniteMPS)` on the MPS view: every bond
+matrix `C[ℓ]` and every center tensor `AC[ℓ]` is normalized to unit Frobenius
+norm. For a mixed-canonical operator the two normalizations coincide
+(`‖AL·C‖ = ‖C‖` for left-orthogonal `AL`), so this is exactly the ring
+normalization `⟨W, W⟩ = 1` of the MPS view.
+"""
+function LinearAlgebra.normalize!(W::CanonicalIMPO)
+    normalize!.(W.C)
+    normalize!.(W.AC)
+    return W
+end
 
 "`DenseIMPO(W)`: convert back to a plain MPO using the left-canonical tensor
 string `W.AL`. `tr(∏AL)` is the operator amplitude invariant under gauge
@@ -235,9 +246,8 @@ problems, e.g. for `mult`:
     mult(superoperator(W1; side = :left),  vectorize(W2)) == vectorize(W1 * W2)
     mult(superoperator(W2; side = :right), vectorize(W1)) == vectorize(W1 * W2)
 
-A typical finite-T purification generator is
-`add(superoperator(H; side = :left), superoperator(H; side = :right))`
-(= `H ⊗ I + I ⊗ Hᵀ`).
+A typical finite-T purification generator is the sum of the two channel
+superoperators, `𝓦_L(H) + 𝓦_R(H)` (= `H ⊗ I + I ⊗ Hᵀ`).
 """
 function superoperator(W::DenseIMPO; side::Symbol = :left)
     return DenseIMPO([_superoperator_tensor(W[ℓ], side) for ℓ in 1:length(W)])
@@ -265,36 +275,17 @@ function _superoperator_tensor(W4::AbstractArray{T,4}, side::Symbol) where {T}
 end
 
 """
-    _align_scale!(x::CanonicalIMPS, K::Vector{<:Array{T,3}}) -> x
+    fidelity(W₁, W₂) -> Real
+    infidelity(W₁, W₂) -> Real
 
-Scale/phase alignment between the variational solution `x` and the target
-tensor string `K` (used for the MPS results of the algebra operations):
-
-- If the bond dimensions match `K` exactly: per-site Frobenius-optimal scalar
-  `c_ℓ = ⟨x_AC|K_ℓ⟩/⟨x_AC|x_AC⟩` (restores the original scale and phase exactly);
-- Otherwise: the ring overlap `⟨x|K⟩` is an N-th power in `x`; take the
-  principal N-th root `c = (⟨x|K⟩/⟨x|x⟩)^(1/N)` and distribute it uniformly
-  over the sites (making the ring overlap ⟨x|K⟩ real positive and equal in
-  ring⟨x|x⟩ terms); the `C` chain is scaled in sync to preserve the
-  `AC = AL·C = C·AR` gauge consistency.
+Hilbert–Schmidt fidelity of two operators stored as [`CanonicalIMPO`](@ref):
+`|⟨W₁, W₂⟩_HS| / (‖W₁‖·‖W₂‖) ∈ [0, 1]`, computed as the
+[`fidelity`](@ref) of the vectorized states (the ring overlap of the MPS
+views is the C-weighted operator inner product). Invariant under overall
+phases and scalings; `infidelity = 1 − fidelity`.
 """
-function _align_scale!(x::CanonicalIMPS, K::Vector{<:Array{T,3}}) where {T}
-    N = length(x)
-    if all(size(x.AC[ℓ]) == size(K[ℓ]) for ℓ in 1:N)
-        for ℓ in 1:N
-            c = dot(x.AC[ℓ], K[ℓ]) / dot(x.AC[ℓ], x.AC[ℓ])
-            x.AC[ℓ] .= x.AC[ℓ] .* c
-        end
-    else
-        xALs = [x.AL[ℓ] for ℓ in 1:N]
-        c = (_ring_overlap(xALs, collect(K)) / _ring_overlap(xALs, xALs))^(1 / N)
-        for ℓ in 1:N
-            x.AC[ℓ] .= x.AC[ℓ] .* c
-            x.C[ℓ] .= x.C[ℓ] .* c
-        end
-    end
-    return x
-end
+fidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = fidelity(vectorize(W₁), vectorize(W₂))
+infidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = 1 - fidelity(W₁, W₂)
 
 """
     mpo_compress(W::DenseIMPO, D; tol=1e-10, maxiter=100, verbosity=0) -> (; W, overlap)
@@ -302,13 +293,12 @@ end
 Variationally compress an MPO to bond dimension `D`: view the MPO as an MPS
 (`asmps_view`) and run VOMPS overlap-maximization sweeps on the identity
 channel (equivalent to the bond-`D` variational approximation of the dominant
-eigenvector of the double-layer transfer `W⊗W̄`). The output takes the
-ring-trace alignment scalar `c` times the left-canonical tensors `AL`
-([`_ring_scale`](@ref)): the output amplitude exactly restores the target's
-projection onto the compressed ray (including phase; collecting `AC` would be
-polluted by the C weighting). The per-site phase of the converged state is a
-gauge freedom of the eigen solution (MPSKit likewise does not pin it down).
-Returns the compressed `DenseIMPO` and the final overlap
+eigenvector of the double-layer transfer `W⊗W̄`). The output is the
+**normalized** compressed state mapped back to left-canonical MPO tensors
+(`norm = ‖AC[1]‖ = 1`, the package-wide norm convention; the absolute operator
+amplitude is deliberately not restored — accuracy is measured with
+[`fidelity`](@ref)/[`infidelity`](@ref), which are invariant under scale and
+phase). Returns the compressed `DenseIMPO` and the final overlap
 (normalized fidelity × N; see `_overlap_sweeps`).
 """
 function mpo_compress(W::DenseIMPO, D::Int;
@@ -321,9 +311,9 @@ function mpo_compress(W::DenseIMPO, D::Int;
     x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D)
     x, overlap = _overlap_sweeps(nothing, ket, x0, K;
                                  tol = tol, maxiter = maxiter, verbosity = verbosity)
-    c = _ring_scale(x, K)
+    _global_normalize!(x)
     ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
-    return (; W = DenseIMPO([c * A for A in ALs4]), overlap = overlap)
+    return (; W = DenseIMPO(ALs4), overlap = overlap)
 end
 
 """
@@ -397,4 +387,59 @@ function regauge!(CL::AbstractMatrix{T}, AC::AbstractArray{T,4}; alg = Defaults.
     ACv = reshape(permutedims(AC, (1, 2, 4, 3)), wl, u * d, wr)
     ARv = regauge!(CL, ACv; alg = alg)
     return permutedims(reshape(ARv, wl, u, d, wr), (1, 2, 4, 3))
+end
+"""
+    changebond!(W::CanonicalIMPO; D::Int) -> W
+
+[`changebond!`](@ref) 的 MPO 版（MPS 视图 `(wl, u·d, wr)` 的键 profile 调整，
+物理可行维为 `du·dd`）。
+"""
+function changebond!(W::CanonicalIMPO; D::Int)
+    N = length(W)
+    b = _bond_feasible_profile(phydims(W), D)
+    T = scalartype(W)
+    # 截断超键：逐 bond 独立 SVD、统一应用，再从 AR 串重建混合规范
+    svds = Dict{Int,Any}()
+    for ℓ in 1:N
+        bonddim(W, ℓ) > b[ℓ] || continue
+        svds[ℓ] = tsvd(W.C[ℓ]; trunc = truncdim(b[ℓ]))
+    end
+    if !isempty(svds)
+        for ℓ in 1:N
+            ℓm = _mod1(ℓ - 1, N)
+            if haskey(svds, ℓ)
+                U, s, V, _ = svds[ℓ]
+                W.AL[ℓ] = @tensor A[a, u, c, d] := W.AL[ℓ][a, u, bb, d] * U[bb, c]
+                W.AR[ℓ] = @tensor A[a, u, c, d] := W.AR[ℓ][a, u, bb, d] * U[bb, c]
+                W.C[ℓ] = Matrix{T}(Diagonal(s))
+            end
+            if haskey(svds, ℓm)
+                _, _, Vm, _ = svds[ℓm]
+                W.AL[ℓ] = @tensor A[a, u, c, d] := Vm[a, bb] * W.AL[ℓ][bb, u, c, d]
+                W.AR[ℓ] = @tensor A[a, u, c, d] := Vm[a, bb] * W.AR[ℓ][bb, u, c, d]
+            end
+        end
+        y = CanonicalIMPO(collect(W.AR))
+        copy!(W.AL, y.AL)
+        copy!(W.AR, y.AR)
+        copy!(W.C, y.C)
+        copy!(W.AC, y.AC)
+    end
+    # 零填充：AC 串（键位 1、3）扩展后整体重建混合规范（同 MPS 版的理由）
+    anypad = false
+    for ℓ in 1:N
+        b[ℓ] > bonddim(W, ℓ) || continue
+        anypad = true
+        ℓm = _mod1(ℓ - 1, N)
+        W.AC[ℓ] = _resize_dim(W.AC[ℓ], 1, b[ℓm])
+        W.AC[ℓ] = _resize_dim(W.AC[ℓ], 3, b[ℓ])
+    end
+    if anypad
+        y = CanonicalIMPO(collect(W.AC))
+        copy!(W.AL, y.AL)
+        copy!(W.AR, y.AR)
+        copy!(W.C, y.C)
+        copy!(W.AC, y.AC)
+    end
+    return W
 end
