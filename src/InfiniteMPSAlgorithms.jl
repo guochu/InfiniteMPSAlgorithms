@@ -108,6 +108,7 @@ export
     find_groundstate, timestep, time_evolve, integrate,
     mult, naive_mult, add, naive_add, hadamard, naive_hadamard,
     exact_mult, exact_add, exact_hadamard, fuse, mpo_compress,
+    vectorize, devectorize, superoperator,
     DynamicTol, updatetol,
     # TEBD quantum gates
     AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,

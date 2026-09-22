@@ -166,6 +166,104 @@ function mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus::AbstractVector{Int}, dds
     return out
 end
 
+# ---------------- operator-algebra transforms (vectorize / devectorize / superoperator) ----------------
+
+"""
+    vectorize(W::CanonicalIMPO) -> CanonicalIMPS
+    vectorize(W::Union{DenseIMPO,SparseIMPO}) -> CanonicalIMPS
+
+Vectorize an MPO into an MPS on the doubled (bra ⊗ ket) space: the two
+physical legs of every tensor are fused into one composite index
+
+    f = u + du·(d - 1)
+
+(`u` the bra / operator-row leg is the fast index — the same MPS view as
+[`asmps_view`](@ref), i.e. the row-major vectorization of the operator
+matrix). The bond dimensions and the mixed-canonical gauges are carried over
+verbatim, so the `CanonicalIMPO` conversion is exact (a pure reshape), and
+`dot(vectorize(A), vectorize(B))` is the Hilbert–Schmidt inner product of the
+operators. A `DenseIMPO`/`SparseIMPO` input is mixed-canonicalized first
+(the operator value is preserved exactly in the periodic trace
+representation).
+"""
+function vectorize(W::CanonicalIMPO)
+    return CanonicalIMPS(PeriodicVector(asmps_view(collect(W.AL))),
+                         PeriodicVector(asmps_view(collect(W.AR))),
+                         copy(W.C),
+                         PeriodicVector(asmps_view(collect(W.AC))))
+end
+vectorize(W::DenseIMPO) = vectorize(CanonicalIMPO(W))
+vectorize(W::SparseIMPO) = vectorize(CanonicalIMPO(DenseIMPO(W)))
+
+"""
+    devectorize(ψ::CanonicalIMPS) -> CanonicalIMPO
+
+Inverse of [`vectorize`](@ref): split the fused physical index `f` of every
+site tensor back into the bra/ket pair `(u, d)`. All physical dimensions must
+be equal perfect squares (square operators); the conversion is exact.
+"""
+function devectorize(ψ::CanonicalIMPS)
+    N = length(ψ)
+    p = size(ψ.AL[1], 2)
+    r = isqrt(p)
+    r^2 == p || throw(ArgumentError("physical dimension $p is not a perfect square"))
+    for ℓ in 2:N
+        size(ψ.AL[ℓ], 2) == p ||
+            throw(ArgumentError("inhomogeneous physical dimensions at site $ℓ"))
+    end
+    return _mpo_from_mps(ψ, fill(r, N), fill(r, N))
+end
+
+"""
+    superoperator(W; side = :left) -> DenseIMPO
+
+The left/right multiplication superoperator of an MPO, as an MPO on the
+doubled (bra ⊗ ket) space with the fused index convention of
+[`vectorize`](@ref) (`f = u + du·(d - 1)`, `u` the bra / row leg fast):
+
+- `side = :left` (W ⊗ I): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
+  so that `𝓦 · vec(X)` is `vec(W·X)` (W multiplies from the left);
+- `side = :right` (I ⊗ Wᵀ): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
+  so that `𝓦 · vec(X)` is `vec(X·W)` (W multiplies from the right).
+
+The bond dimensions are unchanged (the spectator channel carries trivial
+δ-bonds) and the physical dimension becomes `du·dd` (square operators only).
+The output is a plain `DenseIMPO` (not canonical). Combined with
+[`vectorize`](@ref) this turns operator–operator products into operator–state
+problems, e.g. for `mult`:
+
+    mult(superoperator(W1; side = :left),  vectorize(W2)) == vectorize(W1 * W2)
+    mult(superoperator(W2; side = :right), vectorize(W1)) == vectorize(W1 * W2)
+
+A typical finite-T purification generator is
+`add(superoperator(H; side = :left), superoperator(H; side = :right))`
+(= `H ⊗ I + I ⊗ Hᵀ`).
+"""
+function superoperator(W::DenseIMPO; side::Symbol = :left)
+    return DenseIMPO([_superoperator_tensor(W[ℓ], side) for ℓ in 1:length(W)])
+end
+superoperator(W::SparseIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
+superoperator(W::CanonicalIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
+
+function _superoperator_tensor(W4::AbstractArray{T,4}, side::Symbol) where {T}
+    wl, du, wr, dd = size(W4)
+    du == dd || throw(ArgumentError("superoperator requires square operators (u == d)"))
+    out = similar(W4, wl, du * dd, wr, du * dd)
+    fill!(out, zero(T))
+    if side === :left
+        for u′ in 1:du, d in 1:dd, u in 1:du          # δ[d', d]
+            out[:, u′ + du * (d - 1), :, u + du * (d - 1)] = W4[:, u′, :, u]
+        end
+    elseif side === :right
+        for u in 1:du, d′ in 1:dd, d in 1:dd          # δ[u', u]
+            out[:, u + du * (d′ - 1), :, u + du * (d - 1)] = W4[:, d, :, d′]
+        end
+    else
+        throw(ArgumentError("side must be :left or :right, got $side"))
+    end
+    return out
+end
+
 """
     _align_scale!(x::CanonicalIMPS, K::Vector{<:Array{T,3}}) -> x
 

@@ -24,6 +24,7 @@ end
         include("operators/mpo.jl")
         include("operators/longrangeop.jl")
         include("operators/w1w2.jl")
+        include("operators/vectorize.jl")
     end
     println("operators: ", round(t; digits = 2), " s")
 end
