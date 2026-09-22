@@ -1,6 +1,6 @@
 # ---------------- SparseIMPO (ported from MPSKit src/operators/mpohamiltonian.jl) ----------------
 #
-# Hamiltonian MPO in Jordan upper-triangular block-matrix form:
+# Hamiltonian MPO in Schur upper-triangular block-matrix form:
 #
 # ```math
 # \begin{pmatrix}
@@ -17,13 +17,13 @@
 """
     SparseIMPO(Ws) -> SparseIMPO
 
-Infinite Hamiltonian MPO in Jordan (sparse) form, stored as a
-`PeriodicVector` of [`JordanMPOTensor`](@ref)s (the periodic tiling is built
+Infinite Hamiltonian MPO in Schur (sparse) form, stored as a
+`PeriodicVector` of [`SchurMPOTensor`](@ref)s (the periodic tiling is built
 into the type; plain `Vector` inputs are converted automatically).
 `Ws[i][j, k]` is the local operator at site `i` from left level `j` to right
 level `k`; entries may be `Missing`, `Number`s, or `(d, d)` matrices.
 """
-struct SparseIMPO{TO<:JordanMPOTensor}
+struct SparseIMPO{TO<:SchurMPOTensor}
     W::PeriodicVector{TO}
     SparseIMPO{TO}(W::PeriodicVector{TO}) where {TO} = new{TO}(W)
 end
@@ -38,10 +38,10 @@ Base.copy(H::SparseIMPO) = SparseIMPO(map(copy, parent(H)))
 Base.iterate(H::SparseIMPO, args...) = iterate(H.W, args...)
 Base.eltype(::Type{SparseIMPO{TO}}) where {TO} = TO
 
-function SparseIMPO(Ws::PeriodicVector{TO}) where {TO<:JordanMPOTensor}
+function SparseIMPO(Ws::PeriodicVector{TO}) where {TO<:SchurMPOTensor}
     return SparseIMPO{TO}(Ws)
 end
-function SparseIMPO(Ws::Vector{TO}) where {TO<:JordanMPOTensor}
+function SparseIMPO(Ws::Vector{TO}) where {TO<:SchurMPOTensor}
     return SparseIMPO{TO}(PeriodicVector(Ws))
 end
 function SparseIMPO(Ws::Vector{<:Matrix})
@@ -49,10 +49,10 @@ function SparseIMPO(Ws::Vector{<:Matrix})
         (size(W, 1) == size(W, 2)) || throw(ArgumentError("level matrices of an infinite Hamiltonian must be square"))
         (size(W, 1) == size(Ws[1], 1)) || throw(ArgumentError("all level matrices must have the same size"))
     end
-    return SparseIMPO(PeriodicVector([JordanMPOTensor(W) for W in Ws]))
+    return SparseIMPO(PeriodicVector([SchurMPOTensor(W) for W in Ws]))
 end
 
-"bonddim(H, ℓ): the number of Jordan virtual levels at site ℓ (per-bond bond
+"bonddim(H, ℓ): the number of Schur virtual levels at site ℓ (per-bond bond
 dimension semantics, mirroring MPSKit's `size(mpo[i], 1)`)."
 bonddim(H::SparseIMPO, ℓ::Integer) = nlvls(H[ℓ])
 "bonddim(H): the uniform level count of the unit cell (the upper-triangular
@@ -161,16 +161,16 @@ transfer-matrix dominant-eigenvector path.
 DenseIMPO(H::SparseIMPO) = DenseIMPO(tompotensors(H))
 
 """
-    infinite_mpo(bulk::JordanMPOTensor) -> DenseIMPO
+    infinite_mpo(bulk::SchurMPOTensor) -> DenseIMPO
 
-Jordan tensor of a periodic bulk → `DenseIMPO` (bond state 1 = the identity
+Schur tensor of a periodic bulk → `DenseIMPO` (bond state 1 = the identity
 channel; the on-site term `D` is merged into the identity→identity channel):
 
 - `W[1, ·, 1, ·] = I + D` (on-site term merged into identity→identity);
 - `W[1, ·, j+1, ·] = C[:, j, :]`, `W[j+1, ·, 1, ·] = B[j, :, :]`,
   `W[i+1, ·, j+1, ·] = A[i, :, j, :]`.
 """
-function infinite_mpo(bulk::JordanMPOTensor)
+function infinite_mpo(bulk::SchurMPOTensor)
     T = scalartype(bulk)
     d = size(bulk.A, 2)
     a = size(bulk.A, 1)

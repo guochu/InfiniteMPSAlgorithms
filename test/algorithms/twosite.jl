@@ -1,7 +1,7 @@
 # =====================================================================
 # unit cell size = 2 的哈密顿量全链路测试
 #
-# H = Σᵢ [J₁ S_{2i-1}·S_{2i} + J₂ S_{2i}·S_{2i+1}]（2-site 单胞 Jordan 形式）：
+# H = Σᵢ [J₁ S_{2i-1}·S_{2i} + J₂ S_{2i}·S_{2i+1}]（2-site 单胞 Schur 形式）：
 # - J₁ = J₂ = 1：均匀 Heisenberg（2-site 单胞表示），e₀ = 1/4 − ln2 精确锚点；
 # - J₁ = 1, J₂ = 1/2：交变耦合（dimerized），VUMPS 与 IDMRG 交叉验证。
 # 覆盖：结构 / vumps / idmrg / mult / w1w2 / tdvp / observables。
@@ -11,7 +11,7 @@
     T = ComplexF64
     e_exact = 0.25 - log(2)          # 均匀 Heisenberg 能量密度（精确）
 
-    # ---- 2-site 单胞 Jordan 哈密顿量 ----
+    # ---- 2-site 单胞 Schur 哈密顿量 ----
     Wd(J) = mpohamiltonian(zeros(T, 2, 2),
                            [(J, Sx(T), Sx(T)), (J, Sy(T), Sy(T)), (J, Sz(T), Sz(T))])
     H = SparseIMPO([Wd(1.0), Wd(1.0)])          # 均匀
@@ -80,16 +80,16 @@
     @test abs(dot(ψa, ψg)) ≈ 1 atol = 1e-8
     @test real(ova) ≈ 2 atol = 1e-8                            # 恒等 MPO 和式期望 = N
 
-    # WII 时间演化（make_time_mpo 直接接受 2-site Jordan 哈密顿量）：能量守恒
-    # （WII·GS 的朴素键维超过默认 trunc.D=64，用 GS 本身作初态）
+    # WII 时间演化（make_time_mpo 直接接受 2-site Schur 哈密顿量）：能量守恒
+    # （D = nothing → 精确的朴素构造 + 规范存储，不压缩）
     W2t = make_time_mpo(H, 0.01, WII())
-    ψw, ovw = mult(W2t, ψg; ψ₀ = ψg)
+    ψw, ovw = mult(W2t, ψg)
     @test abs(real(expectationvalue(ψw, H) / 2) - eg) < 1e-4
     @test real(ovw) > 0.999
 
     # WI 路径（阈值覆盖 WI MPO 自身 O(dt) 能量不守恒，同 1-site 测试）
     W1t = make_time_mpo(H, 0.01, WI())
-    ψw1, _ = mult(W1t, ψg; ψ₀ = ψg)
+    ψw1, _ = mult(W1t, ψg)
     @test abs(real(expectationvalue(ψw1, H) / 2) - eg) < 1e-4
 
     # MPO 压缩：2-site 恒等 MPO 压到 D=1

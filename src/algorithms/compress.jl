@@ -26,22 +26,33 @@ function svdguess_compress(x::CanonicalIMPO, D::Int)
 end
 
 """
-    compress(ψ::CanonicalIMPS; D, alg = VOMPS(), x0 = nothing) -> (CanonicalIMPS, overlap)
-    compress(W::CanonicalIMPO; D, alg = VOMPS(), x0 = nothing) -> (CanonicalIMPO, overlap)
-    compress(W::DenseIMPO; D, alg = VOMPS(), x0 = nothing) -> (DenseIMPO, overlap)
+    compress(ψ::CanonicalIMPS, [alg = VOMPS()]) -> (CanonicalIMPS, overlap)
+    compress(W::CanonicalIMPO, [alg = VOMPS()]) -> (CanonicalIMPO, overlap)
+    compress(W::DenseIMPO, [alg = VOMPS()]) -> (DenseIMPO, overlap)
 
-Bond-dimension-`D` variational approximation of a single chain (mirroring
+Bond-dimension-`alg.D` variational approximation of a single chain (mirroring
 MPSKit's `approximate`: maximize the overlap between the compressed chain and
 the input chain, fixed point = the best rank-`D` approximation in the
 ring-trace fidelity sense). `overlap` is the ring-trace fidelity in [0, N]
-(= N means the input is exactly reproduced). The default initial guess is
-[`svdguess_compress`](@ref) (the input's own SVD truncation); an explicit `x0`
-overrides it. `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or [`IDMRG`](@ref)
-(eigen-solver sweeps), which share the same fixed point.
+(= N means the input is exactly reproduced). `alg.D = nothing` (or
+`alg.D ≥ max_bonddim` of the input) short-circuits to the exact input. The
+default initial guess is [`svdguess_compress`](@ref) (the input's own SVD
+truncation). The positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or
+[`IDMRG`](@ref) (eigen-solver sweeps), which share the same fixed point.
 """
-function compress(ψ::CanonicalIMPS; D::Int, alg::Union{VOMPS,IDMRG} = VOMPS(),
-                  x0::Union{Nothing,CanonicalIMPS} = nothing)
-    (D < max_bonddim(ψ)) ||
+compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG} = VOMPS()) =
+    _compress(ψ, alg; x0 = nothing, D = alg.D)
+
+compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG} = VOMPS()) =
+    _compress(W, alg; x0 = nothing, D = alg.D)
+
+compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG} = VOMPS()) =
+    _compress(W, alg; x0 = nothing, D = alg.D)
+
+function _compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG};
+                   x0::Union{Nothing,CanonicalIMPS} = nothing,
+                   D::Union{Nothing,Int} = nothing)
+    (D === nothing || D >= max_bonddim(ψ)) &&
         return copy(ψ), real(length(ψ))
     K = collect(ψ.AC)
     x0 = x0 === nothing ? svdguess_compress(ψ, D) : x0
@@ -55,9 +66,10 @@ function compress(ψ::CanonicalIMPS; D::Int, alg::Union{VOMPS,IDMRG} = VOMPS(),
     return _global_normalize!(x), overlap
 end
 
-function compress(W::CanonicalIMPO; D::Int, alg::Union{VOMPS,IDMRG} = VOMPS(),
-                  x0::Union{Nothing,CanonicalIMPS} = nothing)
-    (D < max_bonddim(W)) ||
+function _compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG};
+                   x0::Union{Nothing,CanonicalIMPS} = nothing,
+                   D::Union{Nothing,Int} = nothing)
+    (D === nothing || D >= max_bonddim(W)) &&
         return copy(W), real(length(W))
     N = length(W)
     dus = [size(W.AL[ℓ], 2) for ℓ in 1:N]
@@ -76,9 +88,10 @@ function compress(W::CanonicalIMPO; D::Int, alg::Union{VOMPS,IDMRG} = VOMPS(),
     return _mpo_from_mps(x, dus, dds), overlap
 end
 
-function compress(W::DenseIMPO; D::Int, alg::Union{VOMPS,IDMRG} = VOMPS(),
-                  x0::Union{Nothing,CanonicalIMPS} = nothing)
-    (D < max_bonddim(W)) ||
+function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG};
+                   x0::Union{Nothing,CanonicalIMPS} = nothing,
+                   D::Union{Nothing,Int} = nothing)
+    (D === nothing || D >= max_bonddim(W)) &&
         return copy(W), real(length(W))
     N = length(W)
     dus = [size(W[ℓ], 2) for ℓ in 1:N]
@@ -101,24 +114,28 @@ end
 # ---------------- compress! (in-place) ----------------
 
 """
-    compress!(out, ψ::CanonicalIMPS; D, alg = VOMPS()) -> out
-    compress!(out, W::CanonicalIMPO; D, alg = VOMPS()) -> out
+    compress!(out, ψ::CanonicalIMPS, [alg = VOMPS()]) -> out
+    compress!(out, W::CanonicalIMPO, [alg = VOMPS()]) -> out
 
 In-place [`compress`](@ref): `out` is the user-provided chain to be optimized
-as the initial guess (its bond profile is first brought to `D` with
-[`changebond!`](@ref)); the optimized result is written back into `out`.
+as the initial guess. The target bond dimension is taken from the bond profile
+of `out` (its bond profile is first brought to uniform `D = max_bonddim(out)`
+with [`changebond!`](@ref)); `alg.D` is ignored. The optimized result is
+written back into `out`.
 """
-function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS; D::Int,
+function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG} = VOMPS())
+    D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = compress(ψ; D = D, alg = alg, x0 = out)
+    y, _ = _compress(ψ, alg; x0 = out, D = D)
     return _copyinto!(out, y)
 end
 
-function compress!(out::CanonicalIMPO, W::CanonicalIMPO; D::Int,
+function compress!(out::CanonicalIMPO, W::CanonicalIMPO,
                    alg::Union{VOMPS,IDMRG} = VOMPS())
+    D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = compress(W; D = D, alg = alg, x0 = CanonicalIMPS(asmps_view(collect(out.AC))))
+    y, _ = _compress(W, alg; x0 = CanonicalIMPS(asmps_view(collect(out.AC))), D = D)
     return _copyinto!(out, y)
 end
 

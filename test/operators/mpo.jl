@@ -8,7 +8,7 @@
     @test bonddim(Hm, 1) == 4   # identity + 3 个通道（SxSx/SySy/SzSz 共 3 个 NN 项）
 
     # 稠密 DenseIMPO 路径可运行（能量收敛性与 MPSKit 保持一致：
-    # 恒等通道主导本征向量污染，见 PLAN §9；收敛断言只在 Jordan 路径检查）
+    # 恒等通道主导本征向量污染，见 PLAN §9；收敛断言只在 Schur 路径检查）
     ψd, envsd, ϵd = find_groundstate(randomimps(T, [2, 2], 10), Hm,
                                      VUMPS(maxiter = 10, tol = 1e-9, verbosity = 0))
     @test expectationvalue(ψd, Hm, envsd) isa Number
@@ -24,7 +24,7 @@
     @test abs(imag(expectationvalue(ψf, Hf))) < 1e-12
 end
 
-@testset "Jordan SparseIMPO" begin
+@testset "Schur SparseIMPO" begin
     T = ComplexF64
     e_exact = 0.25 - log(2)
 
@@ -44,13 +44,13 @@ end
     @test H[1][1, 5] ≈ H[1].D
     @test H[1][1, 2] ≈ H[1].C[:, 1, :]
 
-    # 有限链逐项能量对照：Jordan 收缩 vs 显式算符平均（随机态、短链近似）
+    # 有限链逐项能量对照：Schur 收缩 vs 显式算符平均（随机态、短链近似）
     ψ0 = randomimps(T, [2, 2], 10)
     envs = DMRGCache(ψ0, H)
     eH = real(expectationvalue(ψ0, H, envs))
     @test isfinite(eH) && abs(imag(eH)) < 1e-10
 
-    # VUMPS 在 Jordan 哈密顿量上收敛到精确能量密度
+    # VUMPS 在 Schur 哈密顿量上收敛到精确能量密度
     # 阈值覆盖随机初态的亚稳态收敛（变分极限与 MPSKit 逐位一致，见 debug/suite_full.log）
     ψr, envsr, ϵ = find_groundstate(ψ0, H, VUMPS(maxiter = 300, tol = 1e-10))
     er = real(expectationvalue(ψr, H, envsr) / 2)
@@ -67,7 +67,7 @@ end
     ψp = prodimps(T, [2], [1])   # 全 |0⟩（σz = +1）
     @test abs(real(expectationvalue(ψp, Ht)) - (-1.0)) < 1e-12
 
-    # make_time_mpo 路径（Jordan → Schur bulk）
+    # make_time_mpo 路径（SparseIMPO 的逐 site Schur tensor 演化）
     U = make_time_mpo(H, 0.01, WII(); imaginary_evolution = true)
     @test U isa DenseIMPO
 end

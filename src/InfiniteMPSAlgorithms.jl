@@ -37,7 +37,7 @@ include("states/constructors.jl")
 
 # ---- operators ----
 include("operators/infinitempo.jl")
-include("operators/jordanmpotensor.jl")
+include("operators/sparsempotensor.jl")
 include("operators/mpohamiltonian.jl")
 include("operators/longrangeop.jl")
 # CanonicalIMPO (a "states" data structure; contains the MPS view
@@ -116,8 +116,8 @@ export
     # TEBD quantum gates
     AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,
     spectralize!,
-    # SparseIMPO (Jordan structure) and time-evolution MPOs
-    JordanMPOTensor, SparseIMPO,
+    # SparseIMPO (Schur structure) and time-evolution MPOs
+    SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,
     isidentitylevel, isemptylevel, nlvls,
     tompotensors, tompotensor, infinite_mpo,

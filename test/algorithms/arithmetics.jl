@@ -83,7 +83,7 @@ end
           reshape(_dense_mpo_repr(W1), 4, 4) * reshape(_dense_mpo_repr(W2), 4, 4) atol = 1e-10
     # 迭代乘法：W1·I = W1（D = 2 = 目标键维）。与目标平行即可（整体相位/尺度是
     # 输出射线规范的自由度）
-    P1, ov1 = mult(W1, I2; D = 2)
+    P1, ov1 = mult(W1, I2, VOMPS(D = 2))
     @test P1 isa CanonicalIMPO && bonddim(P1, 1) == 2
     @test real(ov1) > 2 - 1e-6   # overlap = N 即方向一致
     dP1 = vec(_dense_mpo_repr(DenseIMPO(P1)))
@@ -95,9 +95,9 @@ end
     dwa = _dense_mpo_repr(wa)
     tgt = 2 .* dwa
     s2 = DenseIMPO(collect(exact_add(wa.Ws, wa.Ws)))
-    for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
+    for alg in (VOMPS(D = 1, maxiter = 200), IDMRG(D = 1, maxiter = 200))
         Random.seed!(1)
-        Pc, ov = mult(s2, I2; D = 1, alg = alg)
+        Pc, ov = mult(s2, I2, alg)
         @test bonddim(Pc, 1) == 1
         d = _dense_mpo_repr(DenseIMPO(Pc))
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
@@ -125,8 +125,8 @@ end
     @test norm(tgt .- ls .* dH) / norm(tgt) < 1e-10
 
     # 压缩路径（两算法）：D = 9 = 精确键维 → 无损，与 exact 平行
-    for alg in (VOMPS(maxiter = 200), IDMRG(maxiter = 200))
-        Hc, _ = hadamard(ψ1, ψ2; D = 9, alg = alg)
+    for alg in (VOMPS(D = 9, maxiter = 200), IDMRG(D = 9, maxiter = 200))
+        Hc, _ = hadamard(ψ1, ψ2, alg)
         @test max_bonddim(Hc) == 9
         @test abs(dot(Hc, H12)) > 1 - 1e-8
     end

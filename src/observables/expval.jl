@@ -72,7 +72,7 @@ end
 """
     expectationvalue(ψ, H::SparseIMPO, [envs])
 
-Jordan-Hamiltonian energy (mirrors MPSKit): per site only the **closed
+Schur-Hamiltonian energy (mirrors MPSKit): per site only the **closed
 column** `H[site][:, 1, 1, end]` is contracted (the on-site `D`, the closing
 `B`, and the identity bookkeeping terms), i.e.
 

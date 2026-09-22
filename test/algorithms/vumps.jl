@@ -1,7 +1,7 @@
 @testset "VUMPS 基态" begin
     T = ComplexF64
 
-    # XXZ Δ=1（Heisenberg，Jordan 哈密顿量）：e₀ = 1/4 − ln2
+    # XXZ Δ=1（Heisenberg，Schur 哈密顿量）：e₀ = 1/4 − ln2
     # 阈值覆盖随机初态的亚稳态收敛（与 MPSKit 同 iter/同样的逐位变分极限）
     Hxxz = heisenberg_hamiltonian(T = T)
     ψ0 = randomimps(T, [2, 2], 12)

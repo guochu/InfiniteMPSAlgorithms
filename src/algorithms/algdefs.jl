@@ -4,10 +4,14 @@
 # algorithms are collected here.
 
 """
-    VUMPS(; tol, maxiter, verbosity, alg_gauge, alg_eigsolve, alg_environments, finalize)
+    VUMPS(; D, tol, maxiter, verbosity, alg_gauge, alg_eigsolve, alg_environments, finalize)
 
 Uniform-MPS variational ground-state algorithm (Zaletel–Pollmann /
 Vanderstraeten et al.; mirrors MPSKit's `VUMPS`).
+
+`D` is the (reserved) target bond dimension: `find_groundstate` takes the
+bond dimension from the provided initial state `ψ₀`, so `alg.D` is currently
+ignored by the ground-state drivers.
 
 Each iteration (MPSKit template):
 1. `localupdate_step!`: solve the smallest-eigenpair problems of
@@ -19,6 +23,7 @@ Each iteration (MPSKit template):
 4. the `finalize` callback; convergence criterion `calc_galerkin ≤ tol`.
 """
 @kwdef struct VUMPS{F} <: Algorithm
+    D::Union{Nothing,Int} = nothing
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
@@ -29,9 +34,14 @@ Each iteration (MPSKit template):
 end
 
 """
-    IDMRG(; tol, maxiter, verbosity, alg_gauge, alg_eigsolve)
+    IDMRG(; D, tol, maxiter, verbosity, alg_gauge, alg_eigsolve)
 
 Single-site infinite DMRG (mirrors MPSKit's `IDMRG`).
+
+`D` is the (reserved) target bond dimension: `find_groundstate` takes the
+bond dimension from the provided initial state `ψ₀`, so `alg.D` is currently
+ignored by the ground-state drivers (the compression path of `mult` /
+`compress` / `hadamard` takes `D` from `alg.D`).
 
 Each iteration (MPSKit template):
 1. forward sweep: solve the `AC_hamiltonian` smallest-eigenpair problem site by
@@ -47,6 +57,7 @@ Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 `InfiniteMPS(mps.AR)`) and the environments are recomputed.
 """
 @kwdef struct IDMRG{A} <: Algorithm
+    D::Union{Nothing,Int} = nothing
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
@@ -55,14 +66,20 @@ Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 end
 
 """
-    VOMPS(; tol, maxiter, verbosity)
+    VOMPS(; D, tol, maxiter, verbosity)
 
 Overlap-maximization algorithm parameters for the iterative
-MPO·MPS / MPO·MPO multiplication (named after MPSKit's `VOMPS` family). The
-bond dimension is fixed by the initial state (overlap maximization over the
-variational manifold, consistent with MPSKit).
+MPO·MPS / MPO·MPO multiplication (named after MPSKit's `VOMPS` family).
+The bond dimension is fixed by `D`: `D = nothing` (the default) returns the
+exact naive construction without compression; `D::Int` variationally
+compresses to bond dimension `D` (overlap maximization over the variational
+manifold, consistent with MPSKit). The driver functions (`mult`, `compress`,
+`hadamard`) take the bond dimension from `alg.D`; the in-place drivers
+(`mult!`, `compress!`, `hadamard!`) take it from the provided initial guess
+`out` and ignore `alg.D`.
 """
 @kwdef struct VOMPS <: Algorithm
+    D::Union{Nothing,Int} = nothing
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity

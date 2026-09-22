@@ -22,7 +22,7 @@
     @test max_bonddim(ψ8) <= 8
     @test abs(e8 - e_exact) < 1e-3
 
-    # 与稠密 DenseIMPO 的 VUMPS 能量（Jordan 重建态上）一致
+    # 与稠密 DenseIMPO 的 VUMPS 能量（Schur 重建态上）一致
     Hd = DenseIMPO(H)
     @test length(Hd) == 1
 end

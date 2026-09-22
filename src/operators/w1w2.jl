@@ -1,5 +1,5 @@
 # W^I / W^II time-evolution MPOs — interface aligned with MPSKit (`WI`/`WII`/
-# `make_time_mpo`, acting on JordanMPOTensor). Reference: arXiv:1407.1832
+# `make_time_mpo`, acting on SchurMPOTensor). Reference: arXiv:1407.1832
 # "Time-evolving a matrix product state with long-ranged interactions". The
 # block-operator matrix exponential of W^II is assembled into a dense
 # (4d)×(4d) matrix and passed to LinearAlgebra.exp, equivalent to TEMPO's
@@ -27,12 +27,12 @@ mirrors MPSKit's `WII`).
     maxiter::Int = Defaults.maxiter
 end
 
-# ---- Jordan block extraction ----
+# ---- Schur block extraction ----
 
-get_A(W::JordanMPOTensor) = [W.A[i, :, j, :] for i in 1:size(W.A, 1), j in 1:size(W.A, 3)]
-get_B(W::JordanMPOTensor) = [W.B[i, :, :] for i in 1:size(W.B, 1)]
-get_C(W::JordanMPOTensor) = [W.C[:, j, :] for j in 1:size(W.C, 2)]
-get_D(W::JordanMPOTensor) = W.D
+get_A(W::SchurMPOTensor) = [W.A[i, :, j, :] for i in 1:size(W.A, 1), j in 1:size(W.A, 3)]
+get_B(W::SchurMPOTensor) = [W.B[i, :, :] for i in 1:size(W.B, 1)]
+get_C(W::SchurMPOTensor) = [W.C[:, j, :] for j in 1:size(W.C, 2)]
+get_D(W::SchurMPOTensor) = W.D
 
 function _sqrt2(dt::Complex)
     r = sqrt(dt)
@@ -50,7 +50,7 @@ function _sqrt2(dt::Real)
 end
 
 # The evolved identity-channel payload `WD` (`Wd[1,:,1,:] = WD`); propagation
-# blocks are placed at their original Jordan block positions.
+# blocks are placed at their original Schur block positions.
 function _timempo_dense(WA, WB, WC, WD)
     a1, a2 = size(WA)
     T = promote_type(eltype(WD), eltype(eltype(WA)),
@@ -71,7 +71,7 @@ function _timempo_dense(WA, WB, WC, WD)
     return Wd
 end
 
-function _timempo_dense(W::JordanMPOTensor, dt::Number, alg::WI)
+function _timempo_dense(W::SchurMPOTensor, dt::Number, alg::WI)
     WA = get_A(W)
     δ₁, δ₂ = _sqrt2(dt)
     WB = get_B(W) .* δ₁
@@ -81,7 +81,7 @@ function _timempo_dense(W::JordanMPOTensor, dt::Number, alg::WI)
     return _timempo_dense(WA, WB, WC, WD)
 end
 
-function _timempo_dense(W::JordanMPOTensor, dt::Number, alg::WII)
+function _timempo_dense(W::SchurMPOTensor, dt::Number, alg::WII)
     A, B, C, D = get_A(W), get_B(W), get_C(W), get_D(W)
     d = size(W.A, 2)
     T = promote_type(scalartype(W), typeof(dt))
@@ -114,19 +114,19 @@ function _timempo_dense(W::JordanMPOTensor, dt::Number, alg::WII)
 end
 
 """
-    make_time_mpo(bulk::JordanMPOTensor, dt, alg::Union{WI,WII};
+    make_time_mpo(bulk::SchurMPOTensor, dt, alg::Union{WI,WII};
                   imaginary_evolution = false) -> DenseIMPO
     make_time_mpo(H::SparseIMPO, dt, alg; kwargs...) -> DenseIMPO
 
 Build the periodic time-evolution MPO approximating `exp(-i·H·dt)` (mirrors
 MPSKit's `make_time_mpo`; with `imaginary_evolution = true` it is
 `exp(-H·dt)`). Internally implements the W^I/W^II block-exponential schemes;
-for an `SparseIMPO`, the Jordan tensor of **every site** in the unit cell
+for an `SparseIMPO`, the Schur tensor of **every site** in the unit cell
 is evolved separately (mirroring MPSKit's
 `tmap(parent(H)) do W ... end` + `DenseIMPO(PeriodicArray(O))`), supporting
 arbitrary unit-cell lengths.
 """
-function make_time_mpo(bulk::JordanMPOTensor, dt::Number, alg::Union{WI,WII};
+function make_time_mpo(bulk::SchurMPOTensor, dt::Number, alg::Union{WI,WII};
                        imaginary_evolution::Bool = false)
     δ = imaginary_evolution ? -dt : -im * dt
     return DenseIMPO([_timempo_dense(bulk, δ, alg)])
@@ -135,7 +135,7 @@ end
 function make_time_mpo(H::SparseIMPO, dt::Number, alg::Union{WI,WII};
                        imaginary_evolution::Bool = false)
     δ = imaginary_evolution ? -dt : -im * dt
-    # mirroring MPSKit: evolve the Jordan tensor of every site in the unit cell
+    # mirroring MPSKit: evolve the Schur tensor of every site in the unit cell
     # (supports arbitrary unit-cell lengths)
     O = [_timempo_dense(W, δ, alg) for W in parent(H)]
     return DenseIMPO(O)

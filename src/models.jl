@@ -1,12 +1,12 @@
-# ---------------- physical models (Jordan bulk → DenseIMPO; Jordan level matrices → SparseIMPO) ----------------
+# ---------------- physical models (Schur bulk → DenseIMPO; Schur level matrices → SparseIMPO) ----------------
 #
 # H = Σᵢ h1ᵢ + Σᵢ Σₚ coeffₚ · aₚ,ᵢ ⊗ bₚ,ᵢ₊₁ (on-site + nearest neighbor;
 # periodic boundary conditions)
 
 """
-    bulk_mpo(h1, pairs) -> JordanMPOTensor
+    bulk_mpo(h1, pairs) -> SchurMPOTensor
 
-Build the Jordan bulk tensor of an on-site + nearest-neighbor Hamiltonian:
+Build the Schur bulk tensor of an on-site + nearest-neighbor Hamiltonian:
 
 - `h1`: the on-site operator (may be 0);
 - `pairs`: a list of `(coeff, a, b)` tuples, corresponding to the
@@ -35,7 +35,7 @@ function bulk_mpo(h1, pairs::Vector{<:Tuple})
         cell[i+1, i+1] = zero(T)
         cell[i+1, end] = b
     end
-    return JordanMPOTensor(cell)
+    return SchurMPOTensor(cell)
 end
 
 # ---- common operators (Pauli matrices, spin 1/2) ----
@@ -50,7 +50,7 @@ Sz(::Type{T} = ComplexF64) where {T} = σz(T) ./ 2
 """
     mpohamiltonian(h1, pairs) -> Matrix
 
-Jordan level matrix of an on-site + nearest-neighbor Hamiltonian (for
+Schur level matrix of an on-site + nearest-neighbor Hamiltonian (for
 `SparseIMPO`): levels `1`/`n` are the unit levels, `[1, n] = h1`,
 and channel `k`: `[1, k+1] = coeffₖ·aₖ`, `[k+1, n] = bₖ`.
 """
@@ -76,7 +76,7 @@ end
 """
     heisenberg_hamiltonian(; J=1.0, Δ=1.0, h=0.0, T=ComplexF64) -> SparseIMPO
 
-Jordan form of `H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`.
+Schur form of `H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`.
 """
 function heisenberg_hamiltonian(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0,
                                 T::Type = ComplexF64)
@@ -87,7 +87,7 @@ end
 """
     tfim_hamiltonian(; J=1.0, h=1.0, T=ComplexF64) -> SparseIMPO
 
-Jordan form of the transverse-field Ising model
+Schur form of the transverse-field Ising model
 `H = −J Σ σˣσˣ − h Σ σᶻ`.
 """
 function tfim_hamiltonian(; J::Real = 1.0, h::Real = 1.0, T::Type = ComplexF64)
@@ -100,7 +100,7 @@ end
 
 `H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`. For J=Δ=1 the ground-state energy
 density is `1/4 − ln2`. Returns `(; mpo, bulk)`: `mpo` is the periodic
-`DenseIMPO` and `bulk` the Jordan bulk (for time evolution via
+`DenseIMPO` and `bulk` the Schur bulk (for time evolution via
 `make_time_mpo`).
 """
 function heisenberg_xxz(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0, T::Type = ComplexF64)

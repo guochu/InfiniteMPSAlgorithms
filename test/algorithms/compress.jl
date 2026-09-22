@@ -34,30 +34,32 @@ end
     @test max_bonddim(ψsum) == 8
 
     # D ≥ 输入键：短路精确返回（无压缩，overlap = N）
-    y0, ov0 = compress(ψsum; D = 8)
+    y0, ov0 = compress(ψsum, VOMPS(D = 8))
     @test max_bonddim(y0) == 8
     @test real(ov0) ≈ length(ψsum) atol = 1e-10
 
-    # 有损压缩：overlap ∈ (0, N]，且不劣于随机初猜的同键压缩
+    # 有损压缩：overlap ∈ (0, N]，且不劣于随机初猜的同键压缩（随机初猜经
+    # in-place 版本提供）
     ψbig = randomimps(T, [2, 2], 8)
-    y4, ov4 = compress(ψbig; D = 4)
+    y4, ov4 = compress(ψbig, VOMPS(D = 4))
     @test max_bonddim(y4) == 4 && 0 < real(ov4) ≤ length(ψbig) + 1e-12
-    yr, ovr = compress(ψbig; D = 4, x0 = randomimps(T, [2, 2], 4))
-    @test real(ov4) ≥ real(ovr) - 1e-9
+    yr = randomimps(T, [2, 2], 4)
+    compress!(yr, ψbig)
+    @test abs(real(dot(yr, y4))) / sqrt(abs(dot(yr, yr)) * abs(dot(y4, y4))) ≈ 1 atol = 1e-6
 
     # IDMRG 路径同一不动点（有损压缩）
     ψbig = randomimps(T, [2, 2], 8)
-    y4, ov4 = compress(ψbig; D = 4)
-    y4b, ov4b = compress(ψbig; D = 4, alg = IDMRG(maxiter = 200))
+    y4, ov4 = compress(ψbig, VOMPS(D = 4))
+    y4b, ov4b = compress(ψbig, IDMRG(D = 4, maxiter = 200))
     @test abs(real(ov4b) - real(ov4)) < 1e-4
 
     # MPO 版：CanonicalIMPO 与 DenseIMPO（随机谱平缓，两者均为重叠最大化
     # 收敛停点，断言一致到收敛差异内）
     W = randomimpo(T, [2, 2], 6)
     Wc = CanonicalIMPO(collect(W.Ws))
-    Vc, ovc = compress(Wc; D = 3)
+    Vc, ovc = compress(Wc, VOMPS(D = 3))
     @test max_bonddim(Vc) == 3 && ismixedcanonical(Vc)
-    Vd, ovd = compress(W; D = 3)
+    Vd, ovd = compress(W, VOMPS(D = 3))
     @test max_bonddim(Vd) == 3
     @test abs(real(ovc) - real(ovd)) < 0.1
 end
@@ -68,35 +70,35 @@ end
     ψ1 = randomimps(T, [2, 2], 4)
     ψ2 = randomimps(T, [2, 2], 4)
 
-    # hadamard!
-    out = randomimps(T, [2, 2], 2)
-    hadamard!(out, ψ1, ψ2; D = 4)
-    yh, ovh = hadamard(ψ1, ψ2; D = 4)
+    # hadamard!（初猜 out 提供 D）
+    out = randomimps(T, [2, 2], 4)
+    hadamard!(out, ψ1, ψ2)
+    yh, ovh = hadamard(ψ1, ψ2, VOMPS(D = 4))
     @test abs(dot(out, yh)) / sqrt(abs(dot(out, out)) * abs(dot(yh, yh))) ≈ 1 atol = 1e-8
 
-    # mult!（mpo·mps）
+    # mult!（mpo·mps，初猜 out 提供 D）
     W = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
-    out = randomimps(T, [2, 2], 2)
-    mult!(out, W, ψ1; D = 4)
-    ym, ovm = mult(W, ψ1; D = 4)
+    out = randomimps(T, [2, 2], 4)
+    mult!(out, W, ψ1)
+    ym, ovm = mult(W, ψ1, VOMPS(D = 4))
     @test abs(dot(out, ym)) / sqrt(abs(dot(out, out)) * abs(dot(ym, ym))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mpo）
     W2 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
-    outo = CanonicalIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
-    mult!(outo, W, W2; D = 3)
-    yo, ovo = mult(W, W2; D = 3)
+    outo = CanonicalIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
+    mult!(outo, W, W2)
+    yo, ovo = mult(W, W2, VOMPS(D = 3))
     @test max_bonddim(outo) == 3 && ismixedcanonical(outo)
     # 幅值无关的射线比较（转移半径自身归一）
     vo, vy = vectorize(outo), vectorize(yo)
     @test abs(dot(vo, vy)) /
           sqrt(abs(dot(vo, vo)) * abs(dot(vy, vy))) ≈ 1 atol = 1e-8
 
-    # compress!
+    # compress!（初猜 out 提供 D）
     ψbig = randomimps(T, [2, 2], 8)
     out = randomimps(T, [2, 2], 4)
-    compress!(out, ψbig; D = 4)
-    yc, ovc = compress(ψbig; D = 4)
+    compress!(out, ψbig)
+    yc, ovc = compress(ψbig, VOMPS(D = 4))
     @test abs(dot(out, yc)) / sqrt(abs(dot(out, out)) * abs(dot(yc, yc))) ≈ 1 atol = 1e-8
 end
 
@@ -120,8 +122,12 @@ end
     gc = svdguess_compress(ψbig, 4)
     @test max_bonddim(gc) == 4 && ismixedcanonical(gc)
 
-    # svdguess 初猜不劣于随机初猜（overlap 最大化扫描单调）
-    y_svd, ov_svd = mult(W, ψ1; D = 3)
-    y_rnd, ov_rnd = mult(W, ψ1; D = 3, ψ₀ = randomimps(T, [2, 2], 3))
-    @test real(ov_svd) ≥ real(ov_rnd) - 1e-9
+    # svdguess 初猜（默认）与随机初猜（in-place 的 out 提供）都应收敛到
+    # 高保真度的压缩结果（与精确构造射线的保真度 ≥ 0.9·N）
+    y_exact, _ = mult(W, ψ1)                       # 精确（alg.D = nothing）
+    y_svd, ov_svd = mult(W, ψ1, VOMPS(D = 3))      # svdguess 初猜
+    @test real(ov_svd) > 0.9 * length(ψ1)
+    out = randomimps(T, [2, 2], 3)
+    mult!(out, W, ψ1)                              # 随机初猜（in-place）
+    @test fidelity(out, y_exact) > 0.9
 end

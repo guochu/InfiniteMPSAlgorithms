@@ -22,6 +22,6 @@
     # 与 WII 演化的一致性（短时间）：能量守恒
     _, bulk = heisenberg_xxz(T = T)
     W2 = make_time_mpo(bulk, 0.01, WII())
-    outψ, _ = mult(W2, ψg; ψ₀ = ψg)
+    outψ, _ = mult(W2, ψg)
     @test abs(real(expectationvalue(outψ, Hm) / 2) - e0) < 1e-6
 end

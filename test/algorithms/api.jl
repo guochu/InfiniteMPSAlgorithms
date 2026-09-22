@@ -280,7 +280,7 @@ end
     @test_throws DimensionMismatch DenseIMPO([randn(T, 2, 2, 3, 2), randn(T, 2, 2, 2, 2)])
 end
 
-@testset "Jordan / Schur / Sparse MPO 层与 Hamiltonian 块代数" begin
+@testset "Schur / Sparse MPO 层与 Hamiltonian 块代数" begin
     T = ComplexF64
     J, h = 1.0, 1.3
     Z = σz(T); X = σx(T)
@@ -292,8 +292,8 @@ end
     @test Wmat[1, 2] ≈ -J * X
     @test Wmat[2, 3] ≈ X
 
-    # JordanMPOTensor：块访问、层数、稠密化、copy
-    Wj = JordanMPOTensor(Wmat)
+    # SchurMPOTensor：块访问、层数、稠密化、copy
+    Wj = SchurMPOTensor(Wmat)
     @test nlvls(Wj) == 3
     @test Wj[1, 1] ≈ Matrix{T}(I, 2, 2)
     @test Wj[1, 2] ≈ -J * X
@@ -301,16 +301,16 @@ end
     Wd = tompotensor(Wj)
     @test size(Wd) == (3, 2, 3, 2)
     @test Wd[1, :, 3, :] ≈ -h * Z
-    @test copy(Wj) isa JordanMPOTensor
+    @test copy(Wj) isa SchurMPOTensor
 
-    # 有限 SparseIMPO（Jordan 矩阵构造）
+    # 有限 SparseIMPO（Schur 矩阵构造）
     Hfin = SparseIMPO([Wmat, Wmat])
     @test length(Hfin) == 2 && bonddim(Hfin) == 3
 
-    # Jordan 块加法（A/B/C/D 逐块相加，恒等角点不参与）对标 MPSKit H1+H2
+    # Schur 块加法（A/B/C/D 逐块相加，恒等角点不参与）对标 MPSKit H1+H2
     Wmat2 = mpohamiltonian(-0.3 * Z, [(-0.7, X, X)])
-    J1 = JordanMPOTensor(Wmat)
-    J2 = JordanMPOTensor(Wmat2)
+    J1 = SchurMPOTensor(Wmat)
+    J2 = SchurMPOTensor(Wmat2)
     J12 = J1 + J2
     @test J12.A ≈ J1.A + J2.A
     @test J12.B ≈ J1.B + J2.B
@@ -318,7 +318,7 @@ end
     @test J12.D ≈ J1.D + J2.D
     @test tompotensor(J12)[1, :, 1, :] ≈ Matrix{T}(I, 2, 2)
 
-    # Jordan 标量乘法：只缩放物理块，恒等角点保持
+    # Schur 标量乘法：只缩放物理块，恒等角点保持
     Jm = -1.0 * J1
     @test Jm.B ≈ -J1.B && Jm.C ≈ -J1.C && Jm.D ≈ -J1.D
     @test tompotensor(Jm)[1, :, 1, :] ≈ Matrix{T}(I, 2, 2)
@@ -338,7 +338,7 @@ end
 
     # tfim 便捷模型返回三件套
     m = tfim(; J = 1.0, h = 1.0, T = T)
-    @test m.mpo isa DenseIMPO && m.bulk isa JordanMPOTensor
+    @test m.mpo isa DenseIMPO && m.bulk isa SchurMPOTensor
     @test m.hamiltonian isa SparseIMPO
 
     # 无 on-site、无最近邻项的 bulk 只有恒等通道（2-site 单胞期望 = 2）
@@ -398,7 +398,7 @@ end
     # approximate（mult）：恒等 MPO 作用任意态 → 不动点（overlap = 1，输出与输入同向）
     Random.seed!(42)
     ψ0 = randomimps(T, [2], 6)
-    ψa, ov = mult(I1, ψ0; alg = VOMPS(maxiter = 50, tol = 1e-10))
+    ψa, ov = mult(I1, ψ0, VOMPS(maxiter = 50, tol = 1e-10))
     @test ov ≈ 1 atol = 1e-8
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
 end

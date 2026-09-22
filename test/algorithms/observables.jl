@@ -18,7 +18,7 @@
     @test real(expectationvalue(ρn, (2,) => Z)) ≈ -1 atol = 1e-12
     @test real(expectationvalue(ρn, (1, 2) => kron(Z, Z))) ≈ -1 atol = 1e-12
 
-    # Heisenberg 基态（Jordan 哈密顿量）：SzSz 关联头值 = 1/4
+    # Heisenberg 基态（Schur 哈密顿量）：SzSz 关联头值 = 1/4
     # （MPSKit 无 ⟨Sz⟩≈0 测试：随机初态下 VUMPS 可能停在 SU(2) 破缺亚稳态，
     #   该断言不稳定，故不设；固定种子保证其余断言可复现）
     Hm = heisenberg_hamiltonian(T = T)

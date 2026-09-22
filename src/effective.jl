@@ -53,7 +53,7 @@ function AC_hamiltonian(site::Int, below, operator, above, envs::Environments)
     O = if isnothing(operator)
         nothing
     elseif operator isa SparseIMPO
-        tompotensor(operator[site])   # densify the Jordan tensor into the unified kernel
+        tompotensor(operator[site])   # densify the Schur tensor into the unified kernel
     else
         operator[site]
     end

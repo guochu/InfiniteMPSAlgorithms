@@ -1,4 +1,4 @@
-# ---------------- JordanMPOTensor (ported from MPSKit src/operators/jordanmpotensor.jl) ----------------
+# ---------------- SchurMPOTensor (ported from MPSKit src/operators/jordanmpotensor.jl) ----------------
 #
 # Upper-triangular block-matrix representation of an MPO (symmetry-free, plain
 # Array version). The physical index order matches the rest of the package
@@ -21,30 +21,30 @@
 #   in MPSKit).
 
 """
-    JordanMPOTensor{T}
+    SchurMPOTensor{T}
 
-Jordan upper-triangular block-matrix tensor of an MPO (symmetry-free version);
-see the module comment. Supports block-matrix style access `W[i, j]` returning
-the `(d, d)` local operator.
+Schur (upper-triangular) block-matrix tensor of an MPO (symmetry-free
+version); see the module comment. Supports block-matrix style access `W[i, j]`
+returning the `(d, d)` local operator.
 """
-struct JordanMPOTensor{T}
+struct SchurMPOTensor{T}
     A::Array{T,4}
     B::Array{T,3}
     C::Array{T,3}
     D::Array{T,2}
 end
 
-Base.copy(W::JordanMPOTensor) = JordanMPOTensor(copy(W.A), copy(W.B), copy(W.C), copy(W.D))
-scalartype(::Type{JordanMPOTensor{T}}) where {T} = T
-scalartype(W::JordanMPOTensor) = scalartype(typeof(W))
+Base.copy(W::SchurMPOTensor) = SchurMPOTensor(copy(W.A), copy(W.B), copy(W.C), copy(W.D))
+scalartype(::Type{SchurMPOTensor{T}}) where {T} = T
+scalartype(W::SchurMPOTensor) = scalartype(typeof(W))
 
-"nlvls(W): the number of virtual levels of the Jordan tensor (= bond channels + 2
+"nlvls(W): the number of virtual levels of the Schur tensor (= bond channels + 2
 unit levels)."
-nlvls(W::JordanMPOTensor) = size(W.A, 1) + 2
+nlvls(W::SchurMPOTensor) = size(W.A, 1) + 2
 
 # ---- block-matrix style access: W[i, j] → (d, d) local operator ----
 
-function Base.getindex(W::JordanMPOTensor{T}, i::Int, j::Int) where {T}
+function Base.getindex(W::SchurMPOTensor{T}, i::Int, j::Int) where {T}
     n = nlvls(W)
     d = size(W.A, 2)
     if (i == 1 && j == 1) || (i == n && j == n)
@@ -61,7 +61,7 @@ function Base.getindex(W::JordanMPOTensor{T}, i::Int, j::Int) where {T}
     return zeros(T, d, d)
 end
 
-function Base.setindex!(W::JordanMPOTensor{T}, O::AbstractMatrix, i::Int, j::Int) where {T}
+function Base.setindex!(W::SchurMPOTensor{T}, O::AbstractMatrix, i::Int, j::Int) where {T}
     (size(O, 1) == size(O, 2) == size(W.A, 2)) ||
         throw(DimensionMismatch("local operator must be $(size(W.A, 2))×$(size(W.A, 2))"))
     n = nlvls(W)
@@ -77,7 +77,7 @@ function Base.setindex!(W::JordanMPOTensor{T}, O::AbstractMatrix, i::Int, j::Int
     elseif 1 < i < n && 1 < j < n
         W.A[i - 1, :, j - 1, :] .= O
     else
-        throw(ArgumentError("lower-triangular Jordan block ($i, $j) is identically zero and cannot be assigned"))
+        throw(ArgumentError("lower-triangular Schur block ($i, $j) is identically zero and cannot be assigned"))
     end
     return W
 end
@@ -94,14 +94,14 @@ function _mpoham_scalar_type(W::AbstractMatrix)
 end
 
 """
-    JordanMPOTensor(W::AbstractMatrix) -> JordanMPOTensor
+    SchurMPOTensor(W::AbstractMatrix) -> SchurMPOTensor
 
 Construct from an `n × n` operator matrix: `W[i, j]` is the `(d, d)` local
 operator from row `i` (left level) to column `j` (right level); entries may be
 `Missing`, `Number`s, or matrices. `[1,1]` and `[end,end]` are implied
 identities (entries should be `1` or `Missing`).
 """
-function JordanMPOTensor(W::AbstractMatrix)
+function SchurMPOTensor(W::AbstractMatrix)
     (size(W, 1) == size(W, 2)) || throw(ArgumentError("W must be a square matrix"))
     n = size(W, 1)
     (n >= 2) || throw(ArgumentError("W needs at least 2 levels (unit levels first/last)"))
@@ -121,8 +121,8 @@ function JordanMPOTensor(W::AbstractMatrix)
         (v isa Missing || v isa Number && isone(v)) ||
             throw(ArgumentError("W[$i, $j] must be 1 or Missing (unit levels imply identity)"))
     end
-    J = JordanMPOTensor(zeros(T, n - 2, d, n - 2, d), zeros(T, n - 2, d, d),
-                        zeros(T, d, n - 2, d), zeros(T, d, d))
+    J = SchurMPOTensor(zeros(T, n - 2, d, n - 2, d), zeros(T, n - 2, d, d),
+                       zeros(T, d, n - 2, d), zeros(T, d, d))
     for i in 1:n, j in 1:n
         v = W[i, j]
         v isa Missing && continue
@@ -133,13 +133,13 @@ function JordanMPOTensor(W::AbstractMatrix)
 end
 
 """
-    tompotensor(W::JordanMPOTensor) -> Array{T,4}
+    tompotensor(W::SchurMPOTensor) -> Array{T,4}
 
 Densify into the package's 4-index MPO tensor `(wl, u, wr, d)`: the identity
 channels live at level `1` and level `nlvls`, i.e.
 `Wd[1,:,1,:] = Wd[end,:,end,:] = I`.
 """
-function tompotensor(W::JordanMPOTensor)
+function tompotensor(W::SchurMPOTensor)
     T = scalartype(W)
     d = size(W.A, 2)
     n = nlvls(W)
@@ -159,15 +159,15 @@ function tompotensor(W::JordanMPOTensor)
     return Wd
 end
 
-function Base.:+(W₁::JordanMPOTensor, W₂::JordanMPOTensor)
+function Base.:+(W₁::SchurMPOTensor, W₂::SchurMPOTensor)
     n₁, n₂ = nlvls(W₁), nlvls(W₂)
     (n₁ == n₂ && size(W₁.A, 2) == size(W₂.A, 2)) ||
-        throw(ArgumentError("Jordan tensor level counts / physical dimensions do not match"))
-    return JordanMPOTensor(W₁.A + W₂.A, W₁.B + W₂.B, W₁.C + W₂.C, W₁.D + W₂.D)
+        throw(ArgumentError("Schur tensor level counts / physical dimensions do not match"))
+    return SchurMPOTensor(W₁.A + W₂.A, W₁.B + W₂.B, W₁.C + W₂.C, W₁.D + W₂.D)
 end
 
-function Base.:*(λ::Number, W::JordanMPOTensor)
+function Base.:*(λ::Number, W::SchurMPOTensor)
     # scale only the physical terms (the C, D blocks and the closed end of B);
     # the identity channel is left untouched
-    return JordanMPOTensor(copy(W.A), λ .* W.B, λ .* W.C, λ .* W.D)
+    return SchurMPOTensor(copy(W.A), λ .* W.B, λ .* W.C, λ .* W.D)
 end

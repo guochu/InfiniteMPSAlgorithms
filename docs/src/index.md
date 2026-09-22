@@ -1,7 +1,7 @@
 # InfiniteMPSAlgorithms.jl
 
 Symmetry-free infinite matrix-product-state (MPS) / matrix-product-operator
-(MPO) tensor-network algorithms — a clean, dense implementation of the core
+(MPO) tensor-network algorithms: a clean, dense implementation of the core
 [MPSKit](https://github.com/QuantumKitHub/MPSKit.jl) algorithms.
 
 Site tensors are plain `Array`s and all contractions are written with
@@ -10,20 +10,21 @@ extend.
 
 ## Features
 
-- **Data structures** — `InfiniteCanonicalMPS` / `InfiniteCanonicalMPO` in the
-  mixed canonical form (`AL` / `AR` / `C` / `AC` families with periodic
-  indexing), mirroring MPSKit's `InfiniteMPS` layout.
+- **Data structures** — `CanonicalIMPS` / `CanonicalIMPO` in the mixed
+  canonical form (`AL` / `AR` / `C` / `AC` families with periodic indexing),
+  mirroring MPSKit's `InfiniteMPS` layout, plus `DenseIMPO` and the
+  Schur-structured `SparseIMPO`.
 - **Ground state** — single-site variational uniform MPS (`VUMPS`) and
   infinite DMRG (`IDMRG`) with Galerkin-residual convergence criteria,
   dynamic tolerances, and warm-started environments.
-- **Time evolution** — single-site TDVP (`timestep` / `time_evolve`) and
-  W^I / W^II time-evolution MPOs (`make_time_mpo`, after
-  [arXiv:1407.1832](https://arxiv.org/abs/1407.1832)).
+- **Time evolution** — single-site TDVP (`timestep` / `time_evolve`),
+  two-site TEBD gates with the Hastings update (`apply!` / `swap!`), and
+  W^I / W^II time-evolution MPOs (`make_time_mpo`).
 - **Iterative MPO algebra** — `mult` (MPO·MPS application and MPO·MPO
-  composition), `hadamard` (elementwise product), and `compress` (bond
-  reduction), all with *compute-on-the-fly* variational compression: the naive
-  target family is never materialized and intermediate memory stays at the
-  single-site level.
+  composition), `compress` (bond-dimension reduction), and `hadamard`
+  (elementwise product), all with *compute-on-the-fly* variational
+  compression: the naive target family is never materialized and intermediate
+  memory stays at the single-site level.
 - **Observables** — MPO and local expectation values, two-point correlators,
   entanglement entropies and spectra.
 - **Models** — transverse-field Ising, Heisenberg XXZ, Fermi-Hubbard.
@@ -70,8 +71,10 @@ W = make_time_mpo(H, dt, WII())            # exp(-i·H·dt) as an InfiniteMPO
 
 ### Iterative MPO algebra
 
-The target bond dimension is carried by the algorithm object (`alg.D`); the
-in-place twins take it from the provided initial guess `out` instead:
+Every driver function takes its algorithm object as a **positional argument**
+(see [Algorithms](@ref)), mirroring the MPSKit API. The target bond dimension
+is carried by the algorithm object (`alg.D`); the in-place twins take it from
+the provided initial guess `out` instead:
 
 ```julia
 ψ′, ov = mult(W, ψ, VOMPS(D = 32))         # apply an MPO, compress to bond 32
@@ -95,50 +98,10 @@ entropy(ψ, 1)                              # entanglement entropy on bond 1
 entanglement_spectrum(ψ, 1)
 ```
 
-## Conventions
+## Where to go next
 
-- **MPS tensors** are `(Dl, s, Dr)`; **MPO tensors** are `(wl, u, wr, d)`
-  (bond indices in slots 1 and 3, aligned with TEMPO), where `u`/`d` are the
-  operator row/column indices.
-- **Mixed canonical form**: `AL[i]·C[i] = AC[i] = C[i-1]·AR[i]` with
-  `Σ AL†·AL = Σ AR·AR† = 1`, all indices taken periodically (unit cell of
-  length `N = length(ψ)`).
-- **Operator values** live in the periodic trace representation:
-  gauge transformations (including per-site phases) telescope away in
-  `tr(∏ W[ℓ])`, so amplitudes are preserved exactly by the canonical storage.
-- The compression routines report `overlap`, the ring-trace fidelity in
-  `[0, N]`: `overlap ≈ N` means the result points in the same direction as the
-  target.
-
-## Relationship to MPSKit and TEMPO
-
-Function names follow MPSKit wherever possible (`find_groundstate`,
-`timestep`, `expectationvalue`, `correlator`, `gaugefix!`, ...), and the
-algorithms are documented against their MPSKit counterparts. The low-level
-tensor factorizations (`tsvd`, `leftorth`, `rightorth`) and truncation schemes
-are ported from TEMPO's `tensorops`. Compared to MPSKit, this package:
-
-- targets **plain dense arrays** instead of symmetry tensors;
-- provides **iterative MPO arithmetic** (`mult` / `add` / `hadamard`) with
-  compute-on-the-fly compression;
-- keeps the implementation deliberately small and self-contained.
-
-## Testing
-
-```julia
-julia> Pkg.test()
-```
-
-The `debug/` directory contains concordance scripts that compare results
-against MPSKit (exact multiplication, `mult` ≈ `approximate`) and verify the
-internal consistency of the iterative algebra.
-
-## Documentation
-
-Documentation lives in `docs/` (Documenter.jl):
-
-```julia
-julia> cd("docs")
-julia> using Pkg; Pkg.activate("."); Pkg.instantiate()
-julia> include("make.jl")
-```
+- [Conventions](@ref): index orders, the mixed canonical form, and the
+  package-wide **forced normalization convention** (implementation details).
+- [Algorithms](@ref): the algorithm parameter objects and every driver
+  function.
+- [Library](@ref): the full API reference generated from the docstrings.

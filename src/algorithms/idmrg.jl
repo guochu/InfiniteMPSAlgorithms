@@ -10,7 +10,7 @@
 
 Environment cache of the Hamiltonian channel (ground-state VUMPS / IDMRG /
 TDVP and energy evaluation): `operator::Union{SparseIMPO,DenseIMPO}` —
-the `w` dimension of an `SparseIMPO` equals the number of Jordan levels
+the `w` dimension of an `SparseIMPO` equals the number of Schur levels
 (per-level solves); an `DenseIMPO` is a dense MPO Hamiltonian
 (transfer-matrix dominant eigenvector).
 
@@ -64,7 +64,7 @@ end
     DMRGCache(ψ, H::SparseIMPO; tol, maxiter, krylovdim, init_lefts, init_rights)
         -> DMRGCache
 
-Jordan Hamiltonian environments: per-level linear solves (mirroring MPSKit's
+Schur Hamiltonian environments: per-level linear solves (mirroring MPSKit's
 `compute_leftenvs!/compute_rightenvs!(::SparseIMPO)`).
 `init_lefts`/`init_rights` provide warm-started initial values (see
 [`recalculate!`](@ref)).
