@@ -1,5 +1,10 @@
 # ---------------- gauge-fixing algorithms (mirroring MPSKit src/states/ortho.jl) ----------------
 
+# mirrors MPSKit's _GAUGE_ALG_EIGSOLVE: non-Hermitian (the mixed transfer map
+# is not normal), with the dynamic tolerance factor fixed to 1 so the inner
+# solve runs at clamp(ϵ²) each gauge iteration
+const _GAUGE_ALG_EIGSOLVE = Defaults.alg_eigsolve(; ishermitian = false, tol_factor = 1)
+
 """
     LeftCanonical(; tol, maxiter, verbosity, alg_orth, alg_eigsolve, eig_miniter)
 
@@ -11,8 +16,8 @@ Algorithm bringing an `CanonicalIMPS` to the left-canonical form
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.VERBOSE_WARN
     alg_orth = Defaults.alg_orth()
-    alg_eigsolve = Defaults.alg_eigsolve(; ishermitian = false, tol = Defaults.tolgauge)
-    eig_miniter::Int = 3
+    alg_eigsolve = _GAUGE_ALG_EIGSOLVE
+    eig_miniter::Int = 10
 end
 
 """
@@ -26,8 +31,8 @@ Algorithm bringing an `CanonicalIMPS` to the right-canonical form
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.VERBOSE_WARN
     alg_orth = Defaults.alg_orth()
-    alg_eigsolve = Defaults.alg_eigsolve(; ishermitian = false, tol = Defaults.tolgauge)
-    eig_miniter::Int = 3
+    alg_eigsolve = _GAUGE_ALG_EIGSOLVE
+    eig_miniter::Int = 10
 end
 
 """
@@ -103,56 +108,88 @@ _mul_CAR(C::AbstractMatrix{T}, AR::AbstractArray{T,3}) where {T} =
     end
 
 # ---------------- uniform orthogonalization iterations (mirroring uniform_leftorth!/uniform_rightorth!) ----------------
+#
+# Each iteration (mirrors MPSKit's IterativeSolver{LeftCanonical}):
+#   1. gauge_eigsolve_step! (once iter ≥ eig_miniter): refresh C[N] from the
+#      dominant fixed point of the MIXED transfer map flip(T(A, AL)) via the
+#      eigensolver, brought to the positive representative by a QR factor.
+#      This is what makes the iteration converge reliably even when the
+#      transfer map is non-normal (pure QR power sweeps can stall there).
+#   2. gauge_orth_step!: one periodic QR sweep.
+#   3. ϵ = ‖C_eigsolve − C_sweep‖ (NOT the successive-iterate difference).
+#
+# The sweep acts on a private workspace copy of A (mirrors MPSKit's
+# pre-allocated A_tail), so callers may pass ψ.AL itself (A may alias the
+# output storage) without having the problem tensors mutated mid-iteration.
 
 function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
     N = length(AL)
-    T = eltype(A[1])
     C[N] = normalize!(copy(C₀))
-    Dl = size(A[1], 1)
+    Awork = [copy(A[i]) for i in 1:N]
     iter = 0
-    ϵ = Inf
+    ϵ = float(real(one(real(scalartype(A[1]))))) * Inf
     while true
-        iter += 1
-        C_old = copy(C[N])
-        # per-site left orthogonalization: C[i-1]·A[i] → QR → AL[i], C[i]
+        # gauge_eigsolve_step!: C[N] = R factor of the mixed-transfer fixed point
+        if iter ≥ alg.eig_miniter
+            ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
+            _, evec = fixedpoint(TransferMatrix(Awork, AL; side = :left),
+                                 vec(C[N]), :LM, ealg)
+            _, C[N] = leftorth(reshape(evec, size(C[N])...); alg = alg.alg_orth)
+        end
+        C_pre = copy(C[N])
+        # gauge_orth_step!: per-site C[i-1]·A[i] → QR → AL[i], C[i]
         for i in 1:N
-            Ai = A[i]
-            Dli, d, Dri = size(Ai)
-            @tensor M[a, s, b] := C[i - 1][a, ā] * Ai[ā, s, b]
+            Dli, d, Dri = size(Awork[i])
+            @tensor M[a, s, b] := C[i - 1][a, ā] * Awork[i][ā, s, b]
             Q, Rf = leftorth(reshape(M, Dli * d, Dri); alg = alg.alg_orth)
             AL[i] = reshape(Q, Dli, d, size(Q, 2))
             C[i] = Rf
         end
         normalize!(C[N])
-        ϵ = norm(C[N] - C_old)
-        (ϵ < alg.tol || iter >= alg.maxiter) && break
+        ϵ = norm(C[N] - C_pre)
+        iter += 1
+        ϵ < alg.tol && return AL, C
+        if iter > alg.maxiter
+            alg.verbosity ≥ Defaults.VERBOSE_WARN &&
+                @warn "uniform_leftorth!: not converged" maxiter = alg.maxiter ϵ
+            return AL, C
+        end
     end
-    return AL, C
 end
 
 function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
     N = length(AR)
     C[N] = normalize!(copy(C₀))
+    Awork = [copy(A[i]) for i in 1:N]
     iter = 0
-    ϵ = Inf
+    ϵ = float(real(one(real(scalartype(A[1]))))) * Inf
     while true
-        iter += 1
-        C_old = copy(C[N])
-        # per-site right orthogonalization: A[i]·C[i] → LQ → C[i-1], AR[i]
-        alg_right = LQpos()
+        # gauge_eigsolve_step!: C[N] = L factor of the mixed-transfer fixed point
+        if iter ≥ alg.eig_miniter
+            ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
+            _, evec = fixedpoint(TransferMatrix(Awork, AR; side = :right),
+                                 vec(C[N]), :LM, ealg)
+            C[N], _ = rightorth(reshape(evec, size(C[N])...); alg = alg.alg_orth')
+        end
+        C_pre = copy(C[N])
+        # gauge_orth_step!: per-site A[i]·C[i] → LQ → C[i-1], AR[i]
         for i in N:-1:1
-            Ai = A[i]
-            Dli, d, Dri = size(Ai)
-            @tensor M[a, s, b] := Ai[a, s, ā] * C[i][ā, b]
-            Lf, Q = rightorth(reshape(M, Dli, d * Dri); alg = alg_right)
+            Dli, d, Dri = size(Awork[i])
+            @tensor M[a, s, b] := Awork[i][a, s, ā] * C[i][ā, b]
+            Lf, Q = rightorth(reshape(M, Dli, d * Dri); alg = alg.alg_orth')
             AR[i] = reshape(Q, size(Lf, 2), d, Dri)
             C[i - 1] = Lf
         end
         normalize!(C[N])
-        ϵ = norm(C[N] - C_old)
-        (ϵ < alg.tol || iter >= alg.maxiter) && break
+        ϵ = norm(C[N] - C_pre)
+        iter += 1
+        ϵ < alg.tol && return AR, C
+        if iter > alg.maxiter
+            alg.verbosity ≥ Defaults.VERBOSE_WARN &&
+                @warn "uniform_rightorth!: not converged" maxiter = alg.maxiter ϵ
+            return AR, C
+        end
     end
-    return AR, C
 end
 
 # ---------------- regauge! (mirroring MPSKit's regauge!) ----------------
@@ -173,10 +210,10 @@ function regauge!(AC::AbstractArray{T,3}, C::AbstractMatrix{T}; alg = Defaults.a
 end
 
 function regauge!(CL::AbstractMatrix{T}, AC::AbstractArray{T,3}; alg = Defaults.alg_orth()) where {T}
-    Dl, d, Dr = size(AC)
-    _, Q_AC = rightorth(reshape(AC, Dl, d * Dr); alg = alg)
-    _, Q_C = rightorth(copy(CL); alg = alg)
-    return reshape(Q_C' * Q_AC, size(Q_C, 2), d, Dr)
+	Dl, d, Dr = size(AC)
+	_, Q_AC = rightorth(reshape(AC, Dl, d * Dr); alg = alg')
+	_, Q_C = rightorth(copy(CL); alg = alg')
+	return reshape(Q_C' * Q_AC, size(Q_C, 2), d, Dr)
 end
 
 function regauge!(ACs::AbstractVector, Cs::AbstractVector; kwargs...)

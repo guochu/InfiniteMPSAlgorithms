@@ -111,6 +111,7 @@ export
     DynamicTol, updatetol,
     # TEBD quantum gates
     AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,
+    spectralize!,
     # SparseIMPO (Jordan structure) and time-evolution MPOs
     JordanMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,

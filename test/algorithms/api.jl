@@ -163,8 +163,8 @@ end
     ALr = regauge!(ψ.AC[1], ψ.C[1])
     @tensor rec[a, s, c] := ALr[a, s, b] * ψ.C[1][b, c]
     @test rec ≈ ψ.AC[1] atol = 1e-9
-    # (CL, AC) → AR 满足 CL·AR ≈ AC（rightorth 路径需指定 LQ 族算法）
-    ARr = regauge!(ψ.C[0], ψ.AC[1]; alg = ILQpos())
+    # (CL, AC) → AR 满足 CL·AR ≈ AC（内部 rightorth 用 alg 的伴随算法）
+    ARr = regauge!(ψ.C[0], ψ.AC[1])
     @tensor rec2[a, s, c] := ψ.C[0][a, b] * ARr[b, s, c]
     @test rec2 ≈ ψ.AC[1] atol = 1e-9
 end

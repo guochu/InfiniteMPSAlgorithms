@@ -9,6 +9,9 @@
 # - Hastings 技巧在 trunc err → 0 时无损；测试 (1) 验证该收敛性。
 # - 大截断下正则形式（AR 侧 + C 谱 + 恒等式网络）仍严格保持；
 #   测试 (2) 验证这一点。
+# - spectralize!（AR + s 谱对齐，环版 toadt!）构造 C 全对角正的相容规范；
+#   在该规范下 Hastings 接缝解精确，swap²/g·g† 无损且正则形式机器精度
+#   保持；测试 (3) 固化该保正则行为。
 # =====================================================================
 
 @testset "TEBD gates" begin
@@ -116,8 +119,9 @@
     @testset "大截断下正则形式保持" begin
         # 确认点 2：激进截断（D=2）后，正则形式仍严格保持：
         # AR[3]（SVD 右因子）严格行正交；C[2] 对角谱；
-        # 恒等式网络 AC = AL·C = C·AR 严格；接缝 AR[2] 的正交性
-        # 带 O(trunc err) 误差（Hastings 语义），恒等式仍精确。
+        # 恒等式网络 AC = AL·C（窗口键）严格；接缝 AR[2] 严格正交
+        # （regauge! 规范转换语义）；接缝键的 AC = C·AR 在 AR+s 形式
+        # （spectralize!）下精确，一般态带 O(trunc err) 误差。
         gI = UnitaryGate(Pair(2, 3), Matrix{T}(I, d * d, d * d))
         ψT = copy(ψ)
         ψT = apply!(gI, ψT; trunc = truncdim(2))
@@ -128,7 +132,82 @@
         @test norm(ψT.C[2] - Diagonal(diag(ψT.C[2]))) ≈ 0 atol = 1e-12
         @tensor ACl[x, p, y] := ψT.AL[2][x, p, a] * ψT.C[2][a, y]
         @test norm(ACl - ψT.AC[2]) ≈ 0 atol = 1e-10
-        @tensor ACr[x, p, y] := ψT.C[1][x, a] * ψT.AR[2][a, p, y]
-        @test norm(ACr - ψT.AC[2]) ≈ 0 atol = 1e-10
+        @tensor XRs[a, b] := ψT.AR[2][a, p, c] * conj(ψT.AR[2][b, p, c])
+        @test norm(XRs - I(size(XRs, 1))) ≈ 0 atol = 1e-11   # 接缝严格正交
+    end
+
+    @testset "spectralize!（AR+s 谱对齐）与 Hastings 保正则" begin
+        # (3a) spectralize! 构造 AR + s 形式（环版 toadt!）：C 全对角正、
+        # AL/AR 严格正交、AC = AL·C = C·AR、静态 E1 恒等式。
+        # 注意语义：用 AL 环转移主导特征向量生成相容正定 C 链——构造出的
+        # 是形式精确的正规范代表，一般不保态（非纯规范变换，见 docstring）。
+        ψa = copy(ψ)
+        spectralize!(ψa)
+        for i in 1:L
+            @test norm(ψa.C[i] - Diagonal(diag(ψa.C[i]))) ≈ 0 atol = 1e-12  # C 谱
+            @test minimum(real, diag(ψa.C[i])) > -1e-12                      # 正
+            @tensor XL[c, d] := ψa.AL[i][a, p, c] * conj(ψa.AL[i][a, p, d])
+            @test norm(XL - I(size(XL, 1))) ≈ 0 atol = 1e-11                 # AL 左正交
+            @tensor XR[a, b] := ψa.AR[i][a, p, c] * conj(ψa.AR[i][b, p, c])
+            @test norm(XR - I(size(XR, 1))) ≈ 0 atol = 1e-9                  # AR 右正交（eigsolve 量级）
+            @tensor ACl[x, p, y] := ψa.AL[i][x, p, a] * ψa.C[i][a, y]
+            @test norm(ACl - ψa.AC[i]) ≈ 0 atol = 1e-10                      # AC = AL·C
+            @tensor ACr[x, p, y] := ψa.C[i - 1][x, a] * ψa.AR[i][a, p, y]
+            @test norm(ACr - ψa.AC[i]) ≈ 0 atol = 1e-10                      # AC = C·AR
+            C2 = ψa.C[i - 1]^2
+            @tensor E1[b, c] := conj(ψa.AR[i][a, s, b]) * C2[a, x] * ψa.AR[i][x, s, c]
+            @test norm(E1 - ψa.C[i]^2) ≈ 0 atol = 1e-10                      # AR†·C²·AR = C²
+        end
+        @test norm(ψa) ≈ 1 atol = 1e-10
+
+        # (3b) 对齐后 Hastings 更新精确保正则：swap²（NoTruncation，精确无
+        # 损），两处接缝（回解的 AR[2] / AL[3]）机器精度正交
+        G = qr(randn(T, d * d, d * d)).Q |> Matrix
+        g = UnitaryGate(Pair(2, 3), G)
+        ψb = copy(ψa)
+        swap!(ψb, 2)
+        swap!(ψb, 2)
+        @test fid(ψa, ψb) ≈ 1 atol = 1e-9                # SWAP² = I：无损
+        @tensor XR[a, b] := ψb.AR[2][a, p, c] * conj(ψb.AR[2][b, p, c])
+        @test norm(XR - I(size(XR, 1))) ≈ 0 atol = 1e-9  # 左接缝：右正交
+        @tensor XL[c, d] := ψb.AL[3][a, p, c] * conj(ψb.AL[3][a, p, d])
+        @test norm(XL - I(size(XL, 1))) ≈ 0 atol = 1e-9  # 右接缝：左正交
+        @test ismixedcanonical(ψb)
+        # 单个 generic 门后接缝仍机器精度正交（Hastings trick 的核心价值）
+        ψc = copy(ψa)
+        apply!(g, ψc)
+        @tensor XR[a, b] := ψc.AR[2][a, p, c] * conj(ψc.AR[2][b, p, c])
+        @test norm(XR - I(size(XR, 1))) ≈ 0 atol = 1e-9
+        @tensor XL[c, d] := ψc.AL[3][a, p, c] * conj(ψc.AL[3][a, p, d])
+        @test norm(XL - I(size(XL, 1))) ≈ 0 atol = 1e-9
+        @test ismixedcanonical(ψc)
+        # g·g†（NoTruncation：g† 窗口还原原块）无损且保形式
+        ψc2 = copy(ψa)
+        apply!(g, ψc2)
+        apply!(adjoint(g), ψc2)
+        @test fid(ψa, ψc2) ≈ 1 atol = 1e-9
+        @test ismixedcanonical(ψc2)
+        # 非相邻门 roundtrip 同样精确保正则
+        ψd = copy(ψa)
+        gn = UnitaryGate(Pair(1, 4), G)
+        apply!(gn, ψd)
+        apply!(adjoint(gn), ψd)
+        @test fid(ψa, ψd) ≈ 1 atol = 1e-9
+        @test ismixedcanonical(ψd)
+
+        # (3c) iTEBD 用法（见 apply!/swap! 文档）：先用 spectralize! 初始化
+        # AR+s 形式，再 apply!/swap!——门后接缝机器精度正交、恒等式网络精确
+        ψe = copy(ψ)                                     # ψ 未谱对齐
+        spectralize!(ψe)
+        apply!(g, ψe)
+        @test ismixedcanonical(ψe)
+        @tensor XRe[a, b] := ψe.AR[2][a, p, c] * conj(ψe.AR[2][b, p, c])
+        @test norm(XRe - I(size(XRe, 1))) ≈ 0 atol = 1e-9
+        @tensor XLe[c, d] := ψe.AL[3][a, p, c] * conj(ψe.AL[3][a, p, d])
+        @test norm(XLe - I(size(XLe, 1))) ≈ 0 atol = 1e-9
+        ψf = copy(ψ)
+        spectralize!(ψf)
+        swap!(ψf, 2)
+        @test ismixedcanonical(ψf)
     end
 end

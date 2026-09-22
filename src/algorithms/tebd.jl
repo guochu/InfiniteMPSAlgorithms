@@ -19,6 +19,13 @@
 # sweep. With no truncation the post-gate window is reproduced exactly, so
 # the physical state is preserved exactly for any gate, and identity gates
 # (swaps) are exact lossless re-gaugings.
+#
+# The seam gauge solves are exact — rather than O(gate) degrading — in the
+# "AR + s" form (ring analogue of TEMPO's toadt!, `spectralize!` below):
+# there C[i] are diagonal positive (the bond singular values) and the seam
+# gauge conversion (regauge!) coincides exactly with the seam solves, so the
+# canonical identity network is reproduced at machine precision. Initialize
+# once with `spectralize!` before applying gates.
 
 """
 	AbstractGate{N,T}
@@ -167,11 +174,16 @@ function _hastings_update!(ψ::CanonicalIMPS, gated::Array, i::Integer; trunc::T
 	Ci = Matrix(Diagonal(s))
 	ACi = reshape(reshape(ALi, :, k) * Ci, size(gated, 1), size(gated, 2), k)              # AL·C
 	ACj = reshape(Ci * reshape(ARj, k, :), k, size(gated, 3), size(gated, 4))              # C·AR
-	# seam tensors: solve the opposite-side canonical identities (a gauge
-	# conversion of the SVD factors onto the neighbouring bonds' gauges — exact
-	# for identity gates, O(gate) orthogonality error otherwise, as in TEMPO/GTEMPO)
-	ALj = reshape(reshape(ACj, k * size(gated, 3), :) / ψ.C[j], k, size(gated, 3), size(ψ.C[j], 2))
-	ARi = reshape(ψ.C[i - 1] \ reshape(ACi, size(gated, 1), :), size(gated, 1), size(gated, 2), k)
+	# seam tensors: orthogonal gauge conversion of the SVD factors onto the
+	# neighbouring bonds' gauges (`regauge!` = the procrustes-optimal
+	# left/right-orthogonal solution; no division of the bond matrices). In
+	# the AR + s form (see `spectralize!`) the seams are exactly orthogonal,
+	# so `regauge!` returns precisely the seam solve — the Hastings trick,
+	# the canonical identity network is reproduced at machine precision. On
+	# general states the seams stay exactly orthogonal while the identity
+	# AC = C·AR at the seam bonds carries an O(gate) error.
+	ALj = regauge!(ACj, ψ.C[j])
+	ARi = regauge!(ψ.C[i - 1], ACi)
 	ψ.AL[i] = ALi
 	ψ.AR[j] = ARj
 	ψ.C[i] = Ci
@@ -198,10 +210,17 @@ SVD-decomposed; the left factor is written directly to `AL[i]` (exactly
 left-orthogonal), the right factor to `AR[i+1]` (exactly right-orthogonal), the new
 spectrum to `C[i]` (never divided), and the center/seam tensors follow from the
 canonical identities (no global re-canonicalization sweep). With no truncation the
-physical state is preserved exactly. The seam orthogonality carries an `O(gate)`
-error (exactly zero for identity gates, as in TEMPO/GTEMPO); restore it with
-`gaugefix!` if an exact dual representation is needed. The bond dimension may grow
-up to `min(Dl·d, d·Dr)` on the gate bond before truncation.
+physical state is preserved exactly. The seams are always exactly orthogonal
+(gauge conversion via `regauge!`); the canonical identity `AC = C·AR` at the seam
+bonds is exact in the AR + s form and carries an `O(gate)` error otherwise (as in
+TEMPO/GTEMPO) — restore it with `gaugefix!`, or keep it exact from the start by
+bringing `ψ` into the AR + s form with [`spectralize!`](@ref). The bond dimension
+may grow up to `min(Dl·d, d·Dr)` on the gate bond before truncation.
+
+For (i)TEBD gate sequences, initialize the AR + s form once with
+`spectralize!(ψ)` first and then `apply!` the gates: from then on the Hastings
+trick keeps the canonical identity network exact at machine precision (note
+that `spectralize!` generally changes the physical state).
 """
 function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=NoTruncation())
 	i, j = g.positions
@@ -255,11 +274,110 @@ yields the right factor (written directly to `AR[i+1]`, exactly
 right-orthogonal), the renewed spectrum (written directly to `C[i]`, never
 divided) and the back-projected left site. The center tensors follow from the
 AR-side definition `AC = C·AR`. With no truncation this is an exact lossless
-unitary re-gauging: the canonical form is preserved exactly.
+unitary re-gauging: the canonical form is preserved exactly. For (i)TEBD gate
+sequences, initialize the AR + s form once with `spectralize!(ψ)` first (see
+[`apply!`](@ref)).
 """
 function swap!(ψ::CanonicalIMPS, i::Integer; trunc::TruncationScheme=NoTruncation())
 	(1 <= i <= length(ψ)) || throw(BoundsError())
 	@tensor gated[a, q, p, b] := ψ.AC[i][a, p, c] * ψ.AR[i + 1][c, q, b]   # legs crossed
 	_hastings_update!(ψ, gated, i; trunc)
+	return ψ
+end
+
+# ---------------- Hastings trick: the AR + s form (ring analogue of TEMPO's toadt!) ----------------
+
+"""
+	spectralize!(ψ::CanonicalIMPS; tol = Defaults.tolgauge) -> ψ
+
+Bring `ψ` into the **AR + s form** (the ring analogue of TEMPO's `toadt!`):
+`AL` exactly left-orthogonal, `AR` exactly right-orthogonal, every bond matrix
+`C[i]` diagonal positive (the Schmidt spectra), and the mixed-canonical
+identity network `AC = AL·C = C·AR` exact by construction.
+
+**This is not a pure gauge transform**: the construction replaces the bond
+matrices by the compatible Hermitian positive chain generated from the
+dominant eigenvector of the AL ring transfer. The result is a *form-exact
+positive-gauge state* that generally differs from the input state — the
+fidelity (and even the bond spectra) may change substantially. Use it to
+initialize the TEBD gauge discipline (exact Hastings seams, see below), not
+as a state-preserving operation.
+
+Construction (exact, never divides the spectrum): from the AL form, take the
+dominant eigenvector R of the AL ring transfer and propagate the compatible
+Hermitian positive chain
+
+	C[i-1]² = T_i(C[i]²),   T_i(X) = Σ_s AL[i][:,s,:]·X·AL[i][:,s,:]†,
+
+`C[i] = √R[i]`, `AR[i] = C[i-1]⁻¹·AL[i]·C[i]` (exactly right-orthogonal; the
+only divisions are positive-definite gauge solves), then a unitary spectral
+rotation `C[i] = U[i]·Σ[i]·U[i]†` with all site tensors sandwiched
+`· ← U[i-1]†·(·)·U[i]` makes every `C[i]` diagonal positive.
+
+In this gauge the Hastings update's seam solves (`AR[i]` from
+`C[i-1]·AR[i] = AC[i]`, `AL[i+1]` from `AC[i+1] = AL[i+1]·C[i+1]`) are exact,
+so [`swap!`](@ref)/[`apply!`](@ref) keep the canonical identity network exact
+at machine precision (the **Hastings trick**). The `C⁻¹` gauge solves are
+bounded only for full-rank bonds: compress numerically-zero bond tails first
+(exact and lossless, e.g. by re-applying the growing operations with
+`truncdim`), otherwise the solves blow up.
+"""
+function spectralize!(ψ::CanonicalIMPS; tol::Real = Defaults.tolgauge)
+	L = length(ψ)
+	# the raw site tensors of the state are the centers AC (ψ = ∏ AC[i]); the
+	# bare AL's alone would represent a different state (they drop the C's)
+	gaugefix!(ψ, parent(ψ.AC); tol = tol)
+	T = scalartype(ψ)
+	χL = size(ψ.AL[L], 3)
+	# R[L]: dominant eigenvector of the AL ring transfer (right push over the
+	# cell) — the seed of the compatible positive chain. (The state's true
+	# non-Hermitian chain comes from gaugefix; a positive chain is what makes
+	# the Hastings seams exact.)
+	ealg = Defaults.alg_eigsolve(; ishermitian = false, tol = tol, maxiter = 2000,
+								 dynamic_tols′ = false)
+	_, evec = fixedpoint(TransferMatrix(ψ.AL, ψ.AL; side = :right),
+						 vec(Matrix{T}(I, χL, χL)), :LM, ealg)
+	R = reshape(evec, χL, χL)
+	Rs = Vector{Matrix{T}}(undef, L)
+	Rs[L] = (R + R') / 2
+	Rs[L] ./= tr(Rs[L])
+	for i in L:-1:2                            # R[i-1] = T_i(R[i])
+		@tensor Rs[i - 1][a, b] := ψ.AL[i][a, s, c] * Rs[i][c, d] * conj(ψ.AL[i][b, s, d])
+	end
+	# compatible Hermitian positive bond matrices C[i] = √R[i]
+	Cs = Vector{Matrix{T}}(undef, L)
+	for i in 1:L
+		F = eigen(Hermitian(Rs[i]))
+		Cs[i] = F.vectors * Diagonal(sqrt.(max.(F.values, 0))) * F.vectors'
+	end
+	for i in 1:L
+		AL = ψ.AL[i]
+		left = Cs[mod1(i - 1, L)] \ reshape(AL, size(AL, 1), :)
+		ψ.AR[i] = reshape(reshape(left, :, size(Cs[i], 2)) * Cs[i],
+						  size(AL, 1), size(AL, 2), size(Cs[i], 2))
+	end
+	# unitary spectral rotation: C[i] = U[i]·Σ[i]·U[i]† → diagonal Σ[i], and
+	# site i's tensors sandwiched between the rotations of its two bonds
+	Us = Vector{Matrix{T}}(undef, L)
+	for i in 1:L
+		F = eigen(Hermitian(Cs[i]))
+		ψ.C[i] = Matrix(Diagonal(F.values))
+		Us[i] = F.vectors
+	end
+	for i in 1:L
+		Ul, Ur = Us[mod1(i - 1, L)], Us[i]
+		χl, dd, χr = size(ψ.AL[i])
+		ψ.AL[i] = reshape(reshape(Ul' * reshape(ψ.AL[i], χl, :), χl * dd, χr) * Ur,
+						  χl, dd, χr)
+		ARnew = similar(ψ.AR[i])
+		@tensor ARnew[a, s, b] := Ul'[a, x] * ψ.AR[i][x, s, y] * Ur[y, b]
+		ψ.AR[i] = ARnew
+	end
+	for i in 1:L                               # centers from the AL side (exact)
+		χr = size(ψ.C[i], 2)
+		ψ.AC[i] = reshape(reshape(ψ.AL[i], :, χr) * ψ.C[i],
+						  size(ψ.AL[i], 1), size(ψ.AL[i], 2), χr)
+	end
+	normalize!(ψ)                              # the fixed-point scale is arbitrary
 	return ψ
 end
