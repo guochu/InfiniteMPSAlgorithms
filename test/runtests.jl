@@ -2,6 +2,7 @@ using Test
 using LinearAlgebra
 using Random
 using TensorOperations
+using KrylovKit
 using InfiniteMPSAlgorithms
 import InfiniteMPSAlgorithms: scalartype, asmps_view
 
@@ -51,6 +52,7 @@ end
 @testset "MPSKit concordance" begin
     t = @elapsed begin
         include("mpskit/testhelpers_mpskit.jl")
+        include("mpskit/lowlevel_concordance.jl")
         include("mpskit/mult_concordance.jl")
         include("mpskit/groundstate_concordance.jl")
         include("mpskit/envs_concordance.jl")
