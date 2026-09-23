@@ -84,8 +84,9 @@ export
     # truncation and factorizations (tensorops)
     TruncationScheme, NoTruncation, TruncateDim, truncdim,
     TruncateRelError, truncrelerr, TruncateDimCutoff, truncdimcutoff,
+    DefaultTruncation, truncate!,
     tsvd, tsvd!, leftorth, leftorth!, rightorth, rightorth!,
-    OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD, Polar,
+    OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD, Polar, tie,
     # data structures
     CanonicalIMPS, DenseIMPO, CanonicalIMPO,
     scalartype, phydims, max_bonddim, bonddim, dag, eachsite,
@@ -115,7 +116,6 @@ export
     DynamicTol, updatetol,
     # TEBD quantum gates
     AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,
-    spectralize!,
     # SparseIMPO (Schur structure) and time-evolution MPOs
     SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,
@@ -130,6 +130,6 @@ export
     tfim, tfim_hamiltonian, fermi_hubbard,
     σx, σy, σz, Sx, Sy, Sz,
     # misc
-    Defaults, renyi_entropy, isometry, permute, distance, distance2
+    Defaults, renyi_entropy, isometry, permute, distance, distance2, scalar
 
 end # module

@@ -90,11 +90,21 @@ function _truncate!(v::AbstractVector{<:Real}, trunc::TruncateRelError, p::Real=
 end
 
 function _truncate!(v::AbstractVector{<:Real}, trunc::TruncateDimCutoff, p::Real=2)
-	sca = norm(v, p)
-	dtrunc = findlast(Base.Fix2(>, sca * trunc.ϵ), v)
-	dtrunc = isnothing(dtrunc) ? 0 : dtrunc
-	dtrunc = max(dtrunc, trunc.add_back)   # keep at least add_back singular values
-	dtrunc = min(dtrunc, trunc.D)          # but never more than D
-	v, err = _truncate!(v, TruncateDim(dtrunc), p)
-	return v, err / sca
+        sca = norm(v, p)
+        dtrunc = findlast(Base.Fix2(>, sca * trunc.ϵ), v)
+        dtrunc = isnothing(dtrunc) ? 0 : dtrunc
+        dtrunc = max(dtrunc, trunc.add_back)   # keep at least add_back singular values
+        dtrunc = min(dtrunc, trunc.D)          # but never more than D
+        v, err = _truncate!(v, TruncateDim(dtrunc), p)
+        return v, err / sca
 end
+
+"""
+    truncate!(v, trunc, p=2) -> (v′, err)
+
+Public wrapper of the internal `_truncate!`: truncate the (descending) singular
+value vector `v` in place under the scheme `trunc` (the `p`-norm of the singular
+values defines the relative error measure), returning the truncated vector and
+the truncation error.
+"""
+truncate!(v::AbstractVector{<:Real}, trunc::TruncationScheme, p::Real=2) = _truncate!(v, trunc, p)

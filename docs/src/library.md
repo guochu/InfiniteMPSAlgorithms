@@ -124,7 +124,6 @@ swap!
 positions
 operator
 shift
-spectralize!
 ```
 
 ## Tensor operations and truncation

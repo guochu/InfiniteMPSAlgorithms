@@ -9,7 +9,10 @@ import InfiniteMPSAlgorithms: scalartype, asmps_view
 include("testhelpers.jl")
 
 @testset "tensorops" begin
-    t = @elapsed include("tensorops/truncation.jl")
+    t = @elapsed begin
+        include("tensorops/linalg.jl")
+        include("tensorops/truncation.jl")
+    end
     println("tensorops: ", round(t; digits = 2), " s")
 end
 

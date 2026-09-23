@@ -148,7 +148,7 @@ states, same parameters).
 - **Naive exact constructors**: `exact_mult` (corresponds to MPSKit's naive
   `*`), `exact_add`, `exact_hadamard`; deterministic initial guesses
   `svdguess_mult` / `svdguess_hadamard` / `svdguess_compress`.
-- **TEBD quantum gates** on infinite MPS: `apply!`, `swap!`, `spectralize!`,
+- **TEBD quantum gates** on infinite MPS: `apply!`, `swap!`,
   `UnitaryGate`, `GeneralGate` (Hastings update, aligned with TEMPO/GTEMPO).
 - **Superoperator layer**: `vectorize`, `devectorize`, `superoperator`.
 - **Schur/Jordan helpers and models**: `tompotensor`, `tompotensors`,

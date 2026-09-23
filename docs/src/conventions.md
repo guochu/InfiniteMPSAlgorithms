@@ -154,16 +154,14 @@ Environment caches implement the same discipline, mirroring MPSKit's
   `dot(C, C_hamiltonian·C) = 1`, preventing environment-norm blowup during
   sweeps.
 
-### 7. The AR + s form (TEBD)
+### 7. TEBD gate discipline
 
-[`spectralize!`](@ref) produces the **AR + s form** used by the TEBD gate
-discipline: `C[ℓ]` diagonal positive (the bond Schmidt spectra) with the
-mixed-canonical identity network exact by construction. In this gauge the
-Hastings seam solves are exact and `apply!` / `swap!` keep the canonical form
-at machine precision. Note that `spectralize!` is *not* a pure gauge
-transform — it replaces the bond matrices by the compatible Hermitian
-positive chain and generally changes the state (see its docstring); the norm
-is fixed afterwards with `normalize!`.
+`apply!` / `swap!` require no special initialization: on any mixed-canonical
+input the Hastings update preserves the physical state exactly (with
+`NoTruncation`) and the canonical form at machine precision — the seam tensors
+are exactly orthogonal (`regauge!` gauge conversion) and the canonical identity
+`AC = C·AR` holds at all bonds, verified over random gate sequences including
+the wrapping bond.
 
 ## Relationship to MPSKit and TEMPO
 

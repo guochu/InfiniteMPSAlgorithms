@@ -78,8 +78,9 @@ single SVD of the post-gate window distributes the factors onto
 physical state is preserved exactly when no truncation is applied.
 Non-adjacent gate sites are moved together with exact unitary swaps.
 General (non-unitary) gates re-canonicalize with `gaugefix!` afterwards.
-For gate sequences, initialize once with `spectralize!(ψ)` (the AR + s form)
-to keep the canonical identity network exact at machine precision.
+No initialization is needed: on any mixed-canonical input the canonical
+identity network is preserved at machine precision, for single gates and
+for gate sequences alike.
 
 ## Iterative MPO algebra
 
