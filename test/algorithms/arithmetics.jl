@@ -134,4 +134,12 @@ end
     # 长度 / 逐 site 物理维不匹配
     @test_throws DimensionMismatch hadamard(ψ1, randomimps(T, [2, 2, 2], 2))
     @test_throws DimensionMismatch hadamard(ψ1, randomimps(T, [3, 2], 3))
+
+    # 语义注记：ψ2 = dag(ψ1) 时 c12 ∝ |c1|² 为逐点模方（非负实波形），
+    # 而不是密度矩阵；密度矩阵需 u/d 双腿的 MPO 表示（另一类构造）
+    Habs = hadamard(ψ1, dag(ψ1))
+    dHabs = vec(_dense_mps_repr(Habs))
+    tgtabs = vec(abs2.(c1))
+    lsabs = real(dot(dHabs, tgtabs)) / real(dot(dHabs, dHabs))
+    @test norm(tgtabs .- lsabs .* dHabs) / norm(tgtabs) < 1e-10
 end

@@ -27,7 +27,7 @@
     # ---- vumps ----
     Random.seed!(71)
     ψg, envsg, ϵg = find_groundstate(randomimps(T, [2, 2], 12), H,
-                                     VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
+                                     VUMPS(D = 12, maxiter = 300, tol = 1e-10, verbosity = 0))
     eg = real(expectationvalue(ψg, H, envsg) / 2)
     @test ϵg < 1e-9
     @test abs(eg - e_exact) < 2e-4
@@ -36,19 +36,19 @@
     Wt = mpohamiltonian(-σz(T), [(-1.0, σx(T), σx(T))])
     Ht = SparseIMPO([Wt, Wt])
     ψt2, _, _ = find_groundstate(randomimps(T, [2, 2], 12), Ht,
-                                 VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
+                                 VUMPS(D = 12, maxiter = 300, tol = 1e-10, verbosity = 0))
     @test abs(real(expectationvalue(ψt2, Ht) / 2) + 4 / π) < 1e-6
 
     # dimerized：能量介于两个极限之间（J₂=0 孤立二聚体 −0.375 / J₂=1 均匀 −0.4431；
     # S·S 非半正定，两极限间无普遍变分序），VUMPS 与 IDMRG 交叉验证见下
     ψd, envsd, _ = find_groundstate(randomimps(T, [2, 2], 12), Hd,
-                                    VUMPS(maxiter = 300, tol = 1e-10, verbosity = 0))
+                                    VUMPS(D = 12, maxiter = 300, tol = 1e-10, verbosity = 0))
     ed = real(expectationvalue(ψd, Hd, envsd) / 2)
     @test -0.4431 - 1e-9 < ed < -0.375 + 1e-9
 
     # ---- idmrg ----
     ψi, envsi, ϵi = find_groundstate(randomimps(T, [2, 2], 12), H,
-                                     IDMRG(maxiter = 300, tol = 1e-9))
+                                     IDMRG(D = 12, maxiter = 300, tol = 1e-9))
     ei = real(expectationvalue(ψi, H, envsi) / 2)
     @test abs(ei - e_exact) < 2e-4
     @test abs(ei - eg) < 2e-4
@@ -56,7 +56,7 @@
 
     # dimerized：VUMPS 与 IDMRG 交叉验证（有能隙，收敛更快）
     ψdi, envsdi, _ = find_groundstate(randomimps(T, [2, 2], 12), Hd,
-                                      IDMRG(maxiter = 300, tol = 1e-9))
+                                      IDMRG(D = 12, maxiter = 300, tol = 1e-9))
     edi = real(expectationvalue(ψdi, Hd, envsdi) / 2)
     @test abs(edi - ed) < 2e-4
     @test -0.4431 - 1e-9 < edi < -0.375 + 1e-9

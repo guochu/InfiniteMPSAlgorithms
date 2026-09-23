@@ -64,3 +64,24 @@ end
     @test fidelity(ψ1, ψ1p) ≈ 1 atol = 1e-11
     @test infidelity(ψ1, ψ1p) ≈ 0 atol = 1e-11
 end
+
+@testset "ismixedcanonical 负检查" begin
+    T = ComplexF64
+    Random.seed!(9)
+    ψ = randomimps(T, [2, 2], 4)
+    @test ismixedcanonical(ψ)
+    ϵs = mixedcanonical_error(ψ)
+    @test all(ϵs .< 1e-12)
+
+    # 故意破坏规范：缩放单 site AL 破坏左正交性
+    ψbad = copy(ψ)
+    ψbad.AL[1] .*= 2.0
+    @test !ismixedcanonical(ψbad)
+    # 破坏混合一致性：打乱 C
+    ψbad2 = copy(ψ)
+    ψbad2.C[1] .*= 3.0
+    @test !ismixedcanonical(ψbad2)
+
+    # verbosity 路径不报错
+    @test ismixedcanonical(ψ; verbosity = 1) === true
+end

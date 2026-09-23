@@ -132,6 +132,7 @@ const VERBOSE_ITER = 3
 const VERBOSE_ALL = 4
 
 const eltype = ComplexF64
+const D = 64
 const maxiter = 200
 const tolgauge = 1.0e-13
 const tol = 1.0e-10

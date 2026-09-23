@@ -47,11 +47,13 @@ The package depends on `KrylovKit`, `MatrixAlgebraKit`, `TensorOperations`,
 using InfiniteMPSAlgorithms
 
 H = tfim_hamiltonian()                     # transverse-field Ising MPOHamiltonian
-ψ = randomimps(ComplexF64, [2, 2], 16)     # random initial state, bond dimension 16
 
-ψ, envs, ϵ = find_groundstate(ψ, H, VUMPS())   # IDMRG() works as well
-e = real(expectationvalue(ψ, H) / length(ψ))   # energy density
+ψ, envs, ϵ = find_groundstate(H, VUMPS(D = 16))   # random ψ₀ with bond dimension 16
+e = real(expectationvalue(ψ, H) / length(ψ))      # energy density
 ```
+
+An explicit initial state works too (`alg.D` is ignored in that case):
+`find_groundstate(ψ, H, VUMPS(D = 16))`.
 
 Exact reference for J = h = 1: `e₀ = -4/π ≈ -1.2732395`.
 
@@ -81,12 +83,13 @@ the provided initial guess `out` instead:
 W2,  ov = mult(W1, W2, IDMRG(D = 12))      # compose two MPOs
 h,   ov = hadamard(ψ1, ψ2, VOMPS(D = 16))  # elementwise product c1 .* c2
 y,   ov = compress(ψ, VOMPS(D = 8))        # variational bond-dimension reduction
-mult!(out, W, ψ)                           # in-place: D = max_bonddim(out)
+mult!(out, W, ψ, VOMPS(D = 4))             # in-place: D taken from `out` (alg.D ignored)
 ```
 
-With `D = nothing` (the default) the naive exact construction is returned
-instead (no compression). The `naive_*` twins of `mult` / `hadamard`
-materialize the full target family first and are intended for debugging.
+The two-argument `mult(W, ψ)` / `mult(W, W2)` / `hadamard(ψ1, ψ2)` forms give
+the exact naive construction (no compression). The `naive_*` twins of
+`mult` / `hadamard` materialize the full target family first and are intended
+for debugging.
 
 ### Observables
 

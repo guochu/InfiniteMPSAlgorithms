@@ -17,12 +17,16 @@ Krylov sub-solvers) activates the MPSKit-style dynamic tolerance update
 ## Ground state
 
 ```julia
-find_groundstate(ψ₀, H, alg::Union{VUMPS,IDMRG},
-                 envs = DMRGCache(ψ₀, H); which = :SR) -> (ψ, envs, ϵ)
+find_groundstate(operator, alg::Union{VUMPS,IDMRG}, [envs]) -> (ψ, envs, ϵ)
+find_groundstate(ψ₀, operator, alg::Union{VUMPS,IDMRG},
+                 envs = DMRGCache(ψ₀, operator); which = :SR) -> (ψ, envs, ϵ)
 ```
 
-The bond dimension of the ground-state search is fixed by the initial state
-`ψ₀`; the (reserved) `alg.D` field is ignored by the ground-state drivers.
+`alg.D` (required, `Int`) is the bond dimension. In the convenience form
+(without `ψ₀`) a random initial state with `bonddim = alg.D` is generated via
+`randomimps`, taking the physical dimensions and scalar type from
+`operator`; when an explicit `ψ₀` is passed, `alg.D` is ignored and `ψ₀`'s
+bond profile is used.
 
 - **`VUMPS`** — variational uniform MPS (Zaletel–Pollmann /
   Vanderstraeten et al.). Each iteration runs the MPSKit template:
@@ -87,24 +91,24 @@ memory stays at the single-site level. The algorithm object is positional:
 (rank-1 effective-Hamiltonian eigen-solves); both share the same fixed point.
 
 ```julia
-mult(W, ψ, alg = VOMPS()) -> (y::CanonicalIMPS, overlap)
-mult(W, W2, alg = VOMPS()) -> (y::CanonicalIMPO, overlap)
-hadamard(ψ1, ψ2, alg = VOMPS()) -> (y, overlap)
-compress(x, alg = VOMPS()) -> (y, overlap)
+mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, overlap)
+mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPO, overlap)
+hadamard(ψ1, ψ2, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
+compress(x, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
 ```
 
-- The target bond dimension is carried by the algorithm object: `alg.D =
-  nothing` (the default) gives the exact naive construction + canonical
-  storage (no compression; the output bond dimension is inherently large),
-  `alg.D::Int` variationally compresses to bond dimension `D`.
+- The target bond dimension is carried by the algorithm object: `alg.D`
+  (required, `Int`) variationally compresses to bond dimension `D`.
 - The initial guess is the deterministic `svdguess_*` (bond-wise SVD
   truncation of the naive target); the in-place twins below replace it with
   the user-provided guess.
-- In-place twins `mult!(out, W, x, alg = VOMPS())`, `hadamard!`,
-  `compress!` write the result back into a user-provided `out`: the target
-  bond dimension is taken from the bond profile of `out`
+- In-place twins `mult!(out, W, x, alg)`, `hadamard!(out, ψ1, ψ2, alg)`,
+  `compress!(out, x, alg)` write the result back into a user-provided `out`:
+  the target bond dimension is taken from the bond profile of `out`
   (`D = max_bonddim(out)`, uniformized with `changebond!`), and `alg.D` is
   ignored.
+- The two-argument forms `mult(W, ψ)` / `mult(W, W2)` / `hadamard(ψ1, ψ2)`
+  perform the exact naive construction + canonical storage (no compression).
 - The debug twins `naive_mult` / `naive_hadamard` materialize the complete
   naive family before compressing (reference implementations).
 - `overlap` is the ring-trace fidelity in `[0, N]` (`= N` means same

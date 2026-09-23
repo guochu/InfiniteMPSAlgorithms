@@ -63,6 +63,8 @@ bonddim(H::SparseIMPO) = nlvls(H[1])
 scalartype(::Type{SparseIMPO{TO}}) where {TO} = scalartype(TO)
 scalartype(H::SparseIMPO) = scalartype(typeof(H))
 
+phydims(H::SparseIMPO) = [size(H[ℓ].A, 2) for ℓ in 1:length(H)]
+
 # MPSKit-style A/B/C/D block access (returns the corresponding block arrays per site)
 function Base.getproperty(H::SparseIMPO, sym::Symbol)
     if sym === :A

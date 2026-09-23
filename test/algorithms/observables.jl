@@ -24,7 +24,7 @@
     Hm = heisenberg_hamiltonian(T = T)
     Random.seed!(1)
     ψ, envs, _ = find_groundstate(randomimps(T, [2, 2], 12), Hm,
-                                  VUMPS(maxiter = 200, tol = 1e-9))
+                                  VUMPS(D = 12, maxiter = 200, tol = 1e-9))
     @test abs(expectationvalue(ψ, (1,) => Sz(T)^2) - 0.25) < 1e-12
     Czz = correlator(ψ, Sz(T), Sz(T), 1, 2:6)
     @test real(Czz[1]) < 0   # 近邻反铁磁关联为负

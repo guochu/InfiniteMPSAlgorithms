@@ -44,7 +44,7 @@ end
     y4, ov4 = compress(ψbig, VOMPS(D = 4))
     @test max_bonddim(y4) == 4 && 0 < real(ov4) ≤ length(ψbig) + 1e-12
     yr = randomimps(T, [2, 2], 4)
-    compress!(yr, ψbig)
+    compress!(yr, ψbig, VOMPS(D = 4))
     @test abs(real(dot(yr, y4))) / sqrt(abs(dot(yr, yr)) * abs(dot(y4, y4))) ≈ 1 atol = 1e-6
 
     # IDMRG 路径同一不动点（有损压缩）
@@ -72,21 +72,21 @@ end
 
     # hadamard!（初猜 out 提供 D）
     out = randomimps(T, [2, 2], 4)
-    hadamard!(out, ψ1, ψ2)
+    hadamard!(out, ψ1, ψ2, VOMPS(D = 4))
     yh, ovh = hadamard(ψ1, ψ2, VOMPS(D = 4))
     @test abs(dot(out, yh)) / sqrt(abs(dot(out, out)) * abs(dot(yh, yh))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mps，初猜 out 提供 D）
     W = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     out = randomimps(T, [2, 2], 4)
-    mult!(out, W, ψ1)
+    mult!(out, W, ψ1, VOMPS(D = 4))
     ym, ovm = mult(W, ψ1, VOMPS(D = 4))
     @test abs(dot(out, ym)) / sqrt(abs(dot(out, out)) * abs(dot(ym, ym))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mpo）
     W2 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     outo = CanonicalIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
-    mult!(outo, W, W2)
+    mult!(outo, W, W2, VOMPS(D = 3))
     yo, ovo = mult(W, W2, VOMPS(D = 3))
     @test max_bonddim(outo) == 3 && ismixedcanonical(outo)
     # 幅值无关的射线比较（转移半径自身归一）
@@ -97,7 +97,7 @@ end
     # compress!（初猜 out 提供 D）
     ψbig = randomimps(T, [2, 2], 8)
     out = randomimps(T, [2, 2], 4)
-    compress!(out, ψbig)
+    compress!(out, ψbig, VOMPS(D = 4))
     yc, ovc = compress(ψbig, VOMPS(D = 4))
     @test abs(dot(out, yc)) / sqrt(abs(dot(out, out)) * abs(dot(yc, yc))) ≈ 1 atol = 1e-8
 end
@@ -124,10 +124,10 @@ end
 
     # svdguess 初猜（默认）与随机初猜（in-place 的 out 提供）都应收敛到
     # 高保真度的压缩结果（与精确构造射线的保真度 ≥ 0.9·N）
-    y_exact, _ = mult(W, ψ1)                       # 精确（alg.D = nothing）
+    y_exact, _ = mult(W, ψ1)                       # 精确朴素构造（二参数版本）
     y_svd, ov_svd = mult(W, ψ1, VOMPS(D = 3))      # svdguess 初猜
     @test real(ov_svd) > 0.9 * length(ψ1)
     out = randomimps(T, [2, 2], 3)
-    mult!(out, W, ψ1)                              # 随机初猜（in-place）
+    mult!(out, W, ψ1, VOMPS(D = 3))                # 随机初猜（in-place）
     @test fidelity(out, y_exact) > 0.9
 end

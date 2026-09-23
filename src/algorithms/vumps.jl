@@ -60,8 +60,19 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator, alg::VUMPS,
     return ψ, envs, ϵ
 end
 
-find_groundstate(ψ₀::CanonicalIMPS, operator; kwargs...) =
-    find_groundstate(ψ₀, operator, VUMPS(; kwargs...))
+"""
+    find_groundstate(operator, alg::Union{VUMPS,IDMRG}, [envs]) -> (ψ, envs, ϵ)
+
+Convenience method without an explicit initial state: `ψ₀` is generated
+randomly (`randomimps`) with bond dimension `alg.D`, taking the physical
+dimensions and scalar type from `operator`.
+"""
+function find_groundstate(operator, alg::Union{VUMPS,IDMRG},
+                          envs::Union{Nothing,Environments} = nothing)
+    ψ₀ = randomimps(scalartype(operator), phydims(operator), alg.D)
+    envs0 = envs === nothing ? DMRGCache(ψ₀, operator) : envs
+    return find_groundstate(ψ₀, operator, alg, envs0)
+end
 
 """
     calc_galerkin(ψ, operator, envs) -> Float64

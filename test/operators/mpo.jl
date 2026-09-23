@@ -10,7 +10,7 @@
     # 稠密 DenseIMPO 路径可运行（能量收敛性与 MPSKit 保持一致：
     # 恒等通道主导本征向量污染，见 PLAN §9；收敛断言只在 Schur 路径检查）
     ψd, envsd, ϵd = find_groundstate(randomimps(T, [2, 2], 10), Hm,
-                                     VUMPS(maxiter = 10, tol = 1e-9, verbosity = 0))
+                                     VUMPS(D = 10, maxiter = 10, tol = 1e-9, verbosity = 0))
     @test expectationvalue(ψd, Hm, envsd) isa Number
 
     # tompotensors（有限稠密 MPO）的形状（全部虚拟层，无端点收缩）
@@ -52,7 +52,7 @@ end
 
     # VUMPS 在 Schur 哈密顿量上收敛到精确能量密度
     # 阈值覆盖随机初态的亚稳态收敛（变分极限与 MPSKit 逐位一致，见 debug/suite_full.log）
-    ψr, envsr, ϵ = find_groundstate(ψ0, H, VUMPS(maxiter = 300, tol = 1e-10))
+    ψr, envsr, ϵ = find_groundstate(ψ0, H, VUMPS(D = 10, maxiter = 300, tol = 1e-10))
     er = real(expectationvalue(ψr, H, envsr) / 2)
     @test abs(er - e_exact) < 5e-4
 

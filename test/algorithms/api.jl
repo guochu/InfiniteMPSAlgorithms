@@ -361,7 +361,7 @@ end
     @test updatetol(dtol, 1, 1.0e20).tol ≈ 1.0e-4     # 截断到上界
 
     # VOMPS 默认参数
-    @test VOMPS().tol == Defaults.tol
+    @test VOMPS(D = 2).tol == Defaults.tol
 
     # integrate：对单位算符精确指数 exp(δ)·v
     # 注：算符必须用矩阵（实测 KrylovKit 对裸函数算符的作用次数计数异常）
@@ -379,7 +379,7 @@ end
     H = tfim_hamiltonian(T = T)
     Random.seed!(41)
     ψg, envs_g, ϵg = find_groundstate(randomimps(T, [2], 10), H,
-                                       VUMPS(maxiter = 300, tol = 1e-11, verbosity = 0))
+                                       VUMPS(D = 10, maxiter = 300, tol = 1e-11, verbosity = 0))
     # calc_galerkin 公开接口
     @test calc_galerkin(ψg, H, envs_g) == ϵg
     @test ϵg < 1e-9
@@ -395,10 +395,11 @@ end
     I1 = identityimpo(T, [2])
     @test fuse(I1[1], ψg.AL[1]) ≈ ψg.AL[1]
 
-    # approximate（mult）：恒等 MPO 作用任意态 → 不动点（overlap = 1，输出与输入同向）
+    # approximate（mult）：恒等 MPO 作用任意态（D = 6 = 朴素键维）→ 不动点
+    # （overlap = 1，输出与输入同向）
     Random.seed!(42)
     ψ0 = randomimps(T, [2], 6)
-    ψa, ov = mult(I1, ψ0, VOMPS(maxiter = 50, tol = 1e-10))
+    ψa, ov = mult(I1, ψ0, VOMPS(D = 6, maxiter = 50, tol = 1e-10))
     @test ov ≈ 1 atol = 1e-8
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
 end
@@ -409,7 +410,7 @@ end
     Random.seed!(51)
     # 用 2-site 单胞，使 (1,2) 相邻双 site 期望落在同一胞元内
     ψ, _, _ = find_groundstate(randomimps(T, [2, 2], 10), H,
-                               VUMPS(maxiter = 300, tol = 1e-11, verbosity = 0))
+                               VUMPS(D = 10, maxiter = 300, tol = 1e-11, verbosity = 0))
     Z = σz(T)
 
     # 对标 MPSKit test/algorithms/correlators.jl：correlator 头值与相邻双 site

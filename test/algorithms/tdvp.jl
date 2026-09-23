@@ -4,7 +4,7 @@
 
     # 实时间：从基态出发能量守恒
     ψg, envsg, _ = find_groundstate(randomimps(T, [2, 2], 8), Hm,
-                                    VUMPS(maxiter = 200, tol = 1e-9))
+                                    VUMPS(D = 8, maxiter = 200, tol = 1e-9))
     e0 = real(expectationvalue(ψg, Hm) / 2)
     tspan = 0:0.01:0.1
     ψt, envst, history = time_evolve(ψg, Hm, tspan, TDVP(); observer = (ψ, k, t) -> real(expectationvalue(ψ, Hm) / 2))

@@ -46,11 +46,13 @@ The package depends on `KrylovKit`, `MatrixAlgebraKit`, `TensorOperations`,
 using InfiniteMPSAlgorithms
 
 H = tfim_hamiltonian()                     # transverse-field Ising MPOHamiltonian
-ψ = randomimps(ComplexF64, [2, 2], 16)     # random initial state, bond dimension 16
 
-ψ, envs, ϵ = find_groundstate(ψ, H, VUMPS())   # IDMRG() works as well
-e = real(expectationvalue(ψ, H) / length(ψ))   # energy density
+ψ, envs, ϵ = find_groundstate(H, VUMPS(D = 16))   # random ψ₀ with bond dimension 16
+e = real(expectationvalue(ψ, H) / length(ψ))      # energy density
 ```
+
+An explicit initial state works too (`alg.D` is ignored in that case):
+`find_groundstate(ψ, H, VUMPS(D = 16))`.
 
 Exact reference for J = h = 1: `e₀ = -4/π ≈ -1.2732395`.
 
@@ -78,12 +80,13 @@ in-place twins take it from the provided initial guess `out` instead:
 W2,  ov = mult(W1, W2, IDMRG(D = 12))      # compose two MPOs
 h,   ov = hadamard(ψ1, ψ2, VOMPS(D = 16))  # elementwise product c1 .* c2
 y,   ov = compress(ψ, VOMPS(D = 8))        # variational bond-dimension reduction
-mult!(out, W, ψ)                           # in-place: D = max_bonddim(out)
+mult!(out, W, ψ, VOMPS(D = 4))             # in-place: D taken from `out` (alg.D ignored)
 ```
 
-With `D = nothing` (the default) the naive exact construction is returned
-instead (no compression). The `naive_*` twins of `mult` / `hadamard`
-materialize the full target family first and are intended for debugging.
+The two-argument `mult(W, ψ)` / `mult(W, W2)` / `hadamard(ψ1, ψ2)` forms give
+the exact naive construction (no compression). The `naive_*` twins of
+`mult` / `hadamard` materialize the full target family first and are intended
+for debugging.
 
 ### Observables
 
@@ -110,6 +113,59 @@ entanglement_spectrum(ψ, 1)
   `[0, N]`: `overlap ≈ N` means the result points in the same direction as the
   target.
 
+## Function-name correspondence with MPSKit
+
+Function names follow MPSKit 0.13 wherever possible; the concordance tests in
+`test/mpskit/` compare results against MPSKit step by step (same initial
+states, same parameters).
+
+**Renamed**
+
+| MPSKit | InfiniteMPSAlgorithms | remark |
+|---|---|---|
+| `InfiniteMPS` | `CanonicalIMPS` | mixed-canonical storage (`AL`/`AR`/`C`/`AC`), same layout |
+| `InfiniteMPO` | `DenseIMPO` | dense MPO; bond indices in slots 1/3 (TEMPO order) |
+| `MPOHamiltonian` | `SparseIMPO` | Jordan/Schur block-form Hamiltonian MPO |
+| `JordanMPOTensor` | `SchurMPOTensor` | renamed (upper-triangular block tensor) |
+| `expectation_value` | `expectationvalue` | |
+| `approximate` | `mult` / `compress` | variational application/compression with compute-on-the-fly targets |
+| `changebonds` / `changebonds!` | `changebond!` | uniform bond profile (zero-pad / truncate) |
+
+**Same names** (semantics mirror MPSKit unless noted): `PeriodicVector`,
+`PeriodicArray`, `find_groundstate`, `VUMPS`, `IDMRG`, `VOMPS`, `TDVP`,
+`timestep`, `time_evolve`, `make_time_mpo`, `WI`, `WII`, `environments`,
+`leftenv`, `rightenv`, `AC_hamiltonian`, `C_hamiltonian`, `calc_galerkin`,
+`gaugefix!`, `regauge!`, `LeftCanonical`, `RightCanonical`, `MixedCanonical`,
+`TransferMatrix`, `regularize!`, `correlator`, `entropy`,
+`entanglement_spectrum`, `DynamicTol`, `updatetol`, `Defaults`.
+
+**Implemented here but not in MPSKit**
+
+- **Iterative MPO algebra** (compute-on-the-fly, naive family never stored):
+  `mult` / `mult!` (variational MPO·MPO composition and MPO·MPS application),
+  `compress` / `compress!` (standalone bond reduction), `hadamard` /
+  `hadamard!` (elementwise product), and `mpo_compress`.
+- **Naive exact constructors**: `exact_mult` (corresponds to MPSKit's naive
+  `*`), `exact_add`, `exact_hadamard`; deterministic initial guesses
+  `svdguess_mult` / `svdguess_hadamard` / `svdguess_compress`.
+- **TEBD quantum gates** on infinite MPS: `apply!`, `swap!`, `spectralize!`,
+  `UnitaryGate`, `GeneralGate` (Hastings update, aligned with TEMPO/GTEMPO).
+- **Superoperator layer**: `vectorize`, `devectorize`, `superoperator`.
+- **Schur/Jordan helpers and models**: `tompotensor`, `tompotensors`,
+  `infinite_mpo`, `bulk_mpo`, `mpohamiltonian`, `isidentitylevel`,
+  `isemptylevel`, `nlvls`, `tfim_hamiltonian`, `heisenberg_hamiltonian`,
+  `heisenberg_xxz`, `fermi_hubbard` (MPSKit keeps models in MPSKitModels.jl).
+- **Constructors and misc**: `randomimps`, `prodimps`, `identityimpo`,
+  `randomimpo`, `fidelity`, `infidelity`, `renyi_entropy`,
+  `contract_mpo_expval`, `push_env_left`, `push_env_right`.
+- **Plain-`Array` tensor factorizations and truncation** (`tsvd`, `leftorth`,
+  `rightorth`, `TruncateDim`, `truncrelerr`, ...), ported from TEMPO's
+  `tensorops`; MPSKit relies on TensorKit/MatrixAlgebraKit for these.
+
+MPSKit features deliberately out of scope here: finite/window MPS,
+quasiparticle excitations, two-site variants (`DMRG2`/`IDMRG2`/`TDVP2`),
+`GradientGrassmann`, `TaylorCluster`, and dynamical DMRG.
+
 ## Relationship to MPSKit and TEMPO
 
 Function names follow MPSKit wherever possible (`find_groundstate`,
@@ -119,7 +175,7 @@ tensor factorizations (`tsvd`, `leftorth`, `rightorth`) and truncation schemes
 are ported from TEMPO's `tensorops`. Compared to MPSKit, this package:
 
 - targets **plain dense arrays** instead of symmetry tensors;
-- provides **iterative MPO arithmetic** (`mult` / `add` / `hadamard`) with
+- provides **iterative MPO arithmetic** (`mult` / `hadamard` / `compress`) with
   compute-on-the-fly compression;
 - keeps the implementation deliberately small and self-contained.
 
@@ -129,9 +185,10 @@ are ported from TEMPO's `tensorops`. Compared to MPSKit, this package:
 julia> Pkg.test()
 ```
 
-The `debug/` directory contains concordance scripts that compare results
-against MPSKit (exact multiplication, `mult` ≈ `approximate`) and verify the
-internal consistency of the iterative algebra.
+The `test/mpskit/` concordance suite compares results against MPSKit step by
+step (exact multiplication, ground states, environments and effective
+Hamiltonians, finite-temperature purification). The `debug/` directory keeps
+exploratory scratch scripts.
 
 ## Documentation
 
