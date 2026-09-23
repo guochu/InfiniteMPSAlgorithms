@@ -1,8 +1,6 @@
-using InfiniteMPSAlgorithms
-using Test, LinearAlgebra, Random
-using InfiniteMPSAlgorithms: SVD, QR, QRpos, LQ, LQpos, SDD, Polar
-
 # Dense/tensor linear algebra: orthogonal factorizations, tsvd, permute, isometry, distances
+# (Test/LinearAlgebra/Random/InfiniteMPSAlgorithms and the algorithm-type imports are
+# set up in runtests.jl)
 
 @testset "linalg" begin
 	Random.seed!(117)

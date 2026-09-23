@@ -115,7 +115,7 @@ export
     fidelity, infidelity,
     DynamicTol, updatetol,
     # TEBD quantum gates
-    AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, operator, shift,
+    AbstractGate, UnitaryGate, GeneralGate, apply!, swap!, positions, shift,
     # SparseIMPO (Schur structure) and time-evolution MPOs
     SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,

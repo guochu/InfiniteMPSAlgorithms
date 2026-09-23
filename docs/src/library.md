@@ -122,7 +122,6 @@ GeneralGate
 apply!
 swap!
 positions
-operator
 shift
 ```
 

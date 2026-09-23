@@ -30,14 +30,13 @@
 	AbstractGate{N,T}
 
 Abstract supertype of quantum gates acting on `N` sites: `positions(g)::NTuple{N,Int}`
-(ascending), `operator(g)::Array{T,M}` — the rank-`M = 2N` operator tensor in the index
+(ascending), `g.op::Array{T,M}` — the rank-`M = 2N` operator tensor in the index
 convention `(i1', i2', …, iN', i1, …, iN)`, i.e. all bra (output) indices first and all
 ket (input) indices second, each block ordered with site 1 the slowest index.
 """
 abstract type AbstractGate{N, T} end
 
 positions(g::AbstractGate) = g.positions
-operator(g::AbstractGate) = g.op
 scalartype(::Type{<:AbstractGate{N, T}}) where {N, T} = T
 
 """
@@ -192,7 +191,7 @@ function _hastings_update!(ψ::CanonicalIMPS, gated::Array, i::Integer; trunc::T
 end
 
 function _nn_gate_apply!(g::AbstractGate{2}, ψ::CanonicalIMPS, i::Integer; trunc::TruncationScheme=NoTruncation())
-	@tensor gated[a, p′, q′, b] := ψ.AC[i][a, p, c] * operator(g)[p′, q′, p, q] * ψ.AR[i + 1][c, q, b]
+	@tensor gated[a, p′, q′, b] := ψ.AC[i][a, p, c] * g.op[p′, q′, p, q] * ψ.AR[i + 1][c, q, b]
 	return _hastings_update!(ψ, gated, i; trunc)
 end
 

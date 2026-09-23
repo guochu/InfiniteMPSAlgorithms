@@ -1,7 +1,5 @@
-using InfiniteMPSAlgorithms
-using Test, LinearAlgebra, Random
-
 # Truncation schemes, SVD compression and related utilities
+# (Test/LinearAlgebra/Random/InfiniteMPSAlgorithms are set up in runtests.jl)
 
 @testset "truncation schemes          " begin
 	@test truncdim(3) isa TruncateDim

@@ -27,12 +27,12 @@
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
         g = UnitaryGate(Pair(2, 3), G)
         @test positions(g) == (2, 3)
-        @test size(operator(g)) == (d, d, d, d)
+        @test size(g.op) == (d, d, d, d)
         @test scalartype(typeof(g)) == T
         # rank-4 张量构造与 Pair 矩阵构造给出同一算符
         G4 = permutedims(reshape(G, d, d, d, d), (2, 1, 4, 3))
         g4 = UnitaryGate((2, 3), G4)
-        @test operator(g) == operator(g4)
+        @test g.op == g4.op
         # 非 unitary 拒绝
         @test_throws ArgumentError UnitaryGate((1, 2), randn(T, d, d, d, d))
         # 秩错误
@@ -44,7 +44,7 @@
         # adjoint：共轭转置且支持不变
         ga = adjoint(g)
         @test positions(ga) == (2, 3)
-        @test operator(adjoint(ga)) ≈ operator(g)
+        @test adjoint(ga).op ≈ g.op
         # shift
         @test positions(shift(g, 1)) == (3, 4)
     end
