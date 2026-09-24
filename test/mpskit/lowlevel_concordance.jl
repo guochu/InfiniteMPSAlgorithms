@@ -39,40 +39,46 @@ using InfiniteMPSAlgorithms:  # 显式消歧（MPSKit 亦导出其中部分名�
     DMRGCache, recalculate!, transfer_leftenv!, transfer_rightenv!,
     calc_galerkin, push_env_left, push_env_right, Defaults
 
-# ---- 共享固定装置：同一随机（未规范）张量、同一 TFIM 哈密顿量 ----
-Random.seed!(77)
-T = ComplexF64
-N = 2
-d = 2
-D = 5
+"Run the entire low-level comparison under the given scalar type `T` (all
+fixtures and testsets parametrized): both real (`Float64`, with the additional
+assertion that real inputs stay real — no spurious channel promotion) and
+complex (`ComplexF64`) must align with MPSKit."
+function run_lowlevel_concordance(::Type{T}) where {T<:Number}
+    # ---- 共享固定装置：同一随机（未规范）张量、同一 TFIM 哈密顿量 ----
+    Random.seed!(77)
+    N = 2
+    d = 2
+    D = 5
 
-A_ours = [randn(T, D, d, D) for _ in 1:N]
-ψA = CanonicalIMPS([copy(a) for a in A_ours])           # 本包规范存储
-ψ_mk = mkinfinitemps(ψA)                                # 同一规范 MPSKit 存储
-J, h = 1.0, 1.3
-H_our = tfim_hamiltonian(J = J, h = h, T = T)           # 1-单胞平移不变
-H_mk = MPSKit.InfiniteMPOHamiltonian(fill(ℂ^d, N),
-                                     1 => -h * σz_tk(T),
-                                     2 => -h * σz_tk(T),
-                                     (1, 2) => -J * (σx_tk(T) ⊗ σx_tk(T)),
-                                     (2, 3) => -J * (σx_tk(T) ⊗ σx_tk(T)))
+    A_ours = [randn(T, D, d, D) for _ in 1:N]
+    ψA = CanonicalIMPS([copy(a) for a in A_ours])           # 本包规范存储
+    ψ_mk = mkinfinitemps(ψA)                                # 同一规范 MPSKit 存储
+    J, h = 1.0, 1.3
+    H_our = tfim_hamiltonian(J = J, h = h, T = T)           # 1-单胞平移不变
+    H_mk = MPSKit.InfiniteMPOHamiltonian(fill(fld(T)^d, N),
+                                         1 => -h * σz_tk(T),
+                                         2 => -h * σz_tk(T),
+                                         (1, 2) => -J * (σx_tk(T) ⊗ σx_tk(T)),
+                                         (2, 3) => -J * (σx_tk(T) ⊗ σx_tk(T)))
 
-# N = 1 固定装置（哈密顿量敏感的跨包对比在此进行）
-ψA1 = CanonicalIMPS([copy(A_ours[1])])
-ψ_mk1 = mkinfinitemps(ψA1)
-H_mk1 = MPSKit.InfiniteMPOHamiltonian(fill(ℂ^d, 1),
-                                      1 => -h * σz_tk(T),
-                                      (1, 2) => -J * (σx_tk(T) ⊗ σx_tk(T)))
+    # N = 1 固定装置（哈密顿量敏感的跨包对比在此进行）
+    ψA1 = CanonicalIMPS([copy(A_ours[1])])
+    ψ_mk1 = mkinfinitemps(ψA1)
+    H_mk1 = MPSKit.InfiniteMPOHamiltonian(fill(fld(T)^d, 1),
+                                          1 => -h * σz_tk(T),
+                                          (1, 2) => -J * (σx_tk(T) ⊗ σx_tk(T)))
 
-"把键矩阵包装成 MPSKit TensorMap(D ← D)。"
-bond_tm(M::AbstractMatrix) = TensorMap(copy(M), ℂ^size(M, 1), ℂ^size(M, 2))
+    "把键矩阵包装成 MPSKit TensorMap(D ← D)。"
+    bond_tm(M::AbstractMatrix) = TensorMap(copy(M), fld(T)^size(M, 1), fld(T)^size(M, 2))
 
-"复比例对齐残差：‖X − e^{iφ}·Y‖/‖X‖（e^{iφ} 取最小相位差）。"
-_phase_aligned_relerr(X::AbstractArray, Y::AbstractArray) = begin
-    z = dot(vec(Y), vec(X))
-    s = abs(z) == 0 ? one(T) : z / abs(z)
-    return norm(X .- s .* Y) / norm(X)
-end
+    "复比例对齐残差：‖X − e^{iφ}·Y‖/‖X‖（e^{iφ} 取最小相位差）。"
+    _phase_aligned_relerr(X::AbstractArray, Y::AbstractArray) = begin
+        z = dot(vec(Y), vec(X))
+        s = abs(z) == 0 ? one(T) : z / abs(z)
+        return norm(X .- s .* Y) / norm(X)
+    end
+
+    @testset "底层对比 [$T]" begin
 
 @testset "Defaults 常量 ≡ MPSKit" begin
     @test Defaults.eltype == MPSKit.Defaults.eltype
@@ -138,6 +144,7 @@ end
     for ℓ in 1:N
         @test _phase_aligned_relerr(AL1[ℓ], tensor_to_array(ALm[ℓ])) < 1e-7
         @test _phase_aligned_relerr(C1[ℓ], tensor_to_array(Cm[ℓ])) < 1e-7
+        @test eltype(AL1[ℓ]) == T && eltype(C1[ℓ]) == T   # 实输入不产生虚假提升
     end
     # 右正交化（写入 AR, C）
     AR1 = [copy(a) for a in ψA.AR]
@@ -172,6 +179,8 @@ end
         end
         # 本包附加行为：gaugefix! 后维护 AC ≡ AL·C（MPSKit 的 AC 字段留在旧值）
         order in (:LR, :RL) && @test ismixedcanonical(ψo)
+        # 实输入保持实（无虚假通道提升）；输出规范与 MPSKit 一致
+        @test InfiniteMPSAlgorithms.scalartype(ψo) == T
     end
 end
 
@@ -375,3 +384,10 @@ end
     ϵ_mk = MPSKit.calc_galerkin(ψ_mk, H_mk, ψ_mk, envs_mk)
     @test abs(ϵ_our - ϵ_mk) < 1e-9 * max(ϵ_our, ϵ_mk)
 end
+    end   # outer @testset "底层对比 [$T]"
+    return nothing
+end
+
+# 实数与复数夹具都必须与 MPSKit 对齐
+run_lowlevel_concordance(Float64)
+run_lowlevel_concordance(ComplexF64)

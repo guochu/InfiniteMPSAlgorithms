@@ -19,7 +19,10 @@
 
 using MPSKit
 import TensorKit
-using TensorKit: TensorMap, ComplexSpace, ℂ, dim, space, ⊗
+using TensorKit: TensorMap, ComplexSpace, ℂ, ℝ, dim, space, ⊗
+
+"标量类型对应的 TensorKit 数域：实类型 → ℝ，复类型 → ℂ（使 helpers 兼容实/复夹具）。"
+fld(T::Type{<:Number}) = T <: Real ? ℝ : ℂ
 using InfiniteMPSAlgorithms:  # 与 MPSKit 导出名冲突的本包接口
     VUMPS, IDMRG, VOMPS, TDVP, WI, WII,
     find_groundstate, timestep, leftenv, rightenv, AC_hamiltonian, C_hamiltonian
@@ -37,9 +40,9 @@ _tkdata(x) = x.data
 _dims(A::TensorMap) = (dim(space(A, 1)), dim(space(A, 2)), dim(space(A, 3)))
 
 # ---- Pauli（TensorMap 版；带 _tk 后缀避免与本包导出的 Matrix 版冲突）----
-σx_tk(T::Type{<:Number} = ComplexF64) = TensorMap(T[0 1; 1 0], ℂ^2, ℂ^2)
-σy_tk(T::Type{<:Number} = ComplexF64) = TensorMap(T[0 -im; im 0], ℂ^2, ℂ^2)
-σz_tk(T::Type{<:Number} = ComplexF64) = TensorMap(T[1 0; 0 -1], ℂ^2, ℂ^2)
+σx_tk(T::Type{<:Number} = ComplexF64) = TensorMap(T[0 1; 1 0], fld(T)^2, fld(T)^2)
+σy_tk(T::Type{<:Number} = ComplexF64) = TensorMap(T[0 -im; im 0], fld(T)^2, fld(T)^2)
+σz_tk(T::Type{<:Number} = ComplexF64) = TensorMap(T[1 0; 0 -1], fld(T)^2, fld(T)^2)
 
 "TensorMap(Dl⊗d ← Dr) → Array (Dl, d, Dr)（复制数据，与 MPSKit 侧隔离）。"
 mpsarray(A::TensorMap) = begin
@@ -64,7 +67,8 @@ mpo_from_mpskit(Wk) = permutedims(tensor_to_array(Wk), (1, 2, 4, 3))
 in-place，绝不能与本包测试装置共享内存）。"
 function mkmpstensor(A::AbstractArray{T,3}) where {T}
     Dl, d, Dr = size(A)
-    return TensorMap(reshape(copy(A), Dl * d, Dr), ℂ^Dl * ℂ^d, ℂ^Dr)
+    f = fld(T)
+    return TensorMap(reshape(copy(A), Dl * d, Dr), f^Dl * f^d, f^Dr)
 end
 
 "本包 (wl, u, wr, d) → MPSKit TensorMap(Dl⊗d ← d⊗Dr)（复制数据）。"
@@ -72,7 +76,8 @@ function mkmpotensor(W::AbstractArray{T,4}) where {T}
     n, du, nb, dd = size(W)
     (du == dd) || throw(DimensionMismatch("物理维度不匹配"))
     data = permutedims(W, (1, 2, 4, 3))
-    return TensorMap(reshape(data, n * du, dd * nb), ℂ^n * ℂ^du, ℂ^dd * ℂ^nb)
+    f = fld(T)
+    return TensorMap(reshape(data, n * du, dd * nb), f^n * f^du, f^dd * f^nb)
 end
 
 "环境 TensorMap(D⊗level ← D) → Array (D, level, D)（复制数据）。"
@@ -91,7 +96,8 @@ to_mpskit(W::DenseIMPO) = MPSKit.InfiniteMPO([mkmpotensor(w) for w in W.Ws])
 "本包 CanonicalIMPS → MPSKit InfiniteMPS（同一规范：直接给出 AL 与 C₀）。"
 function mkinfinitemps(ψ::CanonicalIMPS)
     ALs = [mkmpstensor(ψ.AL[ℓ]) for ℓ in 1:length(ψ)]
-    C₀ = TensorMap(copy(ψ.C[1]), ℂ^size(ψ.C[1], 1), ℂ^size(ψ.C[1], 2))
+    f = fld(eltype(ψ.C[1]))
+    C₀ = TensorMap(copy(ψ.C[1]), f^size(ψ.C[1], 1), f^size(ψ.C[1], 2))
     return MPSKit.InfiniteMPS(ALs, C₀)
 end
 
