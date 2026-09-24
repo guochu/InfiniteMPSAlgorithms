@@ -23,15 +23,9 @@ using Random
 using Printf
 using TensorOperations
 using KrylovKit
+# tensorops 层由 FiniteMPSAlgorithms 提供（本包仅调用、无方法扩展）；
+# 下方 export 将其再导出，对外 API 不变
 using FiniteMPSAlgorithms
-
-# tensorops 层由 FiniteMPSAlgorithms 提供：显式 import 为本模块自有绑定，
-# 使 `InfiniteMPSAlgorithms.tsvd` 等限定访问可用，并与下方 export 组成再导出
-import FiniteMPSAlgorithms: TruncationScheme, NoTruncation, TruncateDim,
-       TruncateRelError, TruncateDimCutoff, truncdim, truncrelerr, truncdimcutoff,
-       truncate!, OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD,
-       Polar, tsvd, tsvd!, leftorth, leftorth!, rightorth, rightorth!, tie, permute,
-       scalar, isometry, renyi_entropy, distance, distance2
 
 include("utility.jl")
 

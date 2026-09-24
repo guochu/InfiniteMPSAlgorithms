@@ -9,13 +9,17 @@
 # =====================================================================
 
 using KrylovKit
+# tensorops 层提供方（本包再导出其名字）。注意用 import 而非 using：
+# using 会把 FiniteMPSAlgorithms 的导出（MultCache/recalculate!/mult 等，
+# 与本包同名）一并带入，裸名即歧义
+import FiniteMPSAlgorithms
 
-# 本包的 QR/LQ/SVD 与 LinearAlgebra 同名导出冲突，测试中使用全限定别名
-const IQR = InfiniteMPSAlgorithms.QR
-const IQRpos = InfiniteMPSAlgorithms.QRpos
-const ILQ = InfiniteMPSAlgorithms.LQ
-const ILQpos = InfiniteMPSAlgorithms.LQpos
-const ISVD = InfiniteMPSAlgorithms.SVD
+# QR/LQ/SVD 与 LinearAlgebra 同名导出冲突，测试中使用全限定别名
+const IQR = FiniteMPSAlgorithms.QR
+const IQRpos = FiniteMPSAlgorithms.QRpos
+const ILQ = FiniteMPSAlgorithms.LQ
+const ILQpos = FiniteMPSAlgorithms.LQpos
+const ISVD = FiniteMPSAlgorithms.SVD
 
 @testset "周期容器 PeriodicVector / PeriodicArray" begin
     T = ComplexF64
