@@ -54,14 +54,41 @@ end
     @test abs(real(ov4b) - real(ov4)) < 1e-4
 
     # MPO 版：CanonicalIMPO 与 DenseIMPO（随机谱平缓，两者均为重叠最大化
-    # 收敛停点，断言一致到收敛差异内）
+    # 收敛停点，断言一致到收敛差异内）；DenseIMPO 输入同样返回 CanonicalIMPO
     W = randomimpo(T, [2, 2], 6)
     Wc = CanonicalIMPO(collect(W.Ws))
     Vc, ovc = compress(Wc, VOMPS(D = 3))
     @test max_bonddim(Vc) == 3 && ismixedcanonical(Vc)
     Vd, ovd = compress(W, VOMPS(D = 3))
-    @test max_bonddim(Vd) == 3
+    @test Vd isa CanonicalIMPO && max_bonddim(Vd) == 3 && ismixedcanonical(Vd)
     @test abs(real(ovc) - real(ovd)) < 0.1
+end
+
+@testset "compress：MPO 输入一律返回 CanonicalIMPO 且 ismixedcanonical" begin
+    # 确认点 1：naive 兜底 / 短路不得直接透出 DenseIMPO——MPO 结果一律混合正则
+    T = ComplexF64
+    Random.seed!(81)
+    Wr = randomimpo(T, [2, 2], 3)
+    # 压缩路径：DenseIMPO 输入 → CanonicalIMPO
+    y2, ov2 = compress(Wr, VOMPS(D = 2))
+    @test y2 isa CanonicalIMPO && max_bonddim(y2) == 2 && ismixedcanonical(y2)
+    # IDMRG 路径同
+    y2b, _ = compress(Wr, IDMRG(D = 2, maxiter = 200))
+    @test y2b isa CanonicalIMPO && ismixedcanonical(y2b)
+    # D ≥ max_bonddim：短路——输入先转规范存储再返回（强制归一化非纯规范，
+    # 算符值整体缩放但射线严格不变），仍为 CanonicalIMPO
+    yr0, ov0 = compress(Wr, VOMPS(D = 3))
+    @test yr0 isa CanonicalIMPO && ismixedcanonical(yr0)
+    @test real(ov0) ≈ 2 atol = 1e-10
+    dr = vec(_dense_mpo_repr(DenseIMPO(yr0)))
+    dw = vec(_dense_mpo_repr(Wr))
+    ls = dot(dr, dw) / dot(dr, dr)
+    @test norm(dw .- ls .* dr) / norm(dw) < 1e-9
+    # 实数输入：正则性成立；标量类型随通道转移的实际 eltype（ALS 期间融合
+    # 转移可为复主导，通道按 MPSKit 对齐提升为复，故不断言实性）
+    Wf = randomimpo(Float64, [2, 2], 3)
+    yf, _ = compress(Wf, VOMPS(D = 2))
+    @test yf isa CanonicalIMPO && ismixedcanonical(yf)
 end
 
 @testset "inplace: mult! / hadamard! / compress!" begin

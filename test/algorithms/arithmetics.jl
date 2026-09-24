@@ -105,6 +105,65 @@ end
     end
 end
 
+@testset "mult：结果类型与正则性（含 naive 兜底）" begin
+    # 确认点 1：mult 的所有 MPO 输出（精确 / lazy / naive 兜底）一律
+    # CanonicalIMPO 且 ismixedcanonical，不得透出 DenseIMPO
+    T = ComplexF64
+    Random.seed!(46)
+    W1 = randomimpo(T, [2, 2], 2)
+    W2 = randomimpo(T, [2, 2], 3)
+    I2 = identityimpo(T, [2, 2])
+    # 精确（无 alg）：naive 构造 + 规范化
+    Pe, _ = mult(W1, W2)
+    @test Pe isa CanonicalIMPO && ismixedcanonical(Pe) && bonddim(Pe, 1) == 6
+    # mpo·mps 精确路径
+    ψ = randomimps(T, [2, 2], 3)
+    y, _ = mult(W1, ψ)
+    @test y isa CanonicalIMPS && ismixedcanonical(y)
+    # lazy 路径
+    Pl, _ = mult(W1, I2, VOMPS(D = 2))
+    @test Pl isa CanonicalIMPO && ismixedcanonical(Pl)
+    # naive 兜底：maxiter = 0 使 lazy 引擎不收敛（overlap 不达 0.9N）而触发兜底
+    Pf, _ = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
+    @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
+    Pf2, _ = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
+    @test Pf2 isa CanonicalIMPO && ismixedcanonical(Pf2)
+end
+
+@testset "mult：实输入 × 复 leading vector（MPSKit 对齐）" begin
+    # 确认点 2：MPSKit 的环境张量在复域分配——实输入下 ⟨bra|W|ket⟩ 融合转移
+    # 的 leading vector 可为复，环境按 eigsolve 的实际 eltype（复）存放、通道
+    # 升为复算术（不取实部、不报错）。本测试构造 bond-1 链（d = 2，A_p = 1/√2）
+    # 与 w = 2 的实 MPO，使融合转移 T = 2·[[0,1],[-1,0]]（本征值 ±2i，严格
+    # 无实主导本征对）。
+    T = Float64
+    d = 2
+    a = fill(1 / sqrt(2), d)
+    ψ = CanonicalIMPS([reshape(a, 1, d, 1)])                # N = 1，键维 1
+    M = [0.0 1.0; -1.0 0.0]
+    W4 = reshape([M[w2, w1] / 4 for w1 in 1:2, u in 1:d, w2 in 1:2, dd in 1:d], 2, d, 2, d)
+    Wo = DenseIMPO([W4])   # Σ_{u,d} W[w,u,w′,d] = M[w′,w] ⇒ 融合转移 = 2M
+    # 前提固化：融合转移主本征值严格非实，eigsolve 返回复向量
+    λs, _ = eigsolve(v -> vec(push_env_left(reshape(v, 1, 2, 1), ψ.AL[1], Wo[1], ψ.AL[1])),
+                     ones(2), 1, :LM; ishermitian = false)
+    @test abs(imag(λs[1])) > 0.9 * abs(λs[1])
+
+    # 精确 mult（naive fuse + gaugefix，实通道）：正则且保持实
+    ye, _ = mult(Wo, ψ)
+    @test ye isa CanonicalIMPS && ismixedcanonical(ye) && scalartype(ye) == Float64
+    # VOMPS / IDMRG：复环境通道下不崩溃；结果提升为复（MPSKit 对齐）、
+    # 混合正则恒等式严格成立、范数 1
+    for alg in (VOMPS(D = 2, maxiter = 50), IDMRG(D = 2, maxiter = 50))
+        yv, _ = mult(Wo, ψ, alg)
+        @test yv isa CanonicalIMPS && ismixedcanonical(yv)
+        @test scalartype(yv) <: Complex
+        @test norm(yv) ≈ 1 atol = 1e-10
+    end
+    # mpo·mpo 兜底（identity 通道，实）：同样正则
+    Pf, _ = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
+    @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
+end
+
 @testset "hadamard：element-wise 乘积（物理维不变）" begin
     T = ComplexF64
     Random.seed!(45)

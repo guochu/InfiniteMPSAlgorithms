@@ -4,18 +4,9 @@ using Random
 using TensorOperations
 using KrylovKit
 using InfiniteMPSAlgorithms
-using InfiniteMPSAlgorithms: SVD, QR, QRpos, LQ, LQpos, SDD, Polar
 import InfiniteMPSAlgorithms: scalartype, asmps_view
 
 include("testhelpers.jl")
-
-@testset "tensorops" begin
-    t = @elapsed begin
-        include("tensorops/linalg.jl")
-        include("tensorops/truncation.jl")
-    end
-    println("tensorops: ", round(t; digits = 2), " s")
-end
 
 @testset "states" begin
     t = @elapsed begin

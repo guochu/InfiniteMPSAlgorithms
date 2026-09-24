@@ -57,7 +57,9 @@ function _naive_hadamard_tensor(A1::AbstractArray{T,3}, A2::AbstractArray{T,3}) 
     (s2 == s) || throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
     # (a,c)/(b,e) fusion order: a and b are the major indices; Kronecker product
     # per physical slice (TensorOperations @tensor does not support the batched
-    # form where s appears uncontracted in both operands)
+    # form where s appears uncontracted in both operands). The slices are
+    # rank-3: FiniteMPSAlgorithms extends Base.kron to same-rank N-d arrays
+    # (no such method in Base itself before Julia 1.11).
     out = similar(A1, a * c, s, b * e)
     for k in 1:s
         out[:, k, :] = kron(A2[:, k, :], A1[:, k, :])

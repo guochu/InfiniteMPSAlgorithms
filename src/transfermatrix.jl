@@ -7,8 +7,8 @@ function push_env_left(L::AbstractMatrix, A::AbstractArray{T,3}) where {T}
 end
 
 "`push_env_left(L, W, A)`: MPO-channel left-environment push; `L` is
-`(bra bond, w, ket bond)`."
-function push_env_left(L::AbstractArray{T,3}, W::AbstractArray{T,4}, A::AbstractArray{T,3}) where {T}
+`(bra bond, w, ket bond)` (参量允许不同标量类型，复环境 × 实链自动提升)."
+function push_env_left(L::AbstractArray{TL,3}, W::AbstractArray{Tw,4}, A::AbstractArray{Ta,3}) where {TL,Tw,Ta}
     @tensor L′[a′, w′, b′] := conj(A[a, ū, a′]) * L[a, w, b] * W[w, ū, w′, d] * A[b, d, b′]
 end
 
@@ -25,7 +25,7 @@ end
 
 "MPO-channel right-environment push (mirrors MPSKit transfer_right): `R` is
 `(bra, w, ket)`; O's u contracts with below, d with above."
-function push_env_right(R::AbstractArray{T,3}, W::AbstractArray{T,4}, A::AbstractArray{T,3}) where {T}
+function push_env_right(R::AbstractArray{TR,3}, W::AbstractArray{Tw,4}, A::AbstractArray{Ta,3}) where {TR,Tw,Ta}
     @tensor R′[a′, w′, b′] := A[a′, d, a] * W[w′, ū, w, d] * conj(A[b′, ū, b]) * R[a, w, b]
 end
 
@@ -54,27 +54,29 @@ end
 # ---- ternary channels (below = bra conjugated, above = ket unconjugated;
 #      mirroring MPSKit's TransferMatrix(above.AL, operator, below.AL) contraction) ----
 
-"Ternary MPO-channel left push: `L` is `(below bond, w, above bond)`."
-function push_env_left(L::AbstractArray{T,3}, below::AbstractArray{T,3}, W::AbstractArray{T,4},
-                       above::AbstractArray{T,3}) where {T}
+"Ternary MPO-channel left push: `L` is `(below bond, w, above bond)`.
+各参量允许不同标量类型（复环境 × 实链，@tensor 自动提升——MPSKit 对齐：
+环境取 eigsolve 返回的实际 eltype，实输入下 leading vector 可为复）。"
+function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
+                       W::AbstractArray{Tw,4}, above::AbstractArray{Ta,3}) where {TL,Tb,Tw,Ta}
     @tensor L′[bl′, w′, al′] := conj(below[bl, ū, bl′]) * L[bl, w, al] * W[w, ū, w′, d] * above[al, d, al′]
 end
 
 "Ternary identity-channel left push (w dimension = 1)."
-function push_env_left(L::AbstractArray{T,3}, below::AbstractArray{T,3},
-                       above::AbstractArray{T,3}) where {T}
+function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
+                       above::AbstractArray{Ta,3}) where {TL,Tb,Ta}
     @tensor L′[bl′, 1, al′] := conj(below[bl, s, bl′]) * L[bl, 1, al] * above[al, s, al′]
 end
 
 "Ternary MPO-channel right push: `R` is `(above bond, w, below bond)`."
-function push_env_right(R::AbstractArray{T,3}, above::AbstractArray{T,3}, W::AbstractArray{T,4},
-                        below::AbstractArray{T,3}) where {T}
+function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,3},
+                        W::AbstractArray{Tw,4}, below::AbstractArray{Tb,3}) where {TR,Ta,Tw,Tb}
     @tensor R′[al′, w′, bl′] := above[al′, d, al] * W[w′, ū, w, d] * conj(below[bl′, ū, bl]) * R[al, w, bl]
 end
 
 "Ternary identity-channel right push (w dimension = 1)."
-function push_env_right(R::AbstractArray{T,3}, above::AbstractArray{T,3},
-                        below::AbstractArray{T,3}) where {T}
+function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,3},
+                        below::AbstractArray{Tb,3}) where {TR,Ta,Tb}
     @tensor R′[al′, 1, bl′] := above[al′, s, al] * conj(below[bl′, s, bl]) * R[al, 1, bl]
 end
 

@@ -67,7 +67,10 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
     v0L = GL0 === nothing ? ones(T, Dl * Dw * Da) : vec(copy(GL0))
     _, GL1 = eigsolve(Tleft, v0L, 1, :LM; ishermitian = false,
                       tol = tol, krylovdim = krylovdim, maxiter = maxiter)
-    GLs = Vector{Array{T,3}}(undef, N)
+    # 复环境提升（MPSKit 对齐：环境张量按 eigsolve 返回的实际 eltype 存放；
+    # 实输入下融合转移的 leading vector 可为复，通道随后整体升为复算术）
+    TCL = promote_type(T, eltype(GL1[1]))
+    GLs = Vector{Array{TCL,3}}(undef, N)
     GLs[1] = reshape(GL1[1], Dl, Dw, Da)
     for ℓ in 2:N
         W = Wop(ℓ - 1)
@@ -88,7 +91,8 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
     v0R = GR0 === nothing ? ones(T, Da * Dw * Dr) : vec(copy(GR0))
     _, GRN = eigsolve(Tright, v0R, 1, :LM; ishermitian = false,
                       tol = tol, krylovdim = krylovdim, maxiter = maxiter)
-    GRs = Vector{Array{T,3}}(undef, N)
+    TCR = promote_type(T, eltype(GRN[1]))
+    GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = reshape(GRN[1], Da, Dw, Dr)
     for ℓ in N-1:-1:1
         W = Wop(ℓ + 1)

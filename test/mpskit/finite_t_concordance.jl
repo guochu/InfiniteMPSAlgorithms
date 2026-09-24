@@ -51,10 +51,10 @@
             AL0[a, f, a] = 1 / √d
         end
     end
-    ψ0 = CanonicalIMPS(PeriodicVector([AL0, copy(AL0)]),
-                       PeriodicVector([copy(AL0), copy(AL0)]),
-                       PeriodicVector([Matrix{T}(I, D, D), Matrix{T}(I, D, D)]),
-                       PeriodicVector([copy(AL0), copy(AL0)]))
+    ψ0 = CanonicalIMPS(InfiniteMPSAlgorithms.PeriodicVector([AL0, copy(AL0)]),
+                       InfiniteMPSAlgorithms.PeriodicVector([copy(AL0), copy(AL0)]),
+                       InfiniteMPSAlgorithms.PeriodicVector([Matrix{T}(I, D, D), Matrix{T}(I, D, D)]),
+                       InfiniteMPSAlgorithms.PeriodicVector([copy(AL0), copy(AL0)]))
 
     # ---- 本包：虚时冷却 ----
     env = DMRGCache(ψ0, Hgen)

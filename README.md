@@ -159,8 +159,9 @@ states, same parameters).
   `randomimpo`, `fidelity`, `infidelity`, `renyi_entropy`,
   `contract_mpo_expval`, `push_env_left`, `push_env_right`.
 - **Plain-`Array` tensor factorizations and truncation** (`tsvd`, `leftorth`,
-  `rightorth`, `TruncateDim`, `truncrelerr`, ...), ported from TEMPO's
-  `tensorops`; MPSKit relies on TensorKit/MatrixAlgebraKit for these.
+  `rightorth`, `TruncateDim`, `truncrelerr`, ...), re-exported from
+  FiniteMPSAlgorithms (same TEMPO `tensorops` lineage); MPSKit relies on
+  TensorKit/MatrixAlgebraKit for these.
 
 MPSKit features deliberately out of scope here: finite/window MPS,
 quasiparticle excitations, two-site variants (`DMRG2`/`IDMRG2`/`TDVP2`),
@@ -172,7 +173,8 @@ Function names follow MPSKit wherever possible (`find_groundstate`,
 `timestep`, `expectationvalue`, `correlator`, `gaugefix!`, ...), and the
 algorithms are documented against their MPSKit counterparts. The low-level
 tensor factorizations (`tsvd`, `leftorth`, `rightorth`) and truncation schemes
-are ported from TEMPO's `tensorops`. Compared to MPSKit, this package:
+are provided by the sibling package FiniteMPSAlgorithms (same TEMPO
+`tensorops` lineage) and re-exported here. Compared to MPSKit, this package:
 
 - targets **plain dense arrays** instead of symmetry tensors;
 - provides **iterative MPO arithmetic** (`mult` / `hadamard` / `compress`) with

@@ -19,8 +19,9 @@ MPS view: `(wl, u, wr, d)` → permute `(1,2,4,3)` → reshape `(wl, u*d, wr)`.
 
 Note: construction mixed-canonicalizes via `CanonicalIMPS`'s
 `gaugefix!`. Gauge transformations telescope away in the periodic trace
-representation (`tr(C⁻¹·X·C) = tr(X)`), so the operator value (the periodic
-contraction) is preserved exactly.
+representation (`tr(C⁻¹·X·C) = tr(X)`), so the operator's periodic
+contraction is preserved up to the forced normalization scale of the MPS
+view (`‖AC[1]‖ = 1` is not part of the gauge freedom) — the ray is exact.
 """
 struct CanonicalIMPO{T}
     AL::PeriodicVector{Array{T,4}}
@@ -68,9 +69,9 @@ end
     CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...)
 
 Construct from plain MPO tensors (mirrors `CanonicalIMPS(As)`): convert
-to an MPS via `asmps_view`, then mixed-canonicalize with `gaugefix!` (the
-operator value is preserved exactly in the periodic trace representation; see
-the type docstring).
+to an MPS via `asmps_view`, then mixed-canonicalize with `gaugefix!`
+(the operator ray is preserved exactly; see the type docstring for the
+normalization-scale caveat).
 """
 function CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...) where {T}
     N = length(Ws)

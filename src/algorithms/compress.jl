@@ -28,14 +28,17 @@ end
 """
     compress(x::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) -> (CanonicalIMPS, overlap)
     compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) -> (CanonicalIMPO, overlap)
-    compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) -> (DenseIMPO, overlap)
+    compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) -> (CanonicalIMPO, overlap)
 
 Bond-dimension-`alg.D` variational approximation of a single chain (mirroring
 MPSKit's `approximate`: maximize the overlap between the compressed chain and
 the input chain, fixed point = the best rank-`D` approximation in the
 ring-trace fidelity sense). `overlap` is the ring-trace fidelity in [0, N]
 (= N means the input is exactly reproduced). `alg.D ≥ max_bonddim` of the
-input short-circuits to the exact input. The
+input short-circuits to the exact input. MPO results are always returned in
+mixed-canonical storage (`CanonicalIMPO`, satisfying `ismixedcanonical`) — a
+`DenseIMPO` input is canonicalized exactly (the operator value is preserved in
+the periodic-trace representation) instead of being passed through. The
 default initial guess is [`svdguess_compress`](@ref) (the input's own SVD
 truncation). The positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or
 [`IDMRG`](@ref) (eigen-solver sweeps), which share the same fixed point.
@@ -86,7 +89,7 @@ end
 
 function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG},
                    x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    D >= max_bonddim(W) && return copy(W), real(length(W))
+    D >= max_bonddim(W) && return CanonicalIMPO(collect(W.Ws)), real(length(W))
     N = length(W)
     dus = [size(W[ℓ], 2) for ℓ in 1:N]
     dds = [size(W[ℓ], 4) for ℓ in 1:N]
@@ -101,8 +104,7 @@ function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG},
                       verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve)
     end
     x = _global_normalize!(x)
-    ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
-    return DenseIMPO(ALs4), overlap
+    return _mpo_from_mps(x, dus, dds), overlap
 end
 
 # ---------------- compress! (in-place) ----------------

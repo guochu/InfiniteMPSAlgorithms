@@ -30,7 +30,7 @@ Base.lastindex(p::PeriodicVector) = length(p.data)
 Base.iterate(p::PeriodicVector, args...) = iterate(p.data, args...)
 Base.similar(p::PeriodicVector{T}) where {T} = PeriodicVector(similar(p.data))
 Base.copy(p::PeriodicVector) = PeriodicVector(copy(p.data))
-Base.circshift(p::PeriodicVector, n) = PeriodicVector(circshift(p.data, n))
+Base.circshift(p::PeriodicVector, n::Integer) = PeriodicVector(circshift(p.data, n))
 Base.:(==)(a::PeriodicVector, b::PeriodicVector) = a.data == b.data
 _parent(p::PeriodicVector) = p.data
 

@@ -5,8 +5,8 @@ Symmetry-free infinite MPS/MPO tensor-network algorithms (a clean dense
 implementation of the core MPSKit algorithms).
 
 - Site tensors are plain `Array`s; contractions use `TensorOperations` (`@tensor`);
-- Low-level tensor operations reuse TEMPO's `tensorops` (`tsvd`, `leftorth`,
-  `rightorth`, truncation schemes);
+- Low-level tensor operations (`tsvd`, `leftorth`, `rightorth`, truncation
+  schemes) come from FiniteMPSAlgorithms and are re-exported;
 - The `CanonicalIMPS` data layout mirrors MPSKit's `InfiniteMPS`
   (`AL`/`AR`/`C`/`AC` families with periodic indexing); function names follow
   MPSKit wherever possible;
@@ -23,10 +23,15 @@ using Random
 using Printf
 using TensorOperations
 using KrylovKit
-using MatrixAlgebraKit
+using FiniteMPSAlgorithms
 
-# ---- low-level tensor operations (ported from TEMPO/src/tensorops) ----
-include("tensorops/tensorops.jl")
+# tensorops 层由 FiniteMPSAlgorithms 提供：显式 import 为本模块自有绑定，
+# 使 `InfiniteMPSAlgorithms.tsvd` 等限定访问可用，并与下方 export 组成再导出
+import FiniteMPSAlgorithms: TruncationScheme, NoTruncation, TruncateDim,
+       TruncateRelError, TruncateDimCutoff, truncdim, truncrelerr, truncdimcutoff,
+       truncate!, OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD,
+       Polar, tsvd, tsvd!, leftorth, leftorth!, rightorth, rightorth!, tie, permute,
+       scalar, isometry, renyi_entropy, distance, distance2
 
 include("utility.jl")
 

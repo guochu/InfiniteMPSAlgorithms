@@ -140,9 +140,9 @@ function _naive_mul_tensor(W1::AbstractArray{T,4}, W2::AbstractArray{T,4}) where
 end
 
 "VOMPS local AC map (mirrors MPSKit `AC_hamiltonian·ket.AC`):
-AC_new = (GL·O·GR)·ket.AC."
-function _mapAC(GL::AbstractArray{T,3}, O::Union{Nothing,AbstractArray{T,4}},
-                GR::AbstractArray{T,3}, ketAC::AbstractArray{T,3}) where {T}
+AC_new = (GL·O·GR)·ket.AC (各参量允许不同标量类型，自动提升)."
+function _mapAC(GL::AbstractArray{Tg,3}, O::Union{Nothing,AbstractArray{To,4}},
+                GR::AbstractArray{Tgr,3}, ketAC::AbstractArray{Tk,3}) where {Tg,To,Tgr,Tk}
     if O === nothing
         @tensor ACnew[aL, p, aR] := GL[aL, 1, bL] * ketAC[bL, p, bR] * GR[bR, 1, aR]
     else
@@ -153,7 +153,8 @@ end
 
 "VOMPS local C map (mirrors MPSKit `C_hamiltonian·ket.C`): the channel
 passes through with no W contraction."
-function _mapC(GL::AbstractArray{T,3}, GR::AbstractArray{T,3}, ketC::AbstractMatrix{T}) where {T}
+function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+               ketC::AbstractMatrix{Tk}) where {Tg,Tgr,Tk}
     @tensor Cnew[a, a′] := GL[a, w, b] * ketC[b, b′] * GR[b′, w, a′]
     return Cnew
 end
@@ -169,7 +170,8 @@ Periodic ring trace of ⟨x|K⟩: on the composite space `(x bond, K bond)`,
 K-bond ring close independently). In the lazy methods `K[ℓ] = ketf(ℓ)` is
 generated on demand (only `E` is kept; the target family is never stored).
 """
-function _ring_overlap(ALs::Vector{<:AbstractArray{T,3}}, K::Vector{<:AbstractArray{T,3}}) where {T}
+function _ring_overlap(ALs::Vector{<:AbstractArray{Tx,3}}, K::Vector{<:AbstractArray{Tk,3}}) where {Tx,Tk}
+    T = promote_type(Tx, Tk)
     N = length(K)
     Dx, DK = size(ALs[1], 1), size(K[1], 1)
     E = zeros(T, Dx, DK, Dx, DK)
@@ -184,7 +186,8 @@ function _ring_overlap(ALs::Vector{<:AbstractArray{T,3}}, K::Vector{<:AbstractAr
     return tr(reshape(E, Dx * DK, Dx * DK))
 end
 
-function _ring_overlap(ALs::Vector{<:AbstractArray{T,3}}, ketf::F, N::Int) where {T,F}
+function _ring_overlap(ALs::Vector{<:AbstractArray{Tx,3}}, ketf::F, N::Int) where {Tx,F}
+    T = promote_type(Tx, eltype(ketf(1)))
     Dx, DK = size(ALs[1], 1), size(ketf(1), 1)
     E = zeros(T, Dx, DK, Dx, DK)
     for a in 1:Dx, β in 1:DK
@@ -225,11 +228,20 @@ function _global_normalize!(x::CanonicalIMPS)
     return x
 end
 
+"通道标量类型提升（MPSKit 对齐）：实输入下融合转移的 leading vector 可为复，
+环境按 eigsolve 的实际 eltype 存放（复）；随后的 ALS 扫掠在复算术上进行——
+将演动态 `x` 提升到通道标量类型 `T`（已是 `T` 则原样返回）。"
+function _promote_scalar(::Type{T}, ψ::CanonicalIMPS) where {T}
+    scalartype(ψ) == T && return ψ
+    cast = As -> PeriodicVector([T.(a) for a in As])
+    return CanonicalIMPS(cast(ψ.AL), cast(ψ.AR), cast(ψ.C), cast(ψ.AC))
+end
+
 "VOMPS Galerkin residual (mirrors MPSKit's `calc_galerkin`): the norm of the
 component of `normalize(AC_map)` orthogonal to the `AL` tangent space — the
 overlap is insensitive to tangential drift, so convergence must be judged by
 the residual rather than Δoverlap."
-function _galerkin(AL::AbstractArray{T,3}, ACnew::AbstractArray{T,3}) where {T}
+function _galerkin(AL::AbstractArray{Ta,3}, ACnew::AbstractArray{Tb,3}) where {Ta,Tb}
     ACn = normalize!(copy(ACnew))
     @tensor proj[b, b′] := conj(AL[a, s, b]) * ACn[a, s, b′]
     @tensor out[a, s, b′] := ACn[a, s, b′] - AL[a, s, b] * proj[b, b′]
@@ -294,9 +306,12 @@ function _overlap_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
                          x0::CanonicalIMPS, K::Union{Nothing,<:Vector{<:Array}};
                          tol::Real = 1.0e-10, maxiter::Int = 100, verbosity::Int = 0)
     N = length(ket)
-    T = scalartype(ket)
     x = copy(x0)
     envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+    # 通道标量类型（MPSKit 对齐）：环境按 eigsolve 的实际 eltype 存放（实输入下
+    # 融合转移的 leading vector 可为复），演动态随之提升，扫掠在提升后算术上进行
+    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
+    x = _promote_scalar(T, x)
     ϵ = _galerkin_err(operator, ket, x, envs)
     overlap = _report_overlap(x, operator, ket, envs, K)
     for iter in 1:maxiter
@@ -364,9 +379,11 @@ function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
                        verbosity::Int = Defaults.verbosity,
                        alg_eigsolve = Defaults.alg_eigsolve())
     N = length(ket)
-    T = scalartype(ket)
     x = copy(x0)
     envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+    # 通道标量类型（MPSKit 对齐，见 _overlap_sweeps 注释）
+    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
+    x = _promote_scalar(T, x)
     ϵ = _galerkin_err(operator, ket, x, envs)
     for iter in 1:maxiter
         ϵ < tol && break
@@ -449,7 +466,8 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
     v0L = GL0 === nothing ? ones(T, Dl * Da1) : vec(copy(GL0))
     _, GL1 = eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol, krylovdim = krylovdim,
                       maxiter = maxiter)
-    GLs = Vector{Array{T,3}}(undef, N)
+    TCL = promote_type(T, eltype(GL1[1]))   # 复环境提升（MPSKit 对齐）
+    GLs = Vector{Array{TCL,3}}(undef, N)
     GL = reshape(GL1[1], Dl, 1, Da1)
     GLs[1] = GL
     for ℓ in 2:N
@@ -467,7 +485,8 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
     v0R = GR0 === nothing ? ones(T, Da1 * Dr) : vec(copy(GR0))
     _, GRN = eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol, krylovdim = krylovdim,
                       maxiter = maxiter)
-    GRs = Vector{Array{T,3}}(undef, N)
+    TCR = promote_type(T, eltype(GRN[1]))
+    GRs = Vector{Array{TCR,3}}(undef, N)
     GR = reshape(GRN[1], Da1, 1, Dr)
     GRs[N] = GR
     for ℓ in N-1:-1:1
@@ -626,6 +645,9 @@ function _lazy_sweeps(kets::Vector{<:LazyKet}, x0::CanonicalIMPS, N::Int;
     fps = [_lazy_ternary_fixedpoints(x, ket) for ket in kets]
     GLset = [fp[1] for fp in fps]
     GRset = [fp[2] for fp in fps]
+    # 通道标量类型（MPSKit 对齐，见 _overlap_sweeps 注释）
+    T = promote_type(T, eltype(GLset[1][1]))
+    x = _promote_scalar(T, x)
     ϵ = _lazy_galerkin_err(x, kets, GLset, GRset, N)
     overlap = _lazy_overlap(x, kets, N)
     for iter in 1:maxiter
@@ -735,7 +757,11 @@ O(single site) only. Applying a time-evolution MPO is
 - both `alg` types share the same fixed point;
 - the output is guaranteed to be in mixed-canonical form (mpo·mps →
   `CanonicalIMPS`, mpo·mpo → `CanonicalIMPO`); `overlap` is the
-  ring-trace fidelity in [0, N] (= N means same direction).
+  ring-trace fidelity in [0, N] (= N means same direction);
+- real-valued inputs whose fused transfer has complex leading eigenvalues
+  are handled as in MPSKit (environments live on complex spaces there):
+  the environments take the eigensolver's complex output and the channel
+  continues in complex arithmetic, so the result may be complex-valued.
 """
 mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
     _mult(W, ψ, alg, nothing; D = alg.D)
@@ -825,19 +851,19 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
 end
 
 "Fallback assembly of the lazy mpo·mpo path: naive construction + compression,
-always returning `(result, overlap)`."
+always returning `(result, overlap)`; the result is mixed-canonical
+(`CanonicalIMPO`, satisfying `ismixedcanonical`)."
 function _compress_mpo_result(K4::Vector{<:Array{T,4}}, D::Int, alg::Algorithm) where {T}
     naive = DenseIMPO(K4)
     dmax = max_bonddim(naive)
-    D ≥ dmax && return naive, real(T)(length(K4))
+    D ≥ dmax && return CanonicalIMPO(collect(naive.Ws)), real(T)(length(K4))
     N = length(K4)
     dus = [size(K4[ℓ], 2) for ℓ in 1:N]
     dds = [size(K4[ℓ], 4) for ℓ in 1:N]
     K3 = asmps_view(K4)
     x, overlap = _compress_ket(K3, [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D, alg)
     _global_normalize!(x)
-    ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
-    return DenseIMPO(ALs4), overlap
+    return _mpo_from_mps(x, dus, dds), overlap
 end
 
 # ---------------- naive_mult (debug: naive family construction + optional compression) ----------------
