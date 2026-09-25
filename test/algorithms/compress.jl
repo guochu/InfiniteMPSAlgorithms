@@ -3,16 +3,43 @@
 # svdguess_* 初始猜
 # =====================================================================
 
+@testset "_resize_dim" begin
+    T = ComplexF64
+    Random.seed!(76)
+    A = randn(T, 2, 3, 2)
+
+    # 扩容：保留首部子块，新增块零填充 / noise 填充
+    B = InfiniteMPSAlgorithms._resize_dim(A, 1, 4; noise = 0)
+    @test size(B) == (4, 3, 2) && B[1:2, :, :] == A && all(iszero, B[3:4, :, :])
+    Bn = InfiniteMPSAlgorithms._resize_dim(A, 1, 4; noise = 1e-3)
+    @test size(Bn) == (4, 3, 2) && Bn[1:2, :, :] == A && !all(iszero, Bn[3:4, :, :])
+
+    # 缩键：只保留前导块
+    C_ = InfiniteMPSAlgorithms._resize_dim(A, 3, 1)
+    @test size(C_) == (2, 3, 1) && C_ == A[:, :, 1:1]
+
+    # 尺寸不变时原样返回
+    @test InfiniteMPSAlgorithms._resize_dim(A, 1, 2) === A
+end
+
 @testset "changebond!" begin
     T = ComplexF64
     Random.seed!(77)
 
     # 扩键（零填充，态不变）：prodimps 键 1 → 均匀 profile min(D, ∏d) = 4
     ψp = prodimps(T, [2, 3])
-    changebond!(ψp; D = 4)
+    ψref = deepcopy(ψp)
+    changebond!(ψp; D = 4, noise = 0)
     @test bonddim(ψp, 1) == 4 && bonddim(ψp, 2) == 4
     @test ismixedcanonical(ψp)
-    @test abs(dot(ψp, ψp)) ≈ 1 atol = 1e-10            # 零填充不改变态
+    @test abs(dot(ψp, ψref)) / (norm(ψp) * norm(ψref)) ≈ 1 atol = 1e-10   # 零填充不改变态
+    # noise 关键字（默认 1e-10）：扩容块被 noise·randn 填充、态只被 O(noise) 扰动
+    ψpn = prodimps(T, [2, 3])
+    ψpn_ref = deepcopy(ψpn)
+    changebond!(ψpn; D = 4)
+    @test bonddim(ψpn, 1) == 4 && bonddim(ψpn, 2) == 4
+    @test ismixedcanonical(ψpn)
+    @test abs(dot(ψpn, ψpn_ref)) / (norm(ψpn) * norm(ψpn_ref)) ≈ 1 atol = 1e-6
 
     # 缩键（截取前导奇异值子空间）：键 profile 达标、规范保持、保真度 = 逐 bond
     # 截断水平（块对角直和的逐 bond 截断不能精确回到分量——那需要变分压缩）
@@ -23,6 +50,52 @@
     @test max_bonddim(ψsum) == 4
     @test ismixedcanonical(ψsum)
     @test abs(dot(ψsum, ψ1)) / (norm(ψsum) * norm(ψ1)) > 0.8
+
+    # 键 profile 已达标 ⇒ 提前返回，四个分量张量都不被改动
+    # （ψ1 键 = 4 = min(4, ∏d = 6)，故 D = 4 命中提前返回）
+    ψe = randomimps(T, [2, 3], 4)
+    refe = deepcopy(ψe)
+    changebond!(ψe; D = 4)
+    @test ψe.AL[1] == refe.AL[1] && ψe.AR[1] == refe.AR[1] &&
+          ψe.C[1] == refe.C[1] && ψe.AC[1] == refe.AC[1]
+end
+
+@testset "changebond!（MPO 版）" begin
+    T = ComplexF64
+    Random.seed!(79)
+    ov(A, B) = abs(dot(vectorize(A), vectorize(B))) / (norm(vectorize(A)) * norm(vectorize(B)))
+
+    # 强制键 profile：缩键与扩容两向都改到 min(D, feasible)
+    W = CanonicalIMPO([randn(T, 6, 2, 6, 2), randn(T, 6, 2, 6, 2)])
+    for D in (2, 4, 6, 16)
+        W2 = deepcopy(W)
+        changebond!(W2; D = D)
+        @test all(bonddim(W2, ℓ) == D for ℓ in 1:2)
+        @test ismixedcanonical(W2)
+    end
+
+    # 扩容（noise = 0）：态不变
+    W0 = CanonicalIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
+    W0ref = deepcopy(W0)
+    changebond!(W0; D = 8, noise = 0)
+    @test all(bonddim(W0, ℓ) == 8 for ℓ in 1:2)
+    @test ismixedcanonical(W0)
+    @test ov(W0, W0ref) ≈ 1 atol = 1e-10
+
+    # noise 关键字（默认 1e-10）：态只被 O(noise) 扰动
+    Wn = CanonicalIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
+    Wnref = deepcopy(Wn)
+    changebond!(Wn; D = 8)
+    @test all(bonddim(Wn, ℓ) == 8 for ℓ in 1:2)
+    @test ismixedcanonical(Wn)
+    @test ov(Wn, Wnref) ≈ 1 atol = 1e-6
+
+    # 键 profile 已达标 ⇒ 提前返回，四个分量张量都不被改动
+    W6 = CanonicalIMPO([randn(T, 6, 2, 6, 2), randn(T, 6, 2, 6, 2)])
+    ref6 = deepcopy(W6)
+    changebond!(W6; D = 6)
+    @test W6.AL[1] == ref6.AL[1] && W6.AR[1] == ref6.AR[1] &&
+          W6.C[1] == ref6.C[1] && W6.AC[1] == ref6.AC[1]
 end
 
 @testset "compress" begin

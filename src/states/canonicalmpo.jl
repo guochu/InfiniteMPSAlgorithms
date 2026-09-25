@@ -379,57 +379,32 @@ function regauge!(CL::AbstractMatrix{T}, AC::AbstractArray{T,4}; alg = Defaults.
     return permutedims(reshape(ARv, wl, u, d, wr), (1, 2, 4, 3))
 end
 """
-    changebond!(W::CanonicalIMPO; D::Int) -> W
+    changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10) -> W
 
 [`changebond!`](@ref) 的 MPO 版（MPS 视图 `(wl, u·d, wr)` 的键 profile 调整，
-物理可行维为 `du·dd`）。
+物理可行维为 `du·dd`）：`AL` 的左右键直接 `_resize_dim` 到 `min(D, feasible)`
+（不足则扩容、超出则截取前导子块），再用 [`CanonicalIMPO`](@ref) 重新包装以恢复
+混合规范 —— 与 FiniteMPSAlgorithms 的同名函数一致。各 bond 已等于目标 profile
+时直接返回、不做任何改动。
+
+`noise` 填充扩容出的新块（`0` 即零填充，态不变；`noise ≠ 0` 时填 `noise·randn`）：
+零填充得到秩亏的态，规范不被唯一确定，单点 TDVP/VUMPS 等依赖规范的算法会因此
+给出表示依赖的结果（FiniteMPSAlgorithms 的 `TDVP1` docstring 记录了同一现象）。
 """
-function changebond!(W::CanonicalIMPO; D::Int)
+function changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10)
     N = length(W)
     b = _bond_feasible_profile(phydims(W), D)
-    T = scalartype(W)
-    # 截断超键：逐 bond 独立 SVD、统一应用，再从 AR 串重建混合规范
-    svds = Dict{Int,Any}()
+    # 键 profile 已达标（各 bond 与 min(D, feasible) 一致）⇒ 无需改动，提前返回
+    all(bonddim(W, ℓ) == b[ℓ] for ℓ in 1:N) && return W
     for ℓ in 1:N
-        bonddim(W, ℓ) > b[ℓ] || continue
-        svds[ℓ] = tsvd(W.C[ℓ]; trunc = truncdim(b[ℓ]))
-    end
-    if !isempty(svds)
-        for ℓ in 1:N
-            ℓm = _mod1(ℓ - 1, N)
-            if haskey(svds, ℓ)
-                U, s, V, _ = svds[ℓ]
-                W.AL[ℓ] = @tensor A[a, u, c, d] := W.AL[ℓ][a, u, bb, d] * U[bb, c]
-                W.AR[ℓ] = @tensor A[a, u, c, d] := W.AR[ℓ][a, u, bb, d] * U[bb, c]
-                W.C[ℓ] = Matrix{T}(Diagonal(s))
-            end
-            if haskey(svds, ℓm)
-                _, _, Vm, _ = svds[ℓm]
-                W.AL[ℓ] = @tensor A[a, u, c, d] := Vm[a, bb] * W.AL[ℓ][bb, u, c, d]
-                W.AR[ℓ] = @tensor A[a, u, c, d] := Vm[a, bb] * W.AR[ℓ][bb, u, c, d]
-            end
-        end
-        y = CanonicalIMPO(collect(W.AR))
-        copy!(W.AL, y.AL)
-        copy!(W.AR, y.AR)
-        copy!(W.C, y.C)
-        copy!(W.AC, y.AC)
-    end
-    # 零填充：AC 串（键位 1、3）扩展后整体重建混合规范（同 MPS 版的理由）
-    anypad = false
-    for ℓ in 1:N
-        b[ℓ] > bonddim(W, ℓ) || continue
-        anypad = true
         ℓm = _mod1(ℓ - 1, N)
-        W.AC[ℓ] = _resize_dim(W.AC[ℓ], 1, b[ℓm])
-        W.AC[ℓ] = _resize_dim(W.AC[ℓ], 3, b[ℓ])
+        W.AL[ℓ] = _resize_dim(W.AL[ℓ], 1, b[ℓm]; noise = noise)
+        W.AL[ℓ] = _resize_dim(W.AL[ℓ], 3, b[ℓ]; noise = noise)
     end
-    if anypad
-        y = CanonicalIMPO(collect(W.AC))
-        copy!(W.AL, y.AL)
-        copy!(W.AR, y.AR)
-        copy!(W.C, y.C)
-        copy!(W.AC, y.AC)
-    end
+    y = CanonicalIMPO(collect(W.AL))
+    copy!(W.AL, y.AL)
+    copy!(W.AR, y.AR)
+    copy!(W.C, y.C)
+    copy!(W.AC, y.AC)
     return W
 end

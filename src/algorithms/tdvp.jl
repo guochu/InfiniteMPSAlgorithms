@@ -59,8 +59,9 @@ integrator), and the evolution is confined to the MPS manifold of that bond
 dimension. Raise the bond dimension *before* calling `time_evolve` whenever the
 evolved state needs more than `ψ₀` provides — for example
 
-- `changebond!(ψ₀; D = D₀)`: zero-pads every bond to `D₀` and re-canonicalizes
-  (the state is unchanged), or
+- `changebond!(ψ₀; D = D₀)`: resizes every bond to `D₀` and re-canonicalizes
+  (the grown directions are filled with `noise`, default `1e-10`, which avoids a
+  rank-deficient gauge), or
 - a few two-site steps `apply!(UnitaryGate(g), ψ₀)` / `apply!(GeneralGate(g), ψ₀)`,
   which grow the bond dimension along the gates' bonds,
 
