@@ -20,6 +20,12 @@ end
     timestep(ψ, H, t, dt, [alg], [envs]; imaginary_evolution = false) -> (ψ, envs)
 
 Evolve one step of size `dt` at time `t` (solving `i∂ψ/∂t = Hψ`).
+
+**The bond dimension is preserved**: `TDVP` is a single-site integrator, so this
+step never changes `bonddim(ψ)`. `ψ` must already carry the bond dimension
+required by the evolved state — see [`time_evolve`](@ref) for how to raise it
+(`changebond!`, or a few two-site `apply!` steps); a too-small initial bond
+dimension makes the result systematically inaccurate for any `dt`.
 """
 function timestep(ψ::CanonicalIMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(),
                   envs::Environments = DMRGCache(ψ, H);
@@ -47,6 +53,29 @@ Step through the evolution over the time points `t_span` (mirrors MPSKit's
 `time_evolve`). With `imaginary_evolution = true` this is imaginary-time
 evolution `exp(-H·dt)`. The `observer(ψ, iter, t)` callback collects data at
 each step.
+
+**The bond dimension of `ψ₀` is preserved** (`TDVP` is a single-site
+integrator), and the evolution is confined to the MPS manifold of that bond
+dimension. Raise the bond dimension *before* calling `time_evolve` whenever the
+evolved state needs more than `ψ₀` provides — for example
+
+- `changebond!(ψ₀; D = D₀)`: zero-pads every bond to `D₀` and re-canonicalizes
+  (the state is unchanged), or
+- a few two-site steps `apply!(UnitaryGate(g), ψ₀)` / `apply!(GeneralGate(g), ψ₀)`,
+  which grow the bond dimension along the gates' bonds,
+
+then evolve the resulting state. In particular, for imaginary-time cooling to a
+thermal state do not start from the bond-dimension-1 infinite-temperature
+purification `|I⟩` (nor from a hand-padded copy of it): a single-site integrator
+cannot build up correlations, so such a run stays in the product-state manifold
+and returns the unphysical mean-field energy regardless of `dt`.
+
+When padding a state to a larger bond dimension by hand, the padded spectrum
+must be the rectangular padding `C = Diagonal([1, 0, 0, …])` — the added bond
+indices carry zero weight, so the state is unchanged — **not** `C = I`.
+`C = I` does not represent the padded state, and its degenerate (replicated)
+singular values silently corrupt the truncated two-site updates
+([`apply!`](@ref)) that follow.
 """
 function time_evolve(ψ₀::CanonicalIMPS, H, t_span::AbstractVector{<:Number},
                      alg::TDVP = TDVP(), envs::Environments = DMRGCache(ψ₀, H);
