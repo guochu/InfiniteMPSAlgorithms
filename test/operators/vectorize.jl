@@ -68,4 +68,26 @@
         # MPO 版 fidelity：devectorize 回算符后的 HS 保真度
         @test fidelity(devectorize(ψa), CanonicalIMPO(P)) ≈ 1 atol = 1e-9
     end
+
+    @testset "kron / transpose（超算符的 kron 表达）" begin
+        W = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
+        I2m = identityimpo(T, [2, 2])
+        # 超算符的 kron 表达（与逐元素约定逐位一致）
+        @test superoperator(W; side = :left).Ws == kron(W, I2m).Ws
+        @test superoperator(W; side = :right).Ws == kron(I2m, transpose(W)).Ws
+        # transpose：逐 site 矩阵级 + 往返
+        X4 = randn(T, 1, 2, 1, 2)
+        @test collect(transpose(DenseIMPO([X4]))[1])[1, :, 1, :] == transpose(X4[1, :, 1, :])
+        @test transpose(transpose(W)).Ws == W.Ws
+        # kron：单点矩阵级（a 腿快 ⇒ 矩阵级 = Base.kron(B, A)）
+        Y4 = randn(T, 1, 2, 1, 2)
+        K = kron(DenseIMPO([X4]), DenseIMPO([Y4]))
+        @test reshape(collect(K[1]), 4, 4) == kron(Y4[1, :, 1, :], X4[1, :, 1, :])
+        # 多 site：物理维相乘、键维相乘
+        K2 = kron(W, W)
+        @test phydims(K2) == [4, 4]
+        @test [bonddim(K2, ℓ) for ℓ in 1:2] == [9, 9]
+        # 单胞长度不一致报错
+        @test_throws DimensionMismatch kron(W, DenseIMPO([randn(T, 1, 2, 1, 2)]))
+    end
 end

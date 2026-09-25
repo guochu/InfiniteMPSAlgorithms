@@ -233,9 +233,9 @@ The left/right multiplication superoperator of an MPO, as an MPO on the
 doubled (bra ⊗ ket) space with the fused index convention of
 [`vectorize`](@ref) (`f = u + du·(d - 1)`, `u` the bra / row leg fast):
 
-- `side = :left` (W ⊗ I): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
+- `side = :left` (`= kron(W, identityimpo(dus))`): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
   so that `𝓦 · vec(X)` is `vec(W·X)` (W multiplies from the left);
-- `side = :right` (I ⊗ Wᵀ): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
+- `side = :right` (`= kron(identityimpo(dus), transpose(W))`): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
   so that `𝓦 · vec(X)` is `vec(X·W)` (W multiplies from the right).
 
 The bond dimensions are unchanged (the spectator channel carries trivial
@@ -251,29 +251,18 @@ A typical finite-T purification generator is the sum of the two channel
 superoperators, `𝓦_L(H) + 𝓦_R(H)` (= `H ⊗ I + I ⊗ Hᵀ`).
 """
 function superoperator(W::DenseIMPO; side::Symbol = :left)
-    return DenseIMPO([_superoperator_tensor(W[ℓ], side) for ℓ in 1:length(W)])
+    dus = phydims(W)
+    for ℓ in 1:length(W)
+        size(W[ℓ], 4) == dus[ℓ] ||
+            throw(ArgumentError("superoperator requires square operators (u == d) at site $ℓ"))
+    end
+    I = identityimpo(scalartype(W), dus)
+    side === :left && return kron(W, I)
+    side === :right && return kron(I, transpose(W))
+    throw(ArgumentError("side must be :left or :right, got $side"))
 end
 superoperator(W::SparseIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
 superoperator(W::CanonicalIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
-
-function _superoperator_tensor(W4::AbstractArray{T,4}, side::Symbol) where {T}
-    wl, du, wr, dd = size(W4)
-    du == dd || throw(ArgumentError("superoperator requires square operators (u == d)"))
-    out = similar(W4, wl, du * dd, wr, du * dd)
-    fill!(out, zero(T))
-    if side === :left
-        for u′ in 1:du, d in 1:dd, u in 1:du          # δ[d', d]
-            out[:, u′ + du * (d - 1), :, u + du * (d - 1)] = W4[:, u′, :, u]
-        end
-    elseif side === :right
-        for u in 1:du, d′ in 1:dd, d in 1:dd          # δ[u', u]
-            out[:, u + du * (d′ - 1), :, u + du * (d - 1)] = W4[:, d, :, d′]
-        end
-    else
-        throw(ArgumentError("side must be :left or :right, got $side"))
-    end
-    return out
-end
 
 """
     fidelity(W₁, W₂) -> Real

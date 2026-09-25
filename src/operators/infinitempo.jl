@@ -53,6 +53,48 @@ max_bonddim(W::DenseIMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 contractions; not the operator-adjoint network)."
 dag(W::DenseIMPO) = DenseIMPO(conj.(W.Ws))
 
+"""
+    Base.transpose(W::DenseIMPO) -> DenseIMPO
+
+The operator transpose: the physical legs of every site tensor are exchanged
+(`W[wl, u, wr, d] -> Wᵗ[wl, d, wr, u]`, bonds untouched), which transposes
+the represented operator matrix. Combined with [`dag`](@ref) (elementwise
+conjugation) this yields the operator-adjoint network.
+"""
+Base.transpose(W::DenseIMPO) = DenseIMPO([permutedims(w, (1, 4, 3, 2)) for w in W.Ws])
+
+"""
+    Base.kron(a::DenseIMPO, b::DenseIMPO) -> DenseIMPO
+
+Kronecker product of two equal-length MPOs on the doubled physical space: from
+the site tensors `A[aL, po, aR, pin]` and `B[bL, q, bR, qin]` the result tensor is
+
+    S[(aL,bL), (po,q), (aR,bR), (pin,qin)] = A[aL, po, aR, pin] · B[bL, q, bR, qin]
+
+with the `a` legs the fastest on every fused index (the [`vectorize`](@ref)
+fusion convention `f = u + du·(d - 1)`); the bond dimensions multiply. The
+two multiplication superoperators are the special cases
+([`superoperator`](@ref)):
+
+    superoperator(h; side = :left)  == kron(h, identityimpo(phydims(h)))
+    superoperator(h; side = :right) == kron(identityimpo(phydims(h)), transpose(h))
+"""
+function Base.kron(a::DenseIMPO, b::DenseIMPO)
+    L = length(a)
+    L == length(b) || throw(DimensionMismatch(
+        "kron requires equal unit-cell lengths, got $L and $(length(b))"))
+    T = promote_type(scalartype(a), scalartype(b))
+    data = Vector{Array{T,4}}(undef, L)
+    for ℓ in 1:L
+        A, B = a[ℓ], b[ℓ]
+        @tensor S[al, bl, po, q, ar, br, pin, qin] := A[al, po, ar, pin] * B[bl, q, br, qin]
+        # merge (al, bl), (po, q), (ar, br), (pin, qin) column major (a-leg the fastest)
+        data[ℓ] = reshape(S, size(A, 1) * size(B, 1), size(A, 2) * size(B, 2),
+                          size(A, 3) * size(B, 3), size(A, 4) * size(B, 4))
+    end
+    return DenseIMPO(data)
+end
+
 # MPSKit convention (scale!(first(mpo), α)): scalar multiplication scales only
 # the first tensor; scaling every tensor would change the operator value to
 # α^N·W (N = unit-cell length) and would break the minus sign for even N.
