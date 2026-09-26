@@ -22,6 +22,11 @@ Infinite Hamiltonian MPO in Schur (sparse) form, stored as a
 into the type; plain `Vector` inputs are converted automatically).
 `Ws[i][j, k]` is the local operator at site `i` from left level `j` to right
 level `k`; entries may be `Missing`, `Number`s, or `(d, d)` matrices.
+
+约束：unit cell 内**层数必须一致**（Schur 上三角 + 周期闭合的要求），
+但**各站物理维可以不同**（`phydims(H)` 逐站返回，例如 `[2, 3, 2]`）；
+`models.jl` 的便捷构造（`tfim` / `heisenberg_xxz` / `mpohamiltonian(h1, …)`）
+因为只给一个 `h1`，产出的模型各站物理维相同。
 """
 struct SparseIMPO{TO<:SchurMPOTensor}
     W::PeriodicVector{TO}
@@ -47,7 +52,9 @@ end
 function SparseIMPO(Ws::Vector{<:Matrix})
     for W in Ws
         (size(W, 1) == size(W, 2)) || throw(ArgumentError("level matrices of an infinite Hamiltonian must be square"))
-        (size(W, 1) == size(Ws[1], 1)) || throw(ArgumentError("all level matrices must have the same size"))
+        (size(W, 1) == size(Ws[1], 1)) ||
+            throw(ArgumentError("all level matrices must have the same number of levels " *
+                                "(Schur 上三角 + 周期闭合要求层数一致；各站物理维可以不同)"))
     end
     return SparseIMPO(PeriodicVector([SchurMPOTensor(W) for W in Ws]))
 end
@@ -126,25 +133,24 @@ end
 """
     H + λs::AbstractVector (or `λs + H`)
 
-Add `λᵢ·I` per site (mirrors MPSKit's `H + λs`).
+Add `λᵢ·I` per site (mirrors MPSKit's `H + λs`). 逐站取物理维（unit cell 内各站
+物理维允许不同，例如 `phydims = [2, 3, 2]`）。
 """
 function Base.:+(H::SparseIMPO, λs::AbstractVector{<:Number})
     (length(H) == length(λs)) || throw(DimensionMismatch("unit-cell lengths do not match"))
     Ws = Vector{Matrix{Any}}(undef, length(H))
     for i in 1:length(H)
         n = bonddim(H)
+        d = size(H[i].A, 2)         # 逐站物理维
         W = Matrix{Any}(missing, n, n)
         W[1, 1] = one(scalartype(H))
         W[n, n] = one(scalartype(H))
-        W[1, n] = λs[i] isa AbstractMatrix ? λs[i] : Matrix(λs[i] * I, phydim(H), phydim(H))
+        W[1, n] = λs[i] isa AbstractMatrix ? λs[i] : Matrix(λs[i] * I, d, d)
         Ws[i] = W
     end
     return H + SparseIMPO(Ws)
 end
 Base.:+(λs::AbstractVector{<:Number}, H::SparseIMPO) = H + λs
-
-"phydim(H): the local physical dimension."
-phydim(H::SparseIMPO) = size(H[1].A, 2)
 
 """
     tompotensors(H::SparseIMPO) -> Vector{<:Array{T,4}}

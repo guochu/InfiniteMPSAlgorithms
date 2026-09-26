@@ -11,6 +11,10 @@ Build the Schur bulk tensor of an on-site + nearest-neighbor Hamiltonian:
 - `h1`: the on-site operator (may be 0);
 - `pairs`: a list of `(coeff, a, b)` tuples, corresponding to the
   nearest-neighbor terms `coeff·aᵢ⊗bᵢ₊₁`.
+
+注：只给一个 `h1` ⇒ 各站物理维相同。unit cell 内需要**不同物理维**时，直接逐站
+构造 Schur 矩阵并交给 `SparseIMPO([W₁, W₂, …])`（层数一致即可；`phydims(H)`
+逐站给出）。
 """
 function bulk_mpo(h1, pairs::Vector{<:Tuple})
     N = length(pairs)
@@ -53,6 +57,9 @@ Sz(::Type{T} = ComplexF64) where {T} = σz(T) ./ 2
 Schur level matrix of an on-site + nearest-neighbor Hamiltonian (for
 `SparseIMPO`): levels `1`/`n` are the unit levels, `[1, n] = h1`,
 and channel `k`: `[1, k+1] = coeffₖ·aₖ`, `[k+1, n] = bₖ`.
+
+注：只给一个 `h1` ⇒ 各站物理维相同；unit cell 内需要不同物理维时逐站构造
+Schur 矩阵（层数一致、物理维可不同）后交给 `SparseIMPO([W₁, W₂, …])`。
 """
 function mpohamiltonian(h1::AbstractMatrix, pairs::Vector{<:Tuple})
     N = length(pairs)

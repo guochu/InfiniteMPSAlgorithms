@@ -66,3 +66,35 @@
         @test [bonddim(ψ1, ℓ) for ℓ in 1:3] == [2, 4, 2]
     end
 end
+
+@testset "异构物理维（unit cell 内各站 d 不同）≡ MPSKit" begin
+    T = ComplexF64
+    dims = [2, 3, 2]
+    Random.seed!(3)
+    ψ = randomimps(T, dims, 4)
+    # 解析参考：on-site-only 模型 H = Σ_ℓ h1_ℓ ⇒ E = Σ_ℓ ⟨h1_ℓ⟩（无环境路径）
+    h1 = [Matrix{T}(h + h') for h in (randn(T, dims[ℓ], dims[ℓ]) for ℓ in 1:3)]
+    Hs = SparseIMPO([mpohamiltonian(h1[ℓ], Tuple{Float64,Matrix{T},Matrix{T}}[]) for ℓ in 1:3])
+    E_ref = sum(real(expectationvalue(ψ, (ℓ,) => h1[ℓ])) for ℓ in 1:3)
+    @test abs(real(expectationvalue(ψ, Hs)) - E_ref) < 1e-10
+
+    lattice = [ℂ^dims[1], ℂ^dims[2], ℂ^dims[3]]
+    h1_tk = [TensorMap(copy(h1[ℓ]), ℂ^dims[ℓ], ℂ^dims[ℓ]) for ℓ in 1:3]
+    Hmk = MPSKit.InfiniteMPOHamiltonian(lattice, 1 => h1_tk[1], 2 => h1_tk[2], 3 => h1_tk[3])
+    @test abs(real(expectationvalue(ψ, Hs)) -
+              real(MPSKit.expectation_value(to_mpskit(ψ), Hmk))) < 1e-10
+
+    # VUMPS / IDMRG：异构 physical space 下逐位一致
+    for (ouralg, mkalg) in ((VUMPS(D = 4, maxiter = 100, tol = 1e-10, verbosity = 0),
+                             MPSKit.VUMPS(maxiter = 100, tol = 1e-10, verbosity = 0)),
+                            (IDMRG(D = 4, maxiter = 100, tol = 1e-10, verbosity = 0),
+                             MPSKit.IDMRG(maxiter = 100, tol = 1e-10, verbosity = 0)))
+        Random.seed!(9)
+        ψ1, e1, _ = find_groundstate(copy(ψ), Hs, ouralg)
+        Random.seed!(9)
+        ψ2, _, _ = MPSKit.find_groundstate(to_mpskit(ψ), Hmk, mkalg)
+        @test abs(real(expectationvalue(ψ1, Hs, e1)) -
+                  real(MPSKit.expectation_value(ψ2, Hmk))) < 1e-9
+        @test phydims(ψ1) == dims
+    end
+end

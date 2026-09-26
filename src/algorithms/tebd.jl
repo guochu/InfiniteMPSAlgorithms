@@ -68,7 +68,9 @@ given in either of two index conventions:
   all ket (input) indices second, each block ordered with site 1 the slowest index;
 * for `positions::Pair{Int,Int}` (`N = 2`), a `d²×d²` matrix in the Kronecker
   convention `(i1 i2)', (i1 i2)` with site `i1` the slower index; it is permuted into
-  the tensor convention on construction.
+  the tensor convention on construction. **该形式要求两侧物理维相同**（把矩阵按
+  `d = isqrt` 拆开）；unit cell 内各站物理维不同时请用上面的 rank-4 张量形式
+  （形状 `(d_i, d_j, d_i, d_j)`）。
 
 The input is copied and materialized as a dense array of concrete element type, then
 checked for unitarity (`op'*op ≈ I` within `atol`), throwing `ArgumentError` otherwise.
