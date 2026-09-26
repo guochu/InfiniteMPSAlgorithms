@@ -30,6 +30,24 @@ end
 Dense MPO Hamiltonian channel: transfer-matrix dominant eigenvector
 (Krylov Arnoldi). An `DenseIMPO` can be used directly as the Hamiltonian of
 a ground-state search, as well as in `expectationvalue(ψ, W)`.
+
+!!! note "与 `SparseIMPO` 通道的语义差别（MPSKit 对齐）"
+    `DenseIMPO` 通道算的是**周期 trace 的完整收缩**（环境吃满 MPO 的 level
+    指标），环境标度约定为 MPSKit `normalize!(::InfiniteEnvironments{DenseMPO})`：
+    每个右环境做 Frobenius 归一、每个左环境按 C 通道投影
+    `λ_i = ⟨C_i|H_C(i)|C_i⟩` 缩放。
+
+    对**Hamiltonian 型** MPO（带闭合层结构），完整 trace 会额外计入恒等层
+    bookkeeping，因此 `expectationvalue(ψ, W::DenseIMPO)` 的值与真实能量相差一个
+    与表示/态都有关的项（MPSKit 的 `expectation_value(ψ, ::InfiniteMPO)` 行为完全
+    相同，N=1 时两者逐位一致）；**能量请走 `SparseIMPO` 通道**（闭列公式，
+    `tfim_hamiltonian` 等），它对齐 MPSKit 的 `InfiniteMPOHamiltonian` 且精确。
+
+    另外该通道的环境由算子通道转移矩阵的**主本征向量**给出：当态存在（近似）
+    退耦合键时该本征空间（近似）退化，选取不由归一化唯一确定，因此对同一物理态的
+    不同（例如零填充扩键的）表示不严格不变；`SparseIMPO` 通道用非齐次线性解，
+    无此歧义（零填充下逐位不变）。时间推进用的 `make_time_mpo` 生成元接近恒等，
+    该标度约定与 1 的偏差为 O(dt)，实际使用不受影响。
 """
 function DMRGCache(ψ::CanonicalIMPS, operator::DenseIMPO; kwargs...)
     N = length(ψ)
@@ -46,18 +64,11 @@ function DMRGCache(ψ::CanonicalIMPS, operator::DenseIMPO; kwargs...)
     for ℓ in N-1:-1:1
         rights[ℓ] = push_env_right(rights[ℓ+1], operator[ℓ+1], ψ.AR[ℓ+1])
     end
-    # 对标 MPSKit normalize!(::DenseIMPO)：先把每个 GR 做 Frobenius 归一，
-    # 再逐 site 用配分函数 λ_i = ⟨AC_i | GL_{i+1}·W_i·GR_i | AC_i⟩ 缩放 GL_{i+1}，
-    # 使每个 site 的局部收缩恰好为 1（恒等 MPO 期望 = N）。
-    for ℓ in 1:N
-        rights[ℓ] .= rights[ℓ] ./ norm(rights[ℓ])
-    end
-    for i in 1:N
-        inext = i == N ? 1 : i + 1
-        λi = contract_mpo_expval(ψ.AC[i], lefts[inext], operator[i], rights[i])
-        lefts[inext] .= lefts[inext] ./ λi
-    end
-    return DMRGCache(operator, ψ, lefts, rights)
+    # 对标 MPSKit `normalize!(::InfiniteEnvironments{DenseMPO})`：先把每个 GR 做
+    # Frobenius 归一，再逐 site 用 `C_hamiltonian(i)` 的 C 通道投影
+    # λ_i = ⟨C_i| H_C(i) |C_i⟩ 缩放 GL_{i+1}（= 键 i 上的左环境）。逐站取环境，
+    # 非均匀键 profile 下形状自动一致。
+    return normalize_envs!(DMRGCache(operator, ψ, lefts, rights), ψ, operator, ψ)
 end
 
 """
@@ -77,20 +88,24 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
     N = length(ψ)
     nl = bonddim(H)
     T = promote_type(scalartype(ψ), scalartype(H))
-    Ds = [size(ψ.AL[ℓ], 1) for ℓ in 1:N]
-    lefts = [zeros(T, Ds[ℓ], nl, Ds[ℓ]) for ℓ in 1:N]
-    rights = [zeros(T, Ds[ℓ], nl, Ds[ℓ]) for ℓ in 1:N]
+    # 逐站键维：lefts[ℓ] 在键 ℓ-1（键维 χ_{ℓ-1} = size(AL[ℓ],1)），
+    # rights[ℓ] 在键 ℓ（键维 χ_ℓ = size(AL[ℓ],3)）。非均匀键下两者不再相同。
+    Dl = [size(ψ.AL[ℓ], 1) for ℓ in 1:N]
+    Dr = [size(ψ.AL[ℓ], 3) for ℓ in 1:N]
+    lefts = [zeros(T, Dl[ℓ], nl, Dl[ℓ]) for ℓ in 1:N]
+    rights = [zeros(T, Dr[ℓ], nl, Dr[ℓ]) for ℓ in 1:N]
     Wds = [tompotensor(H[ℓ]) for ℓ in 1:N]      # (nl, d, nl, d)
-    Ids = [Matrix{T}(I, Ds[ℓ], Ds[ℓ]) for ℓ in 1:N]
+    IdL = [Matrix{T}(I, Dl[ℓ], Dl[ℓ]) for ℓ in 1:N]
+    IdR = [Matrix{T}(I, Dr[ℓ], Dr[ℓ]) for ℓ in 1:N]
 
     # 单位层：level 1（左）与 level nl（右）= ρ = I（AL/AR 规范固定点）
     for ℓ in 1:N
-        lefts[ℓ][:, 1, :] .= Ids[ℓ]
-        rights[ℓ][:, nl, :] .= Ids[ℓ]
+        lefts[ℓ][:, 1, :] .= IdL[ℓ]
+        rights[ℓ][:, nl, :] .= IdR[ℓ]
     end
 
     # 对标 MPSKit environment_alg：krylovdim 截断到环境向量空间维数 D·D
-    max_krylovdim = Ds[1] * Ds[1]
+    max_krylovdim = Dl[1] * Dl[1]
     linalg = KrylovKit.GMRES(; tol = tol, maxiter = maxiter,
                             krylovdim = min(max_krylovdim, krylovdim))
 
@@ -98,7 +113,7 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
     # 对标 MPSKit compute_leftenvs!：每 level 先 cyclethrough 全胞扫描（通道跳转
     # 可发生在任意中间 site），在 site 1 解 (1 − T)·x = RHS 后再扫描一次展开。
     for i in 2:nl
-        D = Ds[1]
+        D = Dl[1]        # 左环境定义在键 N 上
         # 热启动初值（对标 MPSKit：复用上一轮环境的第 i 层）
         prev = if init_lefts !== nothing && size(init_lefts[1]) == size(lefts[1])
             vec(copy(init_lefts[1][:, i, :]))
@@ -106,13 +121,13 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
             vec(copy(lefts[1][:, i, :]))
         end
         # 第一次全胞扫描：RHS 落在 lefts[1][i]（写 site+1，读 site，顺序覆盖）
-        _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Ds, T)
+        _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
         RHS = copy(lefts[1][:, i, :])
         if isidentitylevel(H, i)
             # MPSKit：T=regularize(Tm, l_LL=I, r_LL=C[N]C[N]')，linsolve 用 flip(T)，
             # 而 flip(RegTM) 交换 l/r 参数（transfermatrix.jl:40），
             # 故实际作用为 T(v) − tr(r_LL·v)·l_LL = T(v) − tr(ρr·v)·I。
-            I1 = Ids[1]
+            I1 = IdL[1]
             ρr = ψ.C[N] * ψ.C[N]'
             op = function (v::AbstractVector)
                 X = reshape(v, D, D)
@@ -126,12 +141,12 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
             lefts[1][:, i, :] .= reshape(x, D, D)
             # 第二次扫描：把修正后的 site 1 展开到 site 2..N（MPSKit 仅 L>1 时执行）
             if N > 1
-                _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Ds, T)
+                _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
             end
             # 恒等层：逐 site 投影掉固定点分量
             for ℓ in 1:N
                 ρr_ℓ = ψ.C[ℓ - 1] * ψ.C[ℓ - 1]'
-                regularize!(@view(lefts[ℓ][:, i, :]), ρr_ℓ, Ids[ℓ])
+                regularize!(@view(lefts[ℓ][:, i, :]), ρr_ℓ, IdL[ℓ])
             end
         else
             if !isemptylevel(H, i)
@@ -146,14 +161,14 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
                 lefts[1][:, i, :] .= reshape(x, D, D)
             end
             if N > 1
-                _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Ds, T)
+                _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
             end
         end
     end
 
     # ---- 右环境：level nl-1..1（反向全胞扫描） ----
     for i in nl-1:-1:1
-        D = Ds[N]
+        D = Dr[N]        # 右环境定义在键 N 上
         # 热启动初值（对标 MPSKit：复用上一轮环境的第 i 层）
         prev = if init_rights !== nothing && size(init_rights[N]) == size(rights[N])
             vec(copy(init_rights[N][:, i, :]))
@@ -161,11 +176,11 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
             vec(copy(rights[N][:, i, :]))
         end
         # 第一次反向全胞扫描：RHS 落在 rights[N][i]
-        _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Ds, T)
+        _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
         RHS = copy(rights[N][:, i, :])
         if isidentitylevel(H, i)
             # l_RR(ψ, 1) = C[N]'·C[N]（默认 loc=1，site 0 即 site N），r_RR = I
-            IN = Ids[N]
+            IN = IdR[N]
             ρl = ψ.C[N]' * ψ.C[N]
             op = function (v::AbstractVector)
                 X = reshape(v, D, D)
@@ -178,12 +193,12 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
             x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
             rights[N][:, i, :] .= reshape(x, D, D)
             if N > 1
-                _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Ds, T)
+                _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
             end
             # 恒等层：逐 site 投影
             for ℓ in 1:N
                 ρl_ℓ = ψ.C[ℓ]' * ψ.C[ℓ]
-                regularize!(@view(rights[ℓ][:, i, :]), ρl_ℓ, Ids[ℓ])
+                regularize!(@view(rights[ℓ][:, i, :]), ρl_ℓ, IdR[ℓ])
             end
         else
             if !isemptylevel(H, i)
@@ -198,7 +213,7 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
                 rights[N][:, i, :] .= reshape(x, D, D)
             end
             if N > 1
-                _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Ds, T)
+                _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
             end
         end
     end
@@ -262,7 +277,15 @@ function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve)
     return ψ, envs, C_old, E
 end
 
-function find_groundstate(ψ₀::CanonicalIMPS, operator, alg::IDMRG,
+"""
+    find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG, [envs])
+        -> (ψ, envs, ϵ)
+
+IDMRG ground-state search. `operator` **必须是 `SparseIMPO`**（同
+[`find_groundstate`](@ref) 的 VUMPS 版说明：`DenseIMPO` 的周期 trace 期望不是
+能量，传入会报 `ArgumentError`）。
+"""
+function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG,
                           envs::Environments = DMRGCache(ψ₀, operator))
     ψ = copy(ψ₀)
     ϵ = calc_galerkin(ψ, operator, envs)

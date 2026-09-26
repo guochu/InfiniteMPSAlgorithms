@@ -452,8 +452,9 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
                                    GR0::Union{Nothing,AbstractArray} = nothing)
     N = length(x)
     T = scalartype(x)
+    # 环境一律定义在键 N 上；非均匀键下 size(x.AR[1],3) 是键 1 的键维，不能混用
     Dl = size(x.AL[1], 1)
-    Dr = size(x.AR[1], 3)
+    Dr = Dl
     Da1 = size(ket.ALf(1), 1)
 
     Tleft = function (v::AbstractVector)
@@ -572,44 +573,53 @@ ALS fixed points of the identity-channel machinery get distorted by the gram
 twist — after the twist the transfer fixed points return to the identity, and
 `AL·C = C·AR = AC` is preserved pointwise under the twist (the intermediate
 `X^{±1/2}` factors cancel). For blockdiag (direct sums) `X = 𝕀` and the twist
-is trivial. `X` is one D×D matrix per bond, memory O(N·D²), same order as the
-environments — still compute-on-the-fly.
+is trivial. `X_ℓ` 是键 ℓ-1 上的一只矩阵（非均匀键下逐键尺寸不同），内存 O(N·D²)，
+与环境的量级相同 —— 仍然按需计算。
 """
 function _twist_lazy_ket(ket::LazyKet, N::Int)
-    Dk = size(ket.ALf(1), 1)
     T = eltype(ket.ALf(1))
+    # χ[ℓ] = 键 ℓ-1 的键维（= ALf(ℓ) 的左键维）；X_ℓ 定义在键 ℓ-1 上，χ[ℓ]×χ[ℓ]
+    χ = [size(ket.ALf(ℓ), 1) for ℓ in 1:N]
+    Dk = χ[1]                       # 键 N 的键维：周期不动点所在的（方阵）空间
     # gram fixed point: dominant eigenvector of the periodic product transfer
-    # X_{ℓ+1} = ALf(ℓ)†·X_ℓ·ALf(ℓ)
-    Tgram = function (v::AbstractVector)
-        Xs = reshape(v, Dk, Dk, N)
-        out = similar(Xs)
-        for ℓ in 1:N
-            A = ket.ALf(ℓ)
-            Xl = Xs[:, :, ℓ]
-            @tensor tmp[bl, br] := conj(A[bm, s, bl]) * Xl[bm, bp] * A[bp, s, br]
-            out[:, :, _mod1(ℓ + 1, N)] = tmp
-        end
-        return vec(out)
+    # X_{ℓ+1} = ALf(ℓ)†·X_ℓ·ALf(ℓ)  （逐键为矩形映射；复合一周后回到键 N）
+    bondmap = function (ℓ::Int, Xl::AbstractMatrix)
+        A = ket.ALf(ℓ)
+        @tensor tmp[bl, br] := conj(A[bm, s, bl]) * Xl[bm, bp] * A[bp, s, br]
+        return tmp
     end
-    _, X1 = eigsolve(Tgram, ones(T, N * Dk * Dk), 1, :LM; ishermitian = false,
+    Tgram = function (v::AbstractVector)
+        X = reshape(v, Dk, Dk)
+        for ℓ in 1:N
+            X = bondmap(ℓ, X)
+        end
+        return vec(X)
+    end
+    _, X1 = eigsolve(Tgram, ones(T, Dk * Dk), 1, :LM; ishermitian = false,
                      tol = 1.0e-13, krylovdim = max(12, N * 2), maxiter = 200)
-    Xs = reshape(X1[1], Dk, Dk, N)
+    XN = reshape(X1[1], Dk, Dk)
     # Polish with a fixed-point iteration of the CP map: the gram transfer is a
     # direct sum for blockdiag-type targets, so the fp space is degenerate and
     # eigsolve may return a not-fully-converged vector inside it (which is not
     # positive definite after Hermitianization). The power iteration preserves
     # Hermiticity/PSD and exponentially suppresses the non-fp components.
     for _ in 1:200
-        Xn = reshape(Tgram(vec(Xs)), Dk, Dk, N)
-        λ = dot(vec(Xs), vec(Xn)) / dot(Xs, Xs)
-        res = norm(vec(Xn) .- λ .* vec(Xs)) / norm(Xs)
-        Xs = Xn ./ norm(Xn)
+        Xn = reshape(Tgram(vec(XN)), Dk, Dk)
+        λ = dot(vec(XN), vec(Xn)) / dot(XN, XN)
+        res = norm(vec(Xn) .- λ .* vec(XN)) / norm(XN)
+        XN = Xn ./ norm(Xn)
         res < 1.0e-12 && break
+    end
+    # 从键 N 上的不动点正向展开出逐键的 X：Xs[ℓ] 定义在键 ℓ-1 上
+    Xs = Vector{Matrix{T}}(undef, N)
+    Xs[1] = XN
+    for ℓ in 1:N-1
+        Xs[ℓ + 1] = bondmap(ℓ, Xs[ℓ])
     end
     half = Vector{Matrix{T}}(undef, N + 1)
     ihalf = Vector{Matrix{T}}(undef, N + 1)
     for ℓ in 1:N
-        half[ℓ], ihalf[ℓ] = _pd_sqrt_invsqrt(Xs[:, :, ℓ])
+        half[ℓ], ihalf[ℓ] = _pd_sqrt_invsqrt(Xs[ℓ])
     end
     inext(ℓ) = _mod1(ℓ + 1, N)
     twist = (g, A, gi) -> @tensor B[bl, s, br] := g[bl, bm] * A[bm, s, bp] * gi[bp, br]

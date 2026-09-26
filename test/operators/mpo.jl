@@ -7,11 +7,21 @@
     @test length(Hm) == 1
     @test bonddim(Hm, 1) == 4   # identity + 3 个通道（SxSx/SySy/SzSz 共 3 个 NN 项）
 
-    # 稠密 DenseIMPO 路径可运行（能量收敛性与 MPSKit 保持一致：
-    # 恒等通道主导本征向量污染，见 PLAN §9；收敛断言只在 Schur 路径检查）
-    ψd, envsd, ϵd = find_groundstate(randomimps(T, [2, 2], 10), Hm,
-                                     VUMPS(D = 10, maxiter = 10, tol = 1e-9, verbosity = 0))
-    @test expectationvalue(ψd, Hm, envsd) isa Number
+    # `find_groundstate` 只支持 SparseIMPO（DenseIMPO 的周期 trace 期望不是能量，
+    # 见 DMRGCache 的 DenseIMPO 版说明）⇒ 传 DenseIMPO 显式报 ArgumentError
+    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2], 10), Hm,
+                                               VUMPS(D = 10, maxiter = 10, tol = 1e-9,
+                                                     verbosity = 0))
+    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2], 10),
+                                               DenseIMPO(tfim_hamiltonian(T = T)),
+                                               IDMRG(D = 10, maxiter = 10, tol = 1e-9))
+    @test_throws ArgumentError find_groundstate(DenseIMPO(tfim_hamiltonian(T = T)),
+                                               VUMPS(D = 10, maxiter = 10, tol = 1e-9))
+    # 同一模型的 SparseIMPO 形式可正常求基态
+    Hs = heisenberg_hamiltonian(T = T)
+    ψs, envss, _ = find_groundstate(randomimps(T, [2, 2], 10), Hs,
+                                    VUMPS(D = 10, maxiter = 100, tol = 1e-9, verbosity = 0))
+    @test isfinite(real(expectationvalue(ψs, Hs, envss)))
 
     # tompotensors（有限稠密 MPO）的形状（全部虚拟层，无端点收缩）
     toms = tompotensors(SparseIMPO([bulk, bulk]))

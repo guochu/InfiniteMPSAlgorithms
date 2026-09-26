@@ -49,9 +49,12 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     T = promote_type(scalartype(below), scalartype(above))
     Dw = isnothing(operator) ? 1 : size(operator[1], 1)
+    # 键 profile 逐站可变：环境张量一律定义在键 N 上（周期闭合处），
+    # Dl/Da = below/above 链在键 N 上的键维，Dr = 同一键上 below 的键维。
+    # 非均匀键下 size(below.AR[1],3) 是键 1 的键维，不能混用。
     Dl = size(below.AL[1], 1)
     Da = size(above.AL[1], 1)
-    Dr = size(below.AR[1], 3)
+    Dr = Dl
     Wop = isnothing(operator) ? (ℓ -> nothing) : (ℓ -> operator[_mod1(ℓ, L)])
 
     # ---- left fixed point: dominant eigenvector of T_L(above.AL, operator, below.AL) ----
@@ -136,7 +139,9 @@ end
 function _left_cyclethrough!(lefts, Wds, ALs, i::Int, N::Int, Ds, T)
     for site in 1:N
         snext = site == N ? 1 : site + 1
-        tgt = zeros(T, Ds[snext], Ds[snext])
+        # 目标键 = site 的右键（逐站键维不同，取张量自身的实际尺寸）
+        χs = size(ALs[site], 3)
+        tgt = zeros(T, χs, χs)
         for l in 1:i
             tgt .+= _push_slice_left(lefts[site][:, l, :],
                                      view(Wds[site], l, :, i, :), ALs[site])
@@ -152,7 +157,9 @@ function _right_cyclethrough!(rights, Wds, ARs, i::Int, N::Int, Ds, T)
     nl = size(Wds[1], 1)
     for site in N:-1:1
         sprev = site == 1 ? N : site - 1
-        tgt = zeros(T, Ds[sprev], Ds[sprev])
+        # 目标键 = site 的左键（逐站键维不同，取张量自身的实际尺寸）
+        χs = size(ARs[site], 1)
+        tgt = zeros(T, χs, χs)
         for l in i:nl
             tgt .+= _push_slice_right(rights[site][:, l, :],
                                       view(Wds[site], i, :, l, :), ARs[site])

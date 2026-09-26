@@ -99,9 +99,11 @@ end
     heisenberg_xxz(; J=1.0, Δ=1.0, h=0.0, T=ComplexF64) -> (; mpo, bulk, hamiltonian)
 
 `H = J Σ (SˣSˣ + SʸSʸ + Δ SᶻSᶻ) − h Σ Sᶻ`. For J=Δ=1 the ground-state energy
-density is `1/4 − ln2`. Returns `(; mpo, bulk)`: `mpo` is the periodic
-`DenseIMPO` and `bulk` the Schur bulk (for time evolution via
-`make_time_mpo`).
+density is `1/4 − ln2`. Returns `(; mpo, bulk, hamiltonian)`: `mpo` is the
+periodic `DenseIMPO` (的周期 trace 完整收缩适合做**时间演化生成元**，见
+`make_time_mpo`)、`bulk` the Schur bulk，`hamiltonian` 是同一模型的
+`SparseIMPO`（**求能量用这个**：闭列公式，见 [`DMRGCache`](@ref) 的 `DenseIMPO`
+版说明）。
 """
 function heisenberg_xxz(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0, T::Type = ComplexF64)
     bulk = bulk_mpo(-h * Sz(T), [(J, Sx(T), Sx(T)), (J, Sy(T), Sy(T)), (J * Δ, Sz(T), Sz(T))])
@@ -110,10 +112,13 @@ function heisenberg_xxz(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0, T::Type 
 end
 
 """
-    tfim(; J=1.0, h=1.0, T=ComplexF64) -> (; mpo, bulk)
+    tfim(; J=1.0, h=1.0, T=ComplexF64) -> (; mpo, bulk, hamiltonian)
 
 Transverse-field Ising model `H = −J Σ σˣσˣ − h Σ σᶻ`. For J=h=1 the
-ground-state energy density is `−4/π`.
+ground-state energy density is `−4/π`. `mpo` 是周期 `DenseIMPO`（适合做时间演化
+生成元，见 `make_time_mpo`）、`bulk` 是 Schur bulk、`hamiltonian` 是同一模型的
+`SparseIMPO`（**求能量用这个**：闭列公式，见 [`DMRGCache`](@ref) 的 `DenseIMPO`
+版说明）。
 """
 function tfim(; J::Real = 1.0, h::Real = 1.0, T::Type = ComplexF64)
     bulk = bulk_mpo(-h * σz(T), [(-J, σx(T), σx(T))])

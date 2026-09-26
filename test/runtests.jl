@@ -48,6 +48,7 @@ end
     t = @elapsed begin
         include("mpskit/testhelpers_mpskit.jl")
         include("mpskit/lowlevel_concordance.jl")
+        include("mpskit/nonuniform_concordance.jl")
         include("mpskit/mult_concordance.jl")
         include("mpskit/groundstate_concordance.jl")
         include("mpskit/envs_concordance.jl")

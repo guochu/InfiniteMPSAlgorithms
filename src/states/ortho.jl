@@ -130,6 +130,9 @@ function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
     ϵ = float(real(one(real(scalartype(A[1]))))) * Inf
     while true
         # gauge_eigsolve_step!: C[N] = R factor of the mixed-transfer fixed point
+        # 键 N 的环境空间恒为方阵：`CanonicalIMPS(As)`（对齐 MPSKit `InfiniteMPS(A)`）
+        # 先用 `_makefullrank!` 把不可行的键 profile 删掉，扫掠 QR 因此永不截断、
+        # C[ℓ] 始终方形。MPSKit 的 gauge_eigsolve_step! 也没有方阵守卫。
         if iter ≥ alg.eig_miniter
             ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
             _, evec = fixedpoint(TransferMatrix(Awork, AL; side = :left),
@@ -143,11 +146,14 @@ function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
         end
         C_pre = copy(C[N])
         # gauge_orth_step!: per-site C[i-1]·A[i] → QR → AL[i], C[i]
+        # 逐站取出实际键维（非均匀键 profile 下各站不同，不能用单个全局 D）
         for i in 1:N
-            Dli, d, Dri = size(Awork[i])
+            d = size(Awork[i], 2)
+            dl = size(C[i - 1], 1)
+            dr = size(Awork[i], 3)
             @tensor M[a, s, b] := C[i - 1][a, ā] * Awork[i][ā, s, b]
-            Q, Rf = leftorth(reshape(M, Dli * d, Dri); alg = alg.alg_orth)
-            AL[i] = reshape(Q, Dli, d, size(Q, 2))
+            Q, Rf = leftorth(reshape(M, dl * d, dr); alg = alg.alg_orth)
+            AL[i] = reshape(Q, dl, d, size(Q, 2))
             C[i] = Rf
         end
         normalize!(C[N])
@@ -170,6 +176,7 @@ function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
     ϵ = float(real(one(real(scalartype(A[1]))))) * Inf
     while true
         # gauge_eigsolve_step!: C[N] = L factor of the mixed-transfer fixed point
+        # （方阵性同 uniform_leftorth!：由构造时的 _makefullrank! 保证）
         if iter ≥ alg.eig_miniter
             ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
             _, evec = fixedpoint(TransferMatrix(Awork, AR; side = :right),
@@ -182,10 +189,12 @@ function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
         C_pre = copy(C[N])
         # gauge_orth_step!: per-site A[i]·C[i] → LQ → C[i-1], AR[i]
         for i in N:-1:1
-            Dli, d, Dri = size(Awork[i])
+            d = size(Awork[i], 2)
+            dl = size(Awork[i], 1)
+            drc = size(C[i], 2)
             @tensor M[a, s, b] := Awork[i][a, s, ā] * C[i][ā, b]
-            Lf, Q = rightorth(reshape(M, Dli, d * Dri); alg = alg.alg_orth')
-            AR[i] = reshape(Q, size(Lf, 2), d, Dri)
+            Lf, Q = rightorth(reshape(M, dl, d * drc); alg = alg.alg_orth')
+            AR[i] = reshape(Q, size(Lf, 2), d, drc)
             C[i - 1] = Lf
         end
         normalize!(C[N])

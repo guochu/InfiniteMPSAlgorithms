@@ -85,3 +85,78 @@ end
     # verbosity 路径不报错
     @test ismixedcanonical(ψ; verbosity = 1) === true
 end
+
+@testset "非均匀键 profile（unit cell > 1）" begin
+    T = ComplexF64
+    Random.seed!(7)
+
+    # ---- MPS：键 profile [4, 2, 2]，phys [2, 3, 2] ----
+    As = [randn(T, 2, 2, 4), randn(T, 4, 3, 2), randn(T, 2, 2, 2)]
+    ψ = CanonicalIMPS(As)
+    @test [bonddim(ψ, ℓ) for ℓ in 1:3] == [4, 2, 2]
+    @test max_bonddim(ψ) == 4
+    @test ismixedcanonical(ψ)
+    @test all(mixedcanonical_error(ψ) .< 1e-12)
+    @test abs(norm(ψ) - 1) < 1e-8
+    @test abs(dot(ψ, ψ) - 1) < 1e-8
+
+    # 环境无关的局部观测量（site 1 的物理维为 2）
+    @test isfinite(real(expectationvalue(ψ, (1,) => σz(T))))
+
+    # 周期闭合那一条键也要校验（旧版只看相邻 1:N-1）
+    @test_throws DimensionMismatch CanonicalIMPS([randn(T, 2, 2, 3), randn(T, 4, 2, 2)])
+    @test_throws DimensionMismatch CanonicalIMPS([randn(T, 4, 2, 4), randn(T, 4, 2, 3)])
+
+    # ALs + C₀ 构造路径：C₀ 作用在键 N 上，必须是 (χ_N, χ_N) = (2, 2)
+    @test_throws DimensionMismatch CanonicalIMPS([copy(a) for a in As], Matrix{T}(I, 3, 3))
+    ψa = CanonicalIMPS([copy(a) for a in As], Matrix{T}(I, 2, 2))
+    @test [bonddim(ψa, ℓ) for ℓ in 1:3] == [4, 2, 2]
+
+    # ---- 等距 AL 串 + C₀ → 混合规范 ----
+    ψiso = _nonuniform_mps([4, 2, 2], 2)
+    @test [bonddim(ψiso, ℓ) for ℓ in 1:3] == [4, 2, 2]
+    @test ismixedcanonical(ψiso)
+
+    # ---- 不可行键 profile 的清理（对齐 MPSKit `InfiniteMPS(A)` 的 makefullrank!）----
+    # bond1 的 χ = 5 > Dl·d = 2·2 = 4 ⇒ 冗余，应被删到 4（周期 trace 即态不变）
+    Ar = [randn(T, 2, 2, 5), randn(T, 5, 2, 2), randn(T, 2, 2, 2)]
+    t0 = _dense_trace([copy(a) for a in Ar])
+    ψr = CanonicalIMPS(Ar)
+    @test [bonddim(ψr, ℓ) for ℓ in 1:3] == [4, 2, 2]
+    @test ismixedcanonical(ψr)
+    t1 = _dense_trace(collect(ψr.AL))
+    @test abs(dot(vec(t1), vec(t0))) / (norm(vec(t1)) * norm(vec(t0))) > 1 - 1e-10
+    # 反向：左键不可行（Dl > Dr·d）走另一分支清理
+    Al = [randn(T, 5, 2, 2), randn(T, 2, 2, 2), randn(T, 2, 2, 5)]
+    t2 = _dense_trace([copy(a) for a in Al])
+    ψl = CanonicalIMPS(Al)
+    @test [bonddim(ψl, ℓ) for ℓ in 1:3] == [2, 2, 4]
+    t3 = _dense_trace(collect(ψl.AL))
+    @test abs(dot(vec(t3), vec(t2))) / (norm(vec(t3)) * norm(vec(t2))) > 1 - 1e-10
+
+    # ---- MPO：键 profile [4, 2, 2] ----
+    Ws = [randn(T, 2, 2, 4, 2), randn(T, 4, 2, 2, 2), randn(T, 2, 2, 2, 2)]
+    W = CanonicalIMPO(Ws)
+    @test [bonddim(W, ℓ) for ℓ in 1:3] == [4, 2, 2]
+    @test ismixedcanonical(W)
+    @test all(mixedcanonical_error(W) .< 1e-12)
+
+    # ---- changebond! 的既有语义：强制拉成均匀 profile ----
+    q = copy(ψ)
+    changebond!(q; D = 4)
+    @test all(bonddim(q, ℓ) == 4 for ℓ in 1:3)
+    @test ismixedcanonical(q)
+    q2 = copy(ψ)
+    changebond!(q2; D = 2)
+    @test all(bonddim(q2, ℓ) == 2 for ℓ in 1:3)
+    @test ismixedcanonical(q2)
+
+    # ---- 零填充扩键：同一物理态，所有键 profile 按逐键赋值 ----
+    ψu = randomimps(T, [2, 2, 2], 4)
+    ψp = _padbond!(copy(ψu), 2, 1)
+    @test [bonddim(ψp, ℓ) for ℓ in 1:3] == [4, 5, 4]
+    @test ismixedcanonical(ψp)
+    @test all(mixedcanonical_error(ψp) .< 1e-12)
+    @test abs(dot(ψp, ψu) / (norm(ψp) * norm(ψu)) - 1) < 1e-12
+end
+

@@ -7,7 +7,11 @@
 Operator expectation values:
 
 - `O::DenseIMPO`: full MPO contraction, returning the total expectation over
-  the unit cell (e.g. `expectationvalue(ψ, H)` = total energy);
+  the unit cell (e.g. `expectationvalue(ψ, H)` = total energy)。
+  **注意**：这是周期 trace 的完整收缩（MPSKit `expectation_value(ψ, ::InfiniteMPO)`
+  语义，恒等 MPO 给 N）；对 Hamiltonian 型 MPO 它不等于能量（多出恒等层
+  bookkeeping），能量请用 `O::SparseIMPO`（闭列公式，对齐 MPSKit 的
+  `InfiniteMPOHamiltonian`），详见 [`DMRGCache`](@ref) 的 `DenseIMPO` 版说明；
 - `O = (i,) => A`: single-site local operator;
 - `O = ((i, i+1),) => A12`: nearest-neighbor two-site operator (`A12` is a
   `d²×d²` matrix with index order `(u1, u2; d1, d2)`);
@@ -87,14 +91,13 @@ function expectationvalue(ψ::CanonicalIMPS, H::SparseIMPO,
                           envs::Environments = DMRGCache(ψ, H))
     N = length(ψ)
     nl = bonddim(H)
-    d = phydim(H)
     T = promote_type(scalartype(ψ), scalartype(H))
     E = zero(T)
     for ℓ in 1:N
-        GL = leftenv(envs, ℓ)
-        GR = rightenv(envs, ℓ)
-        Dl, _, Dk = size(GL)
-        GRe = reshape(GR[:, nl, :], Dk, 1, Dl)
+        GL = leftenv(envs, ℓ)        # 键 ℓ-1 上的左环境
+        GR = rightenv(envs, ℓ)       # 键 ℓ 上的右环境（非均匀键下与 GL 维数不同）
+        d = size(ψ.AC[ℓ], 2)         # 逐站物理维
+        GRe = reshape(GR[:, nl, :], size(GR, 1), 1, size(GR, 3))
         Wcol = zeros(T, nl, d, 1, d)
         for l in 1:nl
             Wcol[l, :, 1, :] .= H[ℓ][l, nl]

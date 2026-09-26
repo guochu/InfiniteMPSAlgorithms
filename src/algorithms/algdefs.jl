@@ -11,6 +11,8 @@ Vanderstraeten et al.; mirrors MPSKit's `VUMPS`). `D` (Int, default
 `Defaults.D`) is the bond dimension: `find_groundstate(operator, alg)`
 generates a random initial state with `bonddim = D`; when an initial state
 `ψ₀` is passed explicitly, `alg.D` is ignored and `ψ₀`'s bond profile is used.
+`operator` 必须是 `SparseIMPO`（哈密顿量 Schur 形式）——`DenseIMPO` 的周期 trace
+期望不是能量，会被拒绝。
 
 Each iteration (MPSKit template):
 1. `localupdate_step!`: solve the smallest-eigenpair problems of
@@ -40,7 +42,7 @@ Single-site infinite DMRG (mirrors MPSKit's `IDMRG`). `D` (Int, default
 generates a random initial state with `bonddim = D`; when an initial state
 `ψ₀` is passed explicitly, `alg.D` is ignored and `ψ₀`'s bond profile is used
 (the compression path of `mult` / `compress` / `hadamard` takes `D` from
-`alg.D`).
+`alg.D`). `operator` 必须是 `SparseIMPO`（同 `VUMPS`）。
 
 Each iteration (MPSKit template):
 1. forward sweep: solve the `AC_hamiltonian` smallest-eigenpair problem site by
