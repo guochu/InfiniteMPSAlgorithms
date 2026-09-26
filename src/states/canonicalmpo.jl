@@ -381,11 +381,13 @@ end
 """
     changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10) -> W
 
-[`changebond!`](@ref) 的 MPO 版（MPS 视图 `(wl, u·d, wr)` 的键 profile 调整，
-物理可行维为 `du·dd`）：`AL` 的左右键直接 `_resize_dim` 到 `min(D, feasible)`
-（不足则扩容、超出则截取前导子块），再用 [`CanonicalIMPO`](@ref) 重新包装以恢复
-混合规范 —— 与 FiniteMPSAlgorithms 的同名函数一致。各 bond 已等于目标 profile
-时直接返回、不做任何改动。
+[`changebond!`](@ref) 的 MPO 版（MPS 视图 `(wl, u·d, wr)` 的键 profile 调整）：
+`AL` 的左右键直接 `_resize_dim` 到 `D`（不足则扩容、超出则截取前导子块），再用
+[`CanonicalIMPO`](@ref) 重新包装以恢复混合规范 —— 与 FiniteMPSAlgorithms 的同名
+函数一致。各 bond 已等于 `D` 时直接返回、不做任何改动。
+
+同 MPS 版：**infinite MPO 的键维不受物理维乘积限制**，忠实按用户给的 `D`，
+不做 `min(D, ∏d)` 之类的截断。
 
 `noise` 填充扩容出的新块（`0` 即零填充，态不变；`noise ≠ 0` 时填 `noise·randn`）：
 零填充得到秩亏的态，规范不被唯一确定，单点 TDVP/VUMPS 等依赖规范的算法会因此
@@ -393,8 +395,8 @@ end
 """
 function changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10)
     N = length(W)
-    b = _bond_feasible_profile(phydims(W), D)
-    # 键 profile 已达标（各 bond 与 min(D, feasible) 一致）⇒ 无需改动，提前返回
+    b = fill(D, N)
+    # 各 bond 已等于 D ⇒ 无需改动，提前返回
     all(bonddim(W, ℓ) == b[ℓ] for ℓ in 1:N) && return W
     for ℓ in 1:N
         ℓm = _mod1(ℓ - 1, N)

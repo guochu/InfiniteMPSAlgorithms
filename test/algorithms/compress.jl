@@ -26,7 +26,7 @@ end
     T = ComplexF64
     Random.seed!(77)
 
-    # 扩键（零填充，态不变）：prodimps 键 1 → 均匀 profile min(D, ∏d) = 4
+    # 扩键（零填充，态不变）：prodimps 键 1 → 均匀 profile D = 4（∏d = 6 ≥ 4）
     ψp = prodimps(T, [2, 3])
     ψref = deepcopy(ψp)
     changebond!(ψp; D = 4, noise = 0)
@@ -52,12 +52,19 @@ end
     @test abs(dot(ψsum, ψ1)) / (norm(ψsum) * norm(ψ1)) > 0.8
 
     # 键 profile 已达标 ⇒ 提前返回，四个分量张量都不被改动
-    # （ψ1 键 = 4 = min(4, ∏d = 6)，故 D = 4 命中提前返回）
+    # （ψ1 键 = 4 = D，故 D = 4 命中提前返回）
     ψe = randomimps(T, [2, 3], 4)
     refe = deepcopy(ψe)
     changebond!(ψe; D = 4)
     @test ψe.AL[1] == refe.AL[1] && ψe.AR[1] == refe.AR[1] &&
           ψe.C[1] == refe.C[1] && ψe.AC[1] == refe.AC[1]
+
+    # D 不受物理维乘积限制：infinite MPS 忠实按用户给的 D
+    # （回归：曾被截到 min(D, ∏d)）
+    ψcap = prodimps(T, [2, 3])                      # ∏d = 6
+    changebond!(ψcap; D = 32, noise = 0)
+    @test all(bonddim(ψcap, ℓ) == 32 for ℓ in 1:2)
+    @test ismixedcanonical(ψcap)
 end
 
 @testset "changebond!（MPO 版）" begin
@@ -65,7 +72,7 @@ end
     Random.seed!(79)
     ov(A, B) = abs(dot(vectorize(A), vectorize(B))) / (norm(vectorize(A)) * norm(vectorize(B)))
 
-    # 强制键 profile：缩键与扩容两向都改到 min(D, feasible)
+    # 强制键 profile：缩键与扩容两向都改到 D
     W = CanonicalIMPO([randn(T, 6, 2, 6, 2), randn(T, 6, 2, 6, 2)])
     for D in (2, 4, 6, 16)
         W2 = deepcopy(W)
@@ -73,6 +80,11 @@ end
         @test all(bonddim(W2, ℓ) == D for ℓ in 1:2)
         @test ismixedcanonical(W2)
     end
+    # D 不受物理维乘积限制（MPO 的 MPS 视图物理维 = du·dd = 4，∏ = 16）
+    Wcap = CanonicalIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
+    changebond!(Wcap; D = 32)
+    @test all(bonddim(Wcap, ℓ) == 32 for ℓ in 1:2)
+    @test ismixedcanonical(Wcap)
 
     # 扩容（noise = 0）：态不变
     W0 = CanonicalIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
