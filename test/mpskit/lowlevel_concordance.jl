@@ -82,7 +82,9 @@ function run_lowlevel_concordance(::Type{T}) where {T<:Number}
 
 @testset "Defaults 常量 ≡ MPSKit" begin
     @test Defaults.eltype == MPSKit.Defaults.eltype
-    @test Defaults.maxiter == MPSKit.Defaults.maxiter
+    # 有意偏离：本包 maxiter = 300（MPSKit 为 200）
+    @test Defaults.maxiter == 300
+    @test MPSKit.Defaults.maxiter == 200
     @test Defaults.tolgauge == MPSKit.Defaults.tolgauge
     @test Defaults.tol == MPSKit.Defaults.tol
     @test Defaults.krylovdim == MPSKit.Defaults.krylovdim
@@ -123,7 +125,9 @@ end
     for (ours, mk) in ((LeftCanonical(), MPSKit.LeftCanonical()),
                        (RightCanonical(), MPSKit.RightCanonical()))
         @test ours.tol == mk.tol == Defaults.tolgauge
-        @test ours.maxiter == mk.maxiter == Defaults.maxiter
+        # 有意偏离：本包默认 maxiter = 300（Defaults.maxiter），MPSKit 为 200
+        @test ours.maxiter == Defaults.maxiter == 300
+        @test mk.maxiter == 200
         @test ours.verbosity == mk.verbosity == Defaults.VERBOSE_WARN
         @test ours.eig_miniter == mk.eig_miniter == 10
     end

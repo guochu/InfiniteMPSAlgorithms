@@ -13,9 +13,9 @@
 @testset "exact_*：朴素精确构造（debug 基准）" begin
     T = ComplexF64
     Random.seed!(47)
-    W1 = randomimpo(T, [2, 2], 2)
-    W2 = randomimpo(T, [2, 2], 3)
-    ψ1 = randomimps(T, [2, 2], 3)
+    W1 = randomimpo(T, [2, 2]; D = 2)
+    W2 = randomimpo(T, [2, 2]; D = 3)
+    ψ1 = randomimps(T, [2, 2]; D = 3)
 
     # mpo*mpo：键维 = 两键维乘积，稠密算符 = 矩阵乘积
     P = exact_mult(W1.Ws, W2.Ws)
@@ -38,10 +38,10 @@ end
 @testset "exact_add：周期 trace 精确可加（debug 基准）" begin
     T = ComplexF64
     Random.seed!(48)
-    ψ1 = randomimps(T, [2, 2], 3)
-    ψ2 = randomimps(T, [2, 2], 4)
-    W1 = randomimpo(T, [2, 2], 2)
-    W2 = randomimpo(T, [2, 2], 3)
+    ψ1 = randomimps(T, [2, 2]; D = 3)
+    ψ2 = randomimps(T, [2, 2]; D = 4)
+    W1 = randomimpo(T, [2, 2]; D = 2)
+    W2 = randomimpo(T, [2, 2]; D = 3)
 
     K = exact_add(ψ1.AL, ψ2.AL)
     @test length(K) == 2 && size(K[1]) == (7, 2, 7)
@@ -54,14 +54,14 @@ end
           _dense_mpo_repr(W1) + _dense_mpo_repr(W2) atol = 1e-10
 
     # 长度不匹配抛错
-    @test_throws DimensionMismatch exact_add(ψ1.AL, randomimps(T, [2, 2, 2], 3).AL)
+    @test_throws DimensionMismatch exact_add(ψ1.AL, randomimps(T, [2, 2, 2]; D = 3).AL)
 end
 
 @testset "exact_hadamard：波形逐点乘积（debug 基准）" begin
     T = ComplexF64
     Random.seed!(49)
-    ψ1 = randomimps(T, [2, 2], 3)
-    ψ2 = randomimps(T, [2, 2], 4)
+    ψ1 = randomimps(T, [2, 2]; D = 3)
+    ψ2 = randomimps(T, [2, 2]; D = 4)
     K = exact_hadamard(ψ1.AL, ψ2.AL)
     @test size(K[1]) == (12, 2, 12)   # 物理维不变，键维 = 3·4
     # 原始 zip 张量串的周期 trace 严格逐点：两条虚拟链独立 → trace 因子化
@@ -73,8 +73,8 @@ end
 @testset "mult：MPO 乘法（朴素精确对照 + 压缩）" begin
     T = ComplexF64
     Random.seed!(44)
-    W1 = randomimpo(T, [2, 2], 2)
-    W2 = randomimpo(T, [2, 2], 3)
+    W1 = randomimpo(T, [2, 2]; D = 2)
+    W2 = randomimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
     # 朴素乘法 = 稠密算符矩阵乘法，键维 = 两键维乘积
     P = exact_mult(W1.Ws, W2.Ws)
@@ -91,7 +91,7 @@ end
     ls1 = dot(dP1, dW1v) / dot(dP1, dP1)
     @test norm(dW1v .- ls1 .* dP1) / norm(dW1v) < 1e-8
     # 压缩路径：2·Wa·I（键 2）压到 D=1 精确（秩-1 目标），两算法。
-    wa = randomimpo(T, [2, 2], 1)
+    wa = randomimpo(T, [2, 2]; D = 1)
     dwa = _dense_mpo_repr(wa)
     tgt = 2 .* dwa
     s2 = DenseIMPO(collect(exact_add(wa.Ws, wa.Ws)))
@@ -110,14 +110,14 @@ end
     # CanonicalIMPO 且 ismixedcanonical，不得透出 DenseIMPO
     T = ComplexF64
     Random.seed!(46)
-    W1 = randomimpo(T, [2, 2], 2)
-    W2 = randomimpo(T, [2, 2], 3)
+    W1 = randomimpo(T, [2, 2]; D = 2)
+    W2 = randomimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
     # 精确（无 alg）：naive 构造 + 规范化
     Pe, _ = mult(W1, W2)
     @test Pe isa CanonicalIMPO && ismixedcanonical(Pe) && bonddim(Pe, 1) == 6
     # mpo·mps 精确路径
-    ψ = randomimps(T, [2, 2], 3)
+    ψ = randomimps(T, [2, 2]; D = 3)
     y, _ = mult(W1, ψ)
     @test y isa CanonicalIMPS && ismixedcanonical(y)
     # lazy 路径
@@ -167,8 +167,8 @@ end
 @testset "hadamard：element-wise 乘积（物理维不变）" begin
     T = ComplexF64
     Random.seed!(45)
-    ψ1 = randomimps(T, [2, 2], 3)
-    ψ2 = randomimps(T, [2, 2], 3)
+    ψ1 = randomimps(T, [2, 2]; D = 3)
+    ψ2 = randomimps(T, [2, 2]; D = 3)
     c1 = _dense_mps_repr(ψ1)
     c2 = _dense_mps_repr(ψ2)
 
@@ -191,8 +191,8 @@ end
     end
 
     # 长度 / 逐 site 物理维不匹配
-    @test_throws DimensionMismatch hadamard(ψ1, randomimps(T, [2, 2, 2], 2))
-    @test_throws DimensionMismatch hadamard(ψ1, randomimps(T, [3, 2], 3))
+    @test_throws DimensionMismatch hadamard(ψ1, randomimps(T, [2, 2, 2]; D = 2))
+    @test_throws DimensionMismatch hadamard(ψ1, randomimps(T, [3, 2]; D = 3))
 
     # 语义注记：ψ2 = dag(ψ1) 时 c12 ∝ |c1|² 为逐点模方（非负实波形），
     # 而不是密度矩阵；密度矩阵需 u/d 双腿的 MPO 表示（另一类构造）

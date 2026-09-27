@@ -8,21 +8,45 @@
 
 """
     svdguess_compress(x, D) -> CanonicalIMPS
+    svdguess_compress(ALs::PeriodicVector{<:Array{T,3}}, D) -> Vector{Array{T,3}}
 
 Deterministic initial guess of the iterative [`compress`](@ref) (reference:
-FiniteMPSAlgorithms' `svdguess_compress`): the bond-wise SVD truncation of `x`
-itself to `D` (accurate but costly compared to [`changebond!`](@ref) zero
-padding; the mixed-canonical form is preserved — the truncation factors act on
-orthogonality-protected bonds). `CanonicalIMPO` input returns the MPS-view
-guess (`CanonicalIMPS` on the doubled space).
+FiniteMPSAlgorithms' `svdguess_compress`): the bond-wise SVD truncation of the
+input to `D` (accurate but costly compared to [`changebond!`](@ref) zero
+padding). `CanonicalIMPO` input returns the MPS-view guess (`CanonicalIMPS`
+on the doubled space).
+
+The bare-tensor method accepts the site-tensor string directly (e.g.
+`ψ.AL` / `ψ.AR` of a [`CanonicalIMPS`](@ref)) and returns a plain right-gauge
+tensor string truncated to `D` (wrap bond Schmidt-truncated at site 1,
+[`_lazy_svd_guess`](@ref)) — the low-level entry point for downstream
+packages; the `CanonicalIMPS`/`CanonicalIMPO` methods are thin wrappers that
+re-canonicalize its output.
 """
 function svdguess_compress(x::CanonicalIMPS, D::Int)
-    return max_bonddim(x) ≤ D ? copy(x) : _truncate_bonddim(copy(x), D)
+    max_bonddim(x) ≤ D && return copy(x)
+    return CanonicalIMPS(svdguess_compress(x.AL, D))
 end
 
 function svdguess_compress(x::CanonicalIMPO, D::Int)
-    return max_bonddim(x) ≤ D ? CanonicalIMPS(asmps_view(collect(x.AC))) :
-           _truncate_bonddim(CanonicalIMPS(asmps_view(collect(x.AC))), D)
+    return svdguess_compress(CanonicalIMPS(asmps_view(collect(x.AC))), D)
+end
+
+"Low-level tensor-string entry: streaming SVD truncation of a bare `AL`/`AR`
+string to bond cap `D` (wrap bond Schmidt-truncated at site 1). The carry
+(the previous site's truncated left basis) is absorbed into the next site
+tensor on the fly — the carry-ignoring identity closure would break bond
+consistency between the SVD outputs."
+function svdguess_compress(ALs::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
+    site = (ℓ, carry) -> begin
+        carry === nothing && return ALs[ℓ]
+        A = ALs[ℓ]
+        # B[a, s, f] = Σ_bb A[a, s, bb]·carry[bb, f]（carry 的行 = 上一站 SVD 截断
+        # 出的右键基，与本站右键收缩；reshape 矩阵乘，@tensor 不接受开索引双侧出现）
+        return reshape(reshape(A, :, size(A, 3)) * carry,
+                       size(A, 1), size(A, 2), size(carry, 2))
+    end
+    return _lazy_svd_guess(site, length(ALs), D)
 end
 
 """

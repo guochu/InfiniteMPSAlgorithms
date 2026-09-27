@@ -133,7 +133,7 @@ const VERBOSE_ALL = 4
 
 const eltype = ComplexF64
 const D = 64
-const maxiter = 200
+const maxiter = 300
 const tolgauge = 1.0e-13
 const tol = 1.0e-10
 const verbosity = 0
@@ -189,6 +189,29 @@ end
 # attached to Defaults here)
 Defaults.alg_orth() = QRpos()
 Defaults.alg_svd() = SDD()
+
+"""
+内部 [`KrylovKit.eigsolve`](@ref) 封装：默认参数一律取自 [`Defaults`](@ref)
+（`tol = Defaults.tol`、`maxiter = Defaults.maxiter`、`krylovdim = Defaults.krylovdim`），
+并在收敛数不足（`info.converged < howmany`）时 `@warn`。包内所有特征值求解都
+经由这里，保证默认行为一致；`warn = false` 可关闭告警（用于收敛失败属预期、
+且结果会被后续处理修复的场合）。
+"""
+function _eigsolve(f, x₀, howmany::Integer, which::Symbol;
+                   ishermitian::Bool = false, tol::Real = Defaults.tol,
+                   maxiter::Int = Defaults.maxiter, krylovdim::Int = Defaults.krylovdim,
+                   eager::Bool = true, warn::Bool = true, kwargs...)
+    vals, vecs, info = KrylovKit.eigsolve(f, x₀, howmany, which;
+                                          ishermitian = ishermitian, tol = tol,
+                                          maxiter = maxiter, krylovdim = krylovdim,
+                                          eager = eager, kwargs...)
+    if warn && info.converged < howmany
+        @warn "KrylovKit.eigsolve 未完全收敛" nconv = info.converged howmany =
+              Int(howmany) residual_norms = info.residual_norms numiter = info.numiter tol =
+              tol maxiter = maxiter krylovdim = krylovdim
+    end
+    return vals, vecs, info
+end
 
 # 包级默认截断方案：以 Defaults.D 封顶、Defaults.tolgauge 为相对截断阈值、
 # 至少保留一个奇异值（对齐 FiniteMPSAlgorithms 的 DefaultTruncation）。

@@ -1,6 +1,6 @@
 @testset "CanonicalIMPS 数据结构与规范" begin
     T = ComplexF64
-    ψ = randomimps(T, [2, 2], 6)
+    ψ = randomimps(T, [2, 2]; D = 6)
 
     @test length(ψ) == 2
     @test phydims(ψ) == [2, 2]
@@ -45,8 +45,8 @@ end
 @testset "fidelity / infidelity" begin
     T = ComplexF64
     Random.seed!(7)
-    ψ1 = randomimps(T, [2, 2], 6)
-    ψ2 = randomimps(T, [2, 2], 6)
+    ψ1 = randomimps(T, [2, 2]; D = 6)
+    ψ2 = randomimps(T, [2, 2]; D = 6)
 
     f11 = fidelity(ψ1, ψ1)
     @test f11 ≈ 1 atol = 1e-12
@@ -68,7 +68,7 @@ end
 @testset "ismixedcanonical 负检查" begin
     T = ComplexF64
     Random.seed!(9)
-    ψ = randomimps(T, [2, 2], 4)
+    ψ = randomimps(T, [2, 2]; D = 4)
     @test ismixedcanonical(ψ)
     ϵs = mixedcanonical_error(ψ)
     @test all(ϵs .< 1e-12)
@@ -152,11 +152,51 @@ end
     @test ismixedcanonical(q2)
 
     # ---- 零填充扩键：同一物理态，所有键 profile 按逐键赋值 ----
-    ψu = randomimps(T, [2, 2, 2], 4)
+    ψu = randomimps(T, [2, 2, 2]; D = 4)
     ψp = _padbond!(copy(ψu), 2, 1)
     @test [bonddim(ψp, ℓ) for ℓ in 1:3] == [4, 5, 4]
     @test ismixedcanonical(ψp)
     @test all(mixedcanonical_error(ψp) .< 1e-12)
     @test abs(dot(ψp, ψu) / (norm(ψp) * norm(ψu)) - 1) < 1e-12
+end
+
+@testset "phydim / randomimps / randomimpo 接口" begin
+    T = ComplexF64
+    Random.seed!(17)
+
+    # phydim：unit cell 内逐站物理维
+    ψ = randomimps(T, [2, 3, 4]; D = 4)
+    @test phydim(ψ, 1) == 2 && phydim(ψ, 2) == 3 && phydim(ψ, 3) == 4
+    @test phydim(ψ, 4) == 2                       # 周期下标
+    @test phydims(ψ) == [2, 3, 4]
+    W = randomimpo(T, [2, 3]; D = 2)              # DenseIMPO：du
+    @test phydim(W, 1) == 2 && phydim(W, 2) == 3
+    @test phydims(W) == [2, 3]
+    M = CanonicalIMPO(W)                          # CanonicalIMPO：phydim = du（方算符）
+    @test phydim(M, 1) == 2 && phydim(M, 2) == 3
+    @test phydims(M) == [2, 3]
+    # 非方算符：内构造即拒绝（AC 的 u/d 检查）
+    @test_throws DimensionMismatch CanonicalIMPO([randn(T, 1, 2, 1, 3), randn(T, 1, 3, 1, 2)])
+
+    # 无 T 时默认 Float64；d 默认 2；D 必须显式给出
+    ψf = randomimps(3; D = 4)
+    @test ψf isa CanonicalIMPS{Float64} && size(ψf.AL[1]) == (4, 2, 4)
+    ψf2 = randomimps(3; d = 3, D = 4)
+    @test ψf2 isa CanonicalIMPS{Float64} && size(ψf2.AL[1], 2) == 3
+    Wf = randomimpo(2; D = 3)
+    @test Wf isa DenseIMPO{Float64} && size(Wf.Ws[1]) == (3, 2, 3, 2)
+    Wf2 = randomimpo(2; d = 3, D = 3)
+    @test Wf2 isa DenseIMPO{Float64} && size(Wf2.Ws[1], 2) == 3
+
+    # rng 可复现
+    g = MersenneTwister(42)
+    ψa = randomimps(Float64, 2; D = 3, rng = g)
+    g = MersenneTwister(42)
+    ψb = randomimps(Float64, 2; D = 3, rng = g)
+    @test ψa.AL[1] == ψb.AL[1]
+
+    # 缺 D 报错（D 无默认值，必须用户输入）
+    @test_throws UndefKeywordError randomimps(2)
+    @test_throws UndefKeywordError randomimpo(2)
 end
 

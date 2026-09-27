@@ -9,17 +9,17 @@
 
     # `find_groundstate` 只支持 SparseIMPO（DenseIMPO 的周期 trace 期望不是能量，
     # 见 DMRGCache 的 DenseIMPO 版说明）⇒ 传 DenseIMPO 显式报 ArgumentError
-    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2], 10), Hm,
+    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2]; D = 10), Hm,
                                                VUMPS(D = 10, maxiter = 10, tol = 1e-9,
                                                      verbosity = 0))
-    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2], 10),
+    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2]; D = 10),
                                                DenseIMPO(tfim_hamiltonian(T = T)),
                                                IDMRG(D = 10, maxiter = 10, tol = 1e-9))
     @test_throws ArgumentError find_groundstate(DenseIMPO(tfim_hamiltonian(T = T)),
                                                VUMPS(D = 10, maxiter = 10, tol = 1e-9))
     # 同一模型的 SparseIMPO 形式可正常求基态
     Hs = heisenberg_hamiltonian(T = T)
-    ψs, envss, _ = find_groundstate(randomimps(T, [2, 2], 10), Hs,
+    ψs, envss, _ = find_groundstate(randomimps(T, [2, 2]; D = 10), Hs,
                                     VUMPS(D = 10, maxiter = 100, tol = 1e-9, verbosity = 0))
     @test isfinite(real(expectationvalue(ψs, Hs, envss)))
 
@@ -55,7 +55,7 @@ end
     @test H[1][1, 2] ≈ H[1].C[:, 1, :]
 
     # 有限链逐项能量对照：Schur 收缩 vs 显式算符平均（随机态、短链近似）
-    ψ0 = randomimps(T, [2, 2], 10)
+    ψ0 = randomimps(T, [2, 2]; D = 10)
     envs = DMRGCache(ψ0, H)
     eH = real(expectationvalue(ψ0, H, envs))
     @test isfinite(eH) && abs(imag(eH)) < 1e-10

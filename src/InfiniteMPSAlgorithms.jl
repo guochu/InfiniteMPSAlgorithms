@@ -88,7 +88,7 @@ export
     OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD, Polar, tie,
     # data structures
     CanonicalIMPS, DenseIMPO, CanonicalIMPO,
-    scalartype, phydims, max_bonddim, bonddim, dag, eachsite,
+    scalartype, phydim, phydims, max_bonddim, bonddim, dag, eachsite,
     ismixedcanonical, mixedcanonical_error,
     norm, normalize!, dot,
     # constructors

@@ -101,6 +101,8 @@ end
 
 """
     svdguess_hadamard(ψ₁, ψ₂, D) -> CanonicalIMPS
+    svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
+                      A2s::PeriodicVector{<:Array{T,3}}, D) -> Vector{Array{T,3}}
 
 Deterministic initial guess of the iterative [`hadamard`](@ref) (reference:
 FiniteMPSAlgorithms' `svdguess_hadamard`): the pointwise product's site tensors
@@ -110,18 +112,28 @@ product tensor is never materialized), and streamed right→left through a
 truncating right-orthogonalization with bond cap `D`
 ([`_lazy_svd_guess`](@ref)); the ring's wrap bond is Schmidt-truncated at
 site 1. Every output bond is ≤ `D`.
+
+The bare-tensor method takes the site-tensor strings directly (e.g. `ψ.AL` /
+`ψ.AR` of a [`CanonicalIMPS`](@ref)) and returns the right-gauge tensor
+string — the low-level entry point for downstream packages; the
+`CanonicalIMPS` method is a thin wrapper that re-canonicalizes its output.
 """
 function svdguess_hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, D::Int)
-    (length(ψ1) == length(ψ2)) ||
+    return CanonicalIMPS(svdguess_hadamard(ψ1.AL, ψ2.AL, D))
+end
+
+function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
+                           A2s::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
+    (length(A1s) == length(A2s)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
-    N = length(ψ1)
-    all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:N) ||
+    N = length(A1s)
+    all(size(A1s[ℓ], 2) == size(A2s[ℓ], 2) for ℓ in 1:N) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
     # carry 在构造时吸收（kron(A2, A1) 的融合序：左腿 (c 慢, a 快)、右腿 (e 慢, b 快)）：
     # B'[(c,a), s, f] = Σ_{e,b} A2[c,s,e]·A1[a,s,b]·carry[(e,b), f]
     # 先用 A1 的 b 腿吸收 carry、再用 A2 的 e 腿收缩 —— 两个矩阵乘，不落地大张量
     site = (ℓ, carry) -> begin
-        A1 = ψ1.AL[ℓ]; A2 = ψ2.AL[ℓ]
+        A1 = A1s[ℓ]; A2 = A2s[ℓ]
         carry === nothing && return _naive_hadamard_tensor(A1, A2)
         a, s, b = size(A1); c, _, e = size(A2)
         f = size(carry, 2)
@@ -137,7 +149,7 @@ function svdguess_hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, D::Int)
         # 左腿 flatten 与 naive 一致：行 = (c-1)·a + a（c 慢 a 快）
         return reshape(permutedims(B3, (2, 1, 3, 4)), a * c, s, f)
     end
-    return CanonicalIMPS(_lazy_svd_guess(site, N, D))
+    return _lazy_svd_guess(site, N, D)
 end
 
 """

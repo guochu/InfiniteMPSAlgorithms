@@ -44,6 +44,8 @@ end
 scalartype(::Type{DenseIMPO{T}}) where {T} = T
 scalartype(W::DenseIMPO) = scalartype(typeof(W))
 
+"`phydim(W, i)`: site `i` 的上物理维 `du`（unit cell 内允许逐站不同）。"
+phydim(W::DenseIMPO, i::Integer) = size(W[i], 2)
 phydims(W::DenseIMPO) = [size(W[ℓ], 2) for ℓ in 1:length(W)]
 "`bonddim(W, ℓ)`: the MPO bond dimension to the left of site ℓ."
 bonddim(W::DenseIMPO, ℓ::Integer) = size(W[ℓ], 1)
@@ -64,25 +66,25 @@ conjugation) this yields the operator-adjoint network.
 Base.transpose(W::DenseIMPO) = DenseIMPO([permutedims(w, (1, 4, 3, 2)) for w in W.Ws])
 
 """
-    Base.kron(a::DenseIMPO, b::DenseIMPO) -> DenseIMPO
+    superoperator(a::DenseIMPO, b::DenseIMPO) -> DenseIMPO
 
-Kronecker product of two equal-length MPOs on the doubled physical space: from
+两个等长 MPO 在加倍物理空间上的 Kronecker 型双通道乘积（命名刻意避开
+`Base.kron`——那是矩阵/向量的 Kronecker 积约定，此处语义不同）：from
 the site tensors `A[aL, po, aR, pin]` and `B[bL, q, bR, qin]` the result tensor is
 
     S[(aL,bL), (po,q), (aR,bR), (pin,qin)] = A[aL, po, aR, pin] · B[bL, q, bR, qin]
 
 with the `a` legs the fastest on every fused index (the [`vectorize`](@ref)
 fusion convention `f = u + du·(d - 1)`); the bond dimensions multiply. The
-two multiplication superoperators are the special cases
-([`superoperator`](@ref)):
+two multiplication channels are the special cases:
 
-    superoperator(h; side = :left)  == kron(h, identityimpo(phydims(h)))
-    superoperator(h; side = :right) == kron(identityimpo(phydims(h)), transpose(h))
+    superoperator(h; side = :left)  == superoperator(h, identityimpo(phydims(h)))
+    superoperator(h; side = :right) == superoperator(identityimpo(phydims(h)), transpose(h))
 """
-function Base.kron(a::DenseIMPO, b::DenseIMPO)
+function superoperator(a::DenseIMPO, b::DenseIMPO)
     L = length(a)
     L == length(b) || throw(DimensionMismatch(
-        "kron requires equal unit-cell lengths, got $L and $(length(b))"))
+        "superoperator requires equal unit-cell lengths, got $L and $(length(b))"))
     T = promote_type(scalartype(a), scalartype(b))
     data = Vector{Array{T,4}}(undef, L)
     for ℓ in 1:L

@@ -1,12 +1,15 @@
 # ---------------- MPS constructors ----------------
 
 """
-    randomimps([T=Float64,] phydims, D; rng=Random.default_rng()) -> CanonicalIMPS
+    randomimps([T=Float64,] phydims; D, rng=Random.default_rng()) -> CanonicalIMPS
+    randomimps([T=Float64,] L; d=2, D, rng=Random.default_rng()) -> CanonicalIMPS
 
 Random MPS with uniform bond dimension `D`, canonicalized into the mixed
-canonical form upon construction.
+canonical form upon construction. `phydims` gives the per-site physical
+dimensions (or a uniform `d` over `L` sites). **`D` 必须由用户显式给出**
+（无默认值）。
 """
-function randomimps(::Type{T}, phydims::AbstractVector{Int}, D::Int;
+function randomimps(::Type{T}, phydims::AbstractVector{Int}; D::Int,
                     rng::AbstractRNG = Random.default_rng()) where {T<:Number}
     N = length(phydims)
     (N >= 1) || throw(ArgumentError("at least one site is required"))
@@ -16,7 +19,10 @@ function randomimps(::Type{T}, phydims::AbstractVector{Int}, D::Int;
     end
     return CanonicalIMPS(As)
 end
-randomimps(phydims::AbstractVector{Int}, D::Int; kwargs...) = randomimps(Float64, phydims, D; kwargs...)
+randomimps(phydims::AbstractVector{Int}; kwargs...) = randomimps(Float64, phydims; kwargs...)
+randomimps(::Type{T}, L::Integer; d::Int = 2, kwargs...) where {T<:Number} =
+    randomimps(T, fill(d, L); kwargs...)
+randomimps(L::Integer; kwargs...) = randomimps(Float64, L; kwargs...)
 
 """
     prodimps([T=Float64,] phydims, states) -> CanonicalIMPS
@@ -60,21 +66,27 @@ end
 identityimpo(phydims::AbstractVector{Int}) = identityimpo(ComplexF64, phydims)
 
 """
-    randomimpo([T=ComplexF64,] phydims, Dw; rng=Random.default_rng()) -> DenseIMPO
+    randomimpo([T=Float64,] phydims; D, rng=Random.default_rng()) -> DenseIMPO
+    randomimpo([T=Float64,] L; d=2, D, rng=Random.default_rng()) -> DenseIMPO
 
-Random MPO with uniform bond dimension `Dw` (generically non-Hermitian; for
-physical models use the constructors in `models.jl`).
+Random MPO with uniform bond dimension `D` (generically non-Hermitian; for
+physical models use the constructors in `models.jl`). `phydims` gives the
+per-site physical dimensions (or a uniform `d` over `L` sites).
+**`D` 必须由用户显式给出**（无默认值）。
 """
-function randomimpo(::Type{T}, phydims::AbstractVector{Int}, Dw::Int;
+function randomimpo(::Type{T}, phydims::AbstractVector{Int}; D::Int,
                     rng::AbstractRNG = Random.default_rng()) where {T<:Number}
     N = length(phydims)
     Ws = Vector{Array{T,4}}(undef, N)
     for ℓ in 1:N
-        Ws[ℓ] = randn(rng, T, Dw, phydims[ℓ], Dw, phydims[ℓ])
+        Ws[ℓ] = randn(rng, T, D, phydims[ℓ], D, phydims[ℓ])
     end
     return DenseIMPO(Ws)
 end
-randomimpo(phydims::AbstractVector{Int}, Dw::Int; kwargs...) = randomimpo(ComplexF64, phydims, Dw; kwargs...)
+randomimpo(phydims::AbstractVector{Int}; kwargs...) = randomimpo(Float64, phydims; kwargs...)
+randomimpo(::Type{T}, L::Integer; d::Int = 2, kwargs...) where {T<:Number} =
+    randomimpo(T, fill(d, L); kwargs...)
+randomimpo(L::Integer; kwargs...) = randomimpo(Float64, L; kwargs...)
 
 # ---------------- changebond! (bond-profile adjustment; reference: FiniteMPSAlgorithms) ----------------
 

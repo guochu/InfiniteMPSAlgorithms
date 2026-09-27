@@ -19,7 +19,7 @@
     T = ComplexF64
     Random.seed!(2026)
     L, d, chi = 4, 2, 4
-    ψ = randomimps(T, fill(d, L), chi)
+    ψ = randomimps(T, fill(d, L); D = chi)
     gaugefix!(ψ, parent(ψ.AR))
     @test ismixedcanonical(ψ)
 

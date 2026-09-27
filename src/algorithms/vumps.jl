@@ -78,7 +78,7 @@ dimensions and scalar type from `operator`.
 """
 function find_groundstate(operator::SparseIMPO, alg::Union{VUMPS,IDMRG},
                           envs::Union{Nothing,Environments} = nothing)
-    ψ₀ = randomimps(scalartype(operator), phydims(operator), alg.D)
+    ψ₀ = randomimps(scalartype(operator), phydims(operator); D = alg.D)
     envs0 = envs === nothing ? DMRGCache(ψ₀, operator) : envs
     return find_groundstate(ψ₀, operator, alg, envs0)
 end

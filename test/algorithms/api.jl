@@ -130,11 +130,11 @@ end
 @testset "MPS 工具：dot / dag / copy / bonddim / regauge / gaugefix" begin
     T = ComplexF64
     Random.seed!(11)
-    ψ = randomimps(T, [2, 2], 6)
+    ψ = randomimps(T, [2, 2]; D = 6)
 
     # dot：自重叠 = 1；不同态 Cauchy–Schwarz |⟨a|b⟩| ≤ 1；共轭对称
     @test real(dot(ψ, ψ)) ≈ 1 atol = 1e-10
-    ψb = randomimps(T, [2, 2], 6)
+    ψb = randomimps(T, [2, 2]; D = 6)
     @test abs(dot(ψ, ψb)) ≤ 1 + 1e-8
     @test dot(ψ, ψb) ≈ conj(dot(ψb, ψ)) atol = 1e-8
 
@@ -176,7 +176,7 @@ end
 @testset "环境与有效哈密顿量" begin
     T = ComplexF64
     Random.seed!(23)
-    ψ = randomimps(T, [2], 4)
+    ψ = randomimps(T, [2]; D = 4)
     H = tfim_hamiltonian(T = T)
 
     envs = DMRGCache(ψ, H)
@@ -212,7 +212,7 @@ end
     # transfer_leftenv!/rightenv!：增量推进必须与直接调用 push_env_* 一致
     # （全新构造的环境在恒等层还含逐 site regularize! 投影，故这里只验证
     # 包装器本身的收缩语义；算法中的物理等价性由 debug/envs_alignment.jl 覆盖）
-    ψ2 = randomimps(T, [2, 2], 4)
+    ψ2 = randomimps(T, [2, 2]; D = 4)
     H2 = tfim_hamiltonian(T = T)
     envst = DMRGCache(ψ2, H2)
     Lref = push_env_left(leftenv(envst, 1), tompotensor(H2[1]), ψ2.AL[1])
@@ -258,7 +258,7 @@ end
 @testset "DenseIMPO 构造、周期下标与标量代数" begin
     T = ComplexF64
     Random.seed!(31)
-    ψ = randomimps(T, [2, 2], 5)
+    ψ = randomimps(T, [2, 2]; D = 5)
     I2 = identityimpo(T, [2, 2])
 
     # 周期下标与基本接口
@@ -382,7 +382,7 @@ end
     T = ComplexF64
     H = tfim_hamiltonian(T = T)
     Random.seed!(41)
-    ψg, envs_g, ϵg = find_groundstate(randomimps(T, [2], 10), H,
+    ψg, envs_g, ϵg = find_groundstate(randomimps(T, [2]; D = 10), H,
                                        VUMPS(D = 10, maxiter = 300, tol = 1e-11, verbosity = 0))
     # calc_galerkin 公开接口
     @test calc_galerkin(ψg, H, envs_g) == ϵg
@@ -402,7 +402,7 @@ end
     # approximate（mult）：恒等 MPO 作用任意态（D = 6 = 朴素键维）→ 不动点
     # （overlap = 1，输出与输入同向）
     Random.seed!(42)
-    ψ0 = randomimps(T, [2], 6)
+    ψ0 = randomimps(T, [2]; D = 6)
     ψa, ov = mult(I1, ψ0, VOMPS(D = 6, maxiter = 50, tol = 1e-10))
     @test ov ≈ 1 atol = 1e-8
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
@@ -413,7 +413,7 @@ end
     H = tfim_hamiltonian(T = T)
     Random.seed!(51)
     # 用 2-site 单胞，使 (1,2) 相邻双 site 期望落在同一胞元内
-    ψ, _, _ = find_groundstate(randomimps(T, [2, 2], 10), H,
+    ψ, _, _ = find_groundstate(randomimps(T, [2, 2]; D = 10), H,
                                VUMPS(D = 10, maxiter = 300, tol = 1e-11, verbosity = 0))
     Z = σz(T)
 
@@ -439,13 +439,13 @@ end
 @testset "CanonicalIMPO 结构" begin
     T = ComplexF64
     Random.seed!(61)
-    W = randomimpo(T, [2, 2], 3)
+    W = randomimpo(T, [2, 2]; D = 3)
     M = CanonicalIMPO(W)
     @test length(M) == 2 && eachsite(M) == 1:2
-    @test M[3] == M[1] && M[0] == M[2]
-    @test M[1] === M.AC[1]
+    @test M.AC[3] == M.AC[1] && M.AC[0] == M.AC[2]
+    @test M.AC[3] === M.AC[1]
     @test max_bonddim(M) <= 3 && bonddim(M, 1) == size(M.C[1], 1)
-    @test phydims(M) == [4, 4]
+    @test phydims(M) == [2, 2]
     @test scalartype(M) == T
     # 左/右正交性（MPS 视图）与 AC = AL·C
     ALv = asmps_view(collect(M.AL))
@@ -464,6 +464,6 @@ end
     Md = dag(M)
     @test Md.AL[1] == conj.(M.AL[1]) && Md.C[1] == conj.(M.C[1])
     Mc = copy(M)
-    @test Mc !== M && Mc.AL !== M.AL && Mc[1] == M[1] && Mc[1] !== M[1]
+    @test Mc !== M && Mc.AL !== M.AL && Mc.AC[1] == M.AC[1] && Mc.AC[1] !== M.AC[1]
     @test normalize!(M) === M
 end

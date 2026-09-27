@@ -43,7 +43,7 @@ end
 
     # 缩键（截取前导奇异值子空间）：键 profile 达标、规范保持、保真度 = 逐 bond
     # 截断水平（块对角直和的逐 bond 截断不能精确回到分量——那需要变分压缩）
-    ψ1 = randomimps(T, [2, 3], 4)
+    ψ1 = randomimps(T, [2, 3]; D = 4)
     ψsum = CanonicalIMPS(collect(exact_add(ψ1.AL, ψ1.AL)))
     @test max_bonddim(ψsum) == 8
     changebond!(ψsum; D = 4)
@@ -53,7 +53,7 @@ end
 
     # 键 profile 已达标 ⇒ 提前返回，四个分量张量都不被改动
     # （ψ1 键 = 4 = D，故 D = 4 命中提前返回）
-    ψe = randomimps(T, [2, 3], 4)
+    ψe = randomimps(T, [2, 3]; D = 4)
     refe = deepcopy(ψe)
     changebond!(ψe; D = 4)
     @test ψe.AL[1] == refe.AL[1] && ψe.AR[1] == refe.AR[1] &&
@@ -114,7 +114,7 @@ end
     T = ComplexF64
     Random.seed!(78)
     # 可精确表示的目标：ψ1 的自直和（键 2D，波形 = 2ψ1）
-    ψ1 = randomimps(T, [2, 3], 4)
+    ψ1 = randomimps(T, [2, 3]; D = 4)
     ψsum = CanonicalIMPS(collect(exact_add(ψ1.AL, ψ1.AL)))
     @test max_bonddim(ψsum) == 8
 
@@ -125,22 +125,22 @@ end
 
     # 有损压缩：overlap ∈ (0, N]，且不劣于随机初猜的同键压缩（随机初猜经
     # in-place 版本提供）
-    ψbig = randomimps(T, [2, 2], 8)
+    ψbig = randomimps(T, [2, 2]; D = 8)
     y4, ov4 = compress(ψbig, VOMPS(D = 4))
     @test max_bonddim(y4) == 4 && 0 < real(ov4) ≤ length(ψbig) + 1e-12
-    yr = randomimps(T, [2, 2], 4)
+    yr = randomimps(T, [2, 2]; D = 4)
     compress!(yr, ψbig, VOMPS(D = 4))
     @test abs(real(dot(yr, y4))) / sqrt(abs(dot(yr, yr)) * abs(dot(y4, y4))) ≈ 1 atol = 1e-6
 
     # IDMRG 路径同一不动点（有损压缩）
-    ψbig = randomimps(T, [2, 2], 8)
+    ψbig = randomimps(T, [2, 2]; D = 8)
     y4, ov4 = compress(ψbig, VOMPS(D = 4))
     y4b, ov4b = compress(ψbig, IDMRG(D = 4, maxiter = 200))
     @test abs(real(ov4b) - real(ov4)) < 1e-4
 
     # MPO 版：CanonicalIMPO 与 DenseIMPO（随机谱平缓，两者均为重叠最大化
     # 收敛停点，断言一致到收敛差异内）；DenseIMPO 输入同样返回 CanonicalIMPO
-    W = randomimpo(T, [2, 2], 6)
+    W = randomimpo(T, [2, 2]; D = 6)
     Wc = CanonicalIMPO(collect(W.Ws))
     Vc, ovc = compress(Wc, VOMPS(D = 3))
     @test max_bonddim(Vc) == 3 && ismixedcanonical(Vc)
@@ -153,7 +153,7 @@ end
     # 确认点 1：naive 兜底 / 短路不得直接透出 DenseIMPO——MPO 结果一律混合正则
     T = ComplexF64
     Random.seed!(81)
-    Wr = randomimpo(T, [2, 2], 3)
+    Wr = randomimpo(T, [2, 2]; D = 3)
     # 压缩路径：DenseIMPO 输入 → CanonicalIMPO
     y2, ov2 = compress(Wr, VOMPS(D = 2))
     @test y2 isa CanonicalIMPO && max_bonddim(y2) == 2 && ismixedcanonical(y2)
@@ -171,7 +171,7 @@ end
     @test norm(dw .- ls .* dr) / norm(dw) < 1e-9
     # 实数输入：正则性成立；标量类型随通道转移的实际 eltype（ALS 期间融合
     # 转移可为复主导，通道按 MPSKit 对齐提升为复，故不断言实性）
-    Wf = randomimpo(Float64, [2, 2], 3)
+    Wf = randomimpo(Float64, [2, 2]; D = 3)
     yf, _ = compress(Wf, VOMPS(D = 2))
     @test yf isa CanonicalIMPO && ismixedcanonical(yf)
 end
@@ -179,18 +179,18 @@ end
 @testset "inplace: mult! / hadamard! / compress!" begin
     T = ComplexF64
     Random.seed!(79)
-    ψ1 = randomimps(T, [2, 2], 4)
-    ψ2 = randomimps(T, [2, 2], 4)
+    ψ1 = randomimps(T, [2, 2]; D = 4)
+    ψ2 = randomimps(T, [2, 2]; D = 4)
 
     # hadamard!（初猜 out 提供 D）
-    out = randomimps(T, [2, 2], 4)
+    out = randomimps(T, [2, 2]; D = 4)
     hadamard!(out, ψ1, ψ2, VOMPS(D = 4))
     yh, ovh = hadamard(ψ1, ψ2, VOMPS(D = 4))
     @test abs(dot(out, yh)) / sqrt(abs(dot(out, out)) * abs(dot(yh, yh))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mps，初猜 out 提供 D）
     W = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
-    out = randomimps(T, [2, 2], 4)
+    out = randomimps(T, [2, 2]; D = 4)
     mult!(out, W, ψ1, VOMPS(D = 4))
     ym, ovm = mult(W, ψ1, VOMPS(D = 4))
     @test abs(dot(out, ym)) / sqrt(abs(dot(out, out)) * abs(dot(ym, ym))) ≈ 1 atol = 1e-8
@@ -207,8 +207,8 @@ end
           sqrt(abs(dot(vo, vo)) * abs(dot(vy, vy))) ≈ 1 atol = 1e-8
 
     # compress!（初猜 out 提供 D）
-    ψbig = randomimps(T, [2, 2], 8)
-    out = randomimps(T, [2, 2], 4)
+    ψbig = randomimps(T, [2, 2]; D = 8)
+    out = randomimps(T, [2, 2]; D = 4)
     compress!(out, ψbig, VOMPS(D = 4))
     yc, ovc = compress(ψbig, VOMPS(D = 4))
     @test abs(dot(out, yc)) / sqrt(abs(dot(out, out)) * abs(dot(yc, yc))) ≈ 1 atol = 1e-8
@@ -217,8 +217,8 @@ end
 @testset "svdguess_*" begin
     T = ComplexF64
     Random.seed!(80)
-    ψ1 = randomimps(T, [2, 2], 3)
-    ψ2 = randomimps(T, [2, 2], 3)
+    ψ1 = randomimps(T, [2, 2]; D = 3)
+    ψ2 = randomimps(T, [2, 2]; D = 3)
 
     gh = svdguess_hadamard(ψ1, ψ2, 5)
     @test max_bonddim(gh) ≤ 5 && ismixedcanonical(gh)
@@ -230,14 +230,14 @@ end
     gmm = svdguess_mult(W, W2, 5)
     @test max_bonddim(gmm) ≤ 5 && ismixedcanonical(gmm)
 
-    ψbig = randomimps(T, [2, 2], 8)
+    ψbig = randomimps(T, [2, 2]; D = 8)
     gc = svdguess_compress(ψbig, 4)
     @test max_bonddim(gc) == 4 && ismixedcanonical(gc)
 
     # lazy（流式）构造：naive 乘积的 site tensor 现算、自右向左 SVD 截断，
     # 整条 naive 串从不 materialize（回归：曾先建整条串再规范化+截断）
-    ψa = randomimps(T, [2, 2], 4)
-    ψb = randomimps(T, [2, 2], 4)
+    ψa = randomimps(T, [2, 2]; D = 4)
+    ψb = randomimps(T, [2, 2]; D = 4)
     nv = CanonicalIMPS([InfiniteMPSAlgorithms._naive_hadamard_tensor(ψa.AL[ℓ], ψb.AL[ℓ])
                         for ℓ in 1:2])                       # 键 rank ≤ 16
     ge = svdguess_hadamard(ψa, ψb, 16)                        # D ≥ rank ⇒ 无截断 ⇒ 精确
@@ -248,7 +248,7 @@ end
     @test abs(dot(gd, nv)) / (norm(gd) * norm(nv)) > 0.5
     # _lazy_svd_guess：carry 在构造时被 site 吸收（这里用朴素吸收作驱动层测试），
     # wrap 键在 site 1 上 Schmidt 截断 ⇒ 输出的每个键都 ≤ D；site 2:L 右规范
-    ψc = randomimps(T, [2, 2, 2], 4)
+    ψc = randomimps(T, [2, 2, 2]; D = 4)
     site = (ℓ, carry) -> begin
         B = InfiniteMPSAlgorithms._naive_hadamard_tensor(ψa.AL[ℓ], ψc.AL[ℓ])
         carry === nothing && return B
@@ -264,6 +264,14 @@ end
     end
     # site L = v∘uᵀ（wrap 键 Schmidt 因子）：u 非方阵时不严格等距，只查键维
     # （态的正确性由上面的 fid 断言与 CanonicalIMPS 重新规范保证）
+    # 裸张量串（PeriodicVector）版本：下游底层入口；Canonical 方法 = 其输出
+    # 重新规范化（逐位套壳 ⇒ 与 Canonical 版本保真度 1）
+    gv = svdguess_hadamard(ψa.AL, ψb.AL, 4)
+    @test gv isa Vector{<:Array{T,3}}
+    @test all(size(A, 1) ≤ 4 && size(A, 3) ≤ 4 for A in gv)
+    @test fidelity(CanonicalIMPS(gv), gd) ≈ 1 atol = 1e-10
+    gmv = svdguess_mult(PeriodicVector(W.Ws), ψ1.AL, 4)
+    @test fidelity(CanonicalIMPS(gmv), gm) ≈ 1 atol = 1e-10
     W3 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     nvm = CanonicalIMPS([fuse(W3[ℓ], ψa.AL[ℓ]) for ℓ in 1:2])
     gme = svdguess_mult(W3, ψa, 9)                            # 键 rank ≤ 12 ⇒ D = 9 有截断
@@ -275,7 +283,7 @@ end
     y_exact, _ = mult(W, ψ1)                       # 精确朴素构造（二参数版本）
     y_svd, ov_svd = mult(W, ψ1, VOMPS(D = 3))      # svdguess 初猜
     @test real(ov_svd) > 0.9 * length(ψ1)
-    out = randomimps(T, [2, 2], 3)
+    out = randomimps(T, [2, 2]; D = 3)
     mult!(out, W, ψ1, VOMPS(D = 3))                # 随机初猜（in-place）
     @test fidelity(out, y_exact) > 0.9
 end

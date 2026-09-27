@@ -70,6 +70,8 @@ bonddim(H::SparseIMPO) = nlvls(H[1])
 scalartype(::Type{SparseIMPO{TO}}) where {TO} = scalartype(TO)
 scalartype(H::SparseIMPO) = scalartype(typeof(H))
 
+"`phydim(H, i)`: site `i` 的物理维（unit cell 内允许逐站不同）。"
+phydim(H::SparseIMPO, i::Integer) = size(H[i].A, 2)
 phydims(H::SparseIMPO) = [size(H[ℓ].A, 2) for ℓ in 1:length(H)]
 
 # MPSKit-style A/B/C/D block access (returns the corresponding block arrays per site)

@@ -186,11 +186,6 @@ end
 
 Base.length(ψ::CanonicalIMPS) = length(ψ.AL)
 Base.size(ψ::CanonicalIMPS, args...) = size(ψ.AL, args...)
-Base.getindex(ψ::CanonicalIMPS, ℓ::Integer) = ψ.AC[ℓ]
-Base.setindex!(ψ::CanonicalIMPS, v::Array, ℓ::Integer) = (ψ.AC[ℓ] = v; ψ)
-Base.firstindex(ψ::CanonicalIMPS) = 1
-Base.lastindex(ψ::CanonicalIMPS) = length(ψ)
-Base.iterate(ψ::CanonicalIMPS, args...) = iterate(ψ.AC, args...)
 eachsite(ψ::CanonicalIMPS) = 1:length(ψ)
 
 function Base.copy(ψ::CanonicalIMPS)
@@ -208,8 +203,9 @@ function Base.circshift(ψ::CanonicalIMPS, n)
 end
 
 scalartype(::Type{CanonicalIMPS{T}}) where {T} = T
-scalartype(ψ::CanonicalIMPS) = scalartype(typeof(ψ))
 
+"phydim(ψ, i): site `i` 的物理维度（unit cell 内允许逐站不同）。"
+phydim(ψ::CanonicalIMPS, i::Integer) = size(ψ.AL[i], 2)
 phydims(ψ::CanonicalIMPS) = [size(ψ.AL[ℓ], 2) for ℓ in 1:length(ψ)]
 bonddim(ψ::CanonicalIMPS, ℓ::Integer) = size(ψ.C[ℓ], 1)
 max_bonddim(ψ::CanonicalIMPS) = maximum(bonddim(ψ, ℓ) for ℓ in 1:length(ψ))
@@ -244,11 +240,12 @@ end
 `⟨ψ₁|ψ₂⟩`: dominant eigenvalue of the double-layer `AL` transfer matrix
 (KrylovKit Arnoldi).
 """
-function LinearAlgebra.dot(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS; krylovdim::Int = 30)
+function LinearAlgebra.dot(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS;
+                           krylovdim::Int = Defaults.krylovdim)
     T = promote_type(scalartype(ψ₁), scalartype(ψ₂))
     v0 = vec(Matrix{T}(I, bonddim(ψ₁, 0), bonddim(ψ₂, 0)))
     tm = TransferMatrix(ψ₂.AL, ψ₁.AL)
-    vals, vecs, _ = eigsolve(tm, v0, 1, :LM; krylovdim = krylovdim)
+    vals, vecs, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false, krylovdim = krylovdim)
     λ = vals[1]
     return λ isa Number ? λ : only(λ)
 end

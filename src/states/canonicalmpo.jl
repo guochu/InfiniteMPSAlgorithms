@@ -85,11 +85,6 @@ CanonicalIMPO(W::DenseIMPO; kwargs...) = CanonicalIMPO(W.Ws; kwargs...)
 
 Base.length(W::CanonicalIMPO) = length(W.AL)
 Base.size(W::CanonicalIMPO, args...) = size(W.AL, args...)
-Base.getindex(W::CanonicalIMPO, ℓ::Integer) = W.AC[_mod1(ℓ, length(W))]
-Base.setindex!(W::CanonicalIMPO, v::Array, ℓ::Integer) = (W.AC[ℓ] = v; W)
-Base.firstindex(W::CanonicalIMPO) = 1
-Base.lastindex(W::CanonicalIMPO) = length(W)
-Base.iterate(W::CanonicalIMPO, args...) = iterate(W.AC, args...)
 eachsite(W::CanonicalIMPO) = 1:length(W)
 
 function Base.copy(W::CanonicalIMPO{T}) where {T}
@@ -107,10 +102,11 @@ function Base.circshift(W::CanonicalIMPO, n)
 end
 
 scalartype(::Type{CanonicalIMPO{T}}) where {T} = T
-scalartype(W::CanonicalIMPO) = scalartype(typeof(W))
 
-phydims(W::CanonicalIMPO) =
-    [size(W.AL[ℓ], 2) * size(W.AL[ℓ], 4) for ℓ in 1:length(W)]
+"phydim(W, i): site `i` 的物理维（unit cell 内允许逐站不同；包内约定并强制
+方算符 `du == dd`）。"
+phydim(W::CanonicalIMPO, i::Integer) = size(W.AL[i], 2)
+phydims(W::CanonicalIMPO) = [phydim(W, ℓ) for ℓ in 1:length(W)]
 bonddim(W::CanonicalIMPO, ℓ::Integer) = size(W.C[_mod1(ℓ, length(W))], 1)
 max_bonddim(W::CanonicalIMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 
@@ -233,9 +229,9 @@ The left/right multiplication superoperator of an MPO, as an MPO on the
 doubled (bra ⊗ ket) space with the fused index convention of
 [`vectorize`](@ref) (`f = u + du·(d - 1)`, `u` the bra / row leg fast):
 
-- `side = :left` (`= kron(W, identityimpo(dus))`): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
+- `side = :left` (`= superoperator(W, identityimpo(dus))`): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
   so that `𝓦 · vec(X)` is `vec(W·X)` (W multiplies from the left);
-- `side = :right` (`= kron(identityimpo(dus), transpose(W))`): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
+- `side = :right` (`= superoperator(identityimpo(dus), transpose(W))`): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
   so that `𝓦 · vec(X)` is `vec(X·W)` (W multiplies from the right).
 
 The bond dimensions are unchanged (the spectator channel carries trivial
@@ -257,8 +253,8 @@ function superoperator(W::DenseIMPO; side::Symbol = :left)
             throw(ArgumentError("superoperator requires square operators (u == d) at site $ℓ"))
     end
     I = identityimpo(scalartype(W), dus)
-    side === :left && return kron(W, I)
-    side === :right && return kron(I, transpose(W))
+    side === :left && return superoperator(W, I)
+    side === :right && return superoperator(I, transpose(W))
     throw(ArgumentError("side must be :left or :right, got $side"))
 end
 superoperator(W::SparseIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
@@ -298,7 +294,7 @@ function mpo_compress(W::DenseIMPO, D::Int;
     dds = [size(W[ℓ], 4) for ℓ in 1:N]
     K = asmps_view(W.Ws)
     ket = CanonicalIMPS(K)       # canonicalize the MPS view of the MPO as the ket
-    x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D)
+    x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N]; D = D)
     x, overlap = _overlap_sweeps(nothing, ket, x0, K;
                                  tol = tol, maxiter = maxiter, verbosity = verbosity)
     _global_normalize!(x)

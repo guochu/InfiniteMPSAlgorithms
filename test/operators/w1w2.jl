@@ -4,7 +4,7 @@
     HJ = Hxxz.hamiltonian   # Schur 哈密顿量（能量断言用）
     bulk = Hxxz.bulk
     dt = 0.01
-    ψ0 = randomimps(T, [2, 2], 8)
+    ψ0 = randomimps(T, [2, 2]; D = 8)
     e0 = real(expectationvalue(ψ0, HJ) / 2)
 
     # 恒等哈密顿量：WI 演化 MPO = 恒等，mult 后状态不变

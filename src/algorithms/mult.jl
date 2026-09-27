@@ -47,7 +47,8 @@ end
 
 function MultCache(below::CanonicalIMPS, operator::DenseIMPO,
                    above::CanonicalIMPS;
-                   tol::Real = 1.0e-12, krylovdim::Int = 12, maxiter::Int = 200,
+                   tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
+                   maxiter::Int = Defaults.maxiter,
                    GL0::Union{Nothing,AbstractArray} = nothing,
                    GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = _ternary_fixedpoints(below, operator, above; tol, krylovdim, maxiter, GL0, GR0)
@@ -97,7 +98,8 @@ end
 
 "Ternary overlap channel: left/right fixed points of ⟨below|above⟩."
 function OverlapCache(below::CanonicalIMPS, above::CanonicalIMPS;
-                      tol::Real = 1.0e-12, krylovdim::Int = 12, maxiter::Int = 200,
+                      tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
+                      maxiter::Int = Defaults.maxiter,
                       GL0::Union{Nothing,AbstractArray} = nothing,
                       GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = _ternary_fixedpoints(below, nothing, above; tol, krylovdim, maxiter, GL0, GR0)
@@ -446,8 +448,9 @@ optionally warm start the eigsolves with the previous environments (keeps the
 fixed-point choice continuous across sweeps for block-degenerate targets).
 """
 function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
-                                   tol::Real = 1.0e-13, krylovdim::Int = 12,
-                                   maxiter::Int = 200,
+                                   tol::Real = Defaults.tol,
+                                   krylovdim::Int = Defaults.krylovdim,
+                                   maxiter::Int = Defaults.maxiter,
                                    GL0::Union{Nothing,AbstractArray} = nothing,
                                    GR0::Union{Nothing,AbstractArray} = nothing)
     N = length(x)
@@ -465,8 +468,8 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
         return vec(GL)
     end
     v0L = GL0 === nothing ? ones(T, Dl * Da1) : vec(copy(GL0))
-    _, GL1 = eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol, krylovdim = krylovdim,
-                      maxiter = maxiter)
+    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
+                       krylovdim = krylovdim, maxiter = maxiter)
     TCL = promote_type(T, eltype(GL1[1]))   # 复环境提升（MPSKit 对齐）
     GLs = Vector{Array{TCL,3}}(undef, N)
     GL = reshape(GL1[1], Dl, 1, Da1)
@@ -484,8 +487,8 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
         return vec(GR)
     end
     v0R = GR0 === nothing ? ones(T, Da1 * Dr) : vec(copy(GR0))
-    _, GRN = eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol, krylovdim = krylovdim,
-                      maxiter = maxiter)
+    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
+                       krylovdim = krylovdim, maxiter = maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GR = reshape(GRN[1], Da1, 1, Dr)
@@ -595,8 +598,10 @@ function _twist_lazy_ket(ket::LazyKet, N::Int)
         end
         return vec(X)
     end
-    _, X1 = eigsolve(Tgram, ones(T, Dk * Dk), 1, :LM; ishermitian = false,
-                     tol = 1.0e-13, krylovdim = max(12, N * 2), maxiter = 200)
+    # 简并固定点空间内 eigsolve 可能不收敛属预期（warn 关闭）；收敛残差由
+    # 后续幂迭代（polish）指数压低。krylovdim 保留局部覆盖（2N > 30 时放宽）。
+    _, X1 = _eigsolve(Tgram, ones(T, Dk * Dk), 1, :LM; ishermitian = false,
+                      krylovdim = max(Defaults.krylovdim, N * 2), warn = false)
     XN = reshape(X1[1], Dk, Dk)
     # Polish with a fixed-point iteration of the CP map: the gram transfer is a
     # direct sum for blockdiag-type targets, so the fp space is degenerate and
@@ -943,6 +948,8 @@ end
 """
     svdguess_mult(W, ψ, D) -> CanonicalIMPS
     svdguess_mult(W, W2, D) -> CanonicalIMPS
+    svdguess_mult(Ws, ALs, D) -> Vector{Array{T,3}}          # bare-tensor entry
+    svdguess_mult(Ws1, Ws2, D) -> Vector{Array{T,3}}         # bare-tensor entry
 
 Deterministic initial guess of the iterative [`mult`](@ref) (reference:
 FiniteMPSAlgorithms' `svdguess_mult`): the fusion/product's site tensors are
@@ -951,15 +958,26 @@ construction** (contracting into the inputs before fusing — the naive product
 tensor is never materialized), and streamed right→left through a truncating
 right-orthogonalization with bond cap `D` ([`_lazy_svd_guess`](@ref)); the
 ring's wrap bond is Schmidt-truncated at site 1. Every output bond is ≤ `D`.
+
+The bare-tensor methods take the site-tensor strings directly (`PeriodicVector`
+of rank-4 MPO tensors and rank-3 MPS tensors, e.g. `ψ.AL` / `ψ.AR` of a
+[`CanonicalIMPS`](@ref)) and return the right-gauge tensor string — the
+low-level entry point for downstream packages; the `CanonicalIMPS` methods
+are thin wrappers that re-canonicalize its output.
 """
 function svdguess_mult(W, ψ::CanonicalIMPS, D::Int)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    (length(ψ) % length(Wm) == 0) ||
+    return CanonicalIMPS(svdguess_mult(PeriodicVector(Wm.Ws), ψ.AL, D))
+end
+
+function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
+                       ALs::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
+    (length(ALs) % length(Ws) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     # carry 在构造时吸收（fuse 的融合序：左 (wl,bl)、右 (wr,br)）：
     # B'[(wl,bl), u, f] = Σ_{wr,br,d} W[wl,u,wr,d]·AL[bl,d,br]·carry[(wr,br), f]
     site = (ℓ, carry) -> begin
-        W4 = Wm[ℓ]; A = ψ.AL[ℓ]
+        W4 = Ws[ℓ]; A = ALs[ℓ]
         carry === nothing && return fuse(W4, A)
         wl, u, wr, dd = size(W4); bl, _, br = size(A)
         f = size(carry, 2)
@@ -968,22 +986,26 @@ function svdguess_mult(W, ψ::CanonicalIMPS, D::Int)
         B3 = @tensor B[wl, bl, u, ff] := W4[wl, u, wr, dd] * Tb[bl, dd, wr, ff]
         return reshape(B3, wl * bl, u, f)
     end
-    return CanonicalIMPS(_lazy_svd_guess(site, length(ψ), D))
+    return _lazy_svd_guess(site, length(ALs), D)
 end
 
 function svdguess_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, D::Int)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
-    (length(W2m) % length(Wm) == 0) ||
+    return CanonicalIMPS(svdguess_mult(PeriodicVector(Wm.Ws), PeriodicVector(W2m.Ws), D))
+end
+
+function svdguess_mult(Ws1::PeriodicVector{<:Array{T,4}},
+                       Ws2::PeriodicVector{<:Array{T,4}}, D::Int) where {T}
+    (length(Ws2) % length(Ws1) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
-    NW = length(Wm)
     # carry 在构造时吸收（_naive_mul_tensor 的融合序：左腿 (wl1 慢, wl2 快)、
     # 右腿 (wr1 慢, wr2 快)）：
     # B'[(wl1,wl2), u, d, f] =
     #     Σ_{m,wr1,wr2} W1[wl1,u,wr1,m]·W2[wl2,m,wr2,d]·carry[(wr1,wr2), f]
     # 显式矩阵乘（先吸收 carry 的 wr2 腿，再收缩 W1 的 m/wr1 腿），不落地大张量
     site = (ℓ, carry) -> begin
-        W1 = Wm[_mod1(ℓ, NW)]; W2t = W2m[ℓ]
+        W1 = Ws1[ℓ]; W2t = Ws2[ℓ]
         if carry === nothing
             W4 = _naive_mul_tensor(W1, W2t)
             wl, u, wr, dd = size(W4)
@@ -1006,7 +1028,7 @@ function svdguess_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, D::Int)
                      wl1 * wl2, u1 * dd, f)
         return B5
     end
-    return CanonicalIMPS(_lazy_svd_guess(site, length(W2m), D))
+    return _lazy_svd_guess(site, length(Ws2), D)
 end
 
 """

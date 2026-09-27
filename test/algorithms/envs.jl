@@ -1,6 +1,6 @@
 @testset "转移矩阵与环境" begin
     T = ComplexF64
-    ψ = randomimps(T, [2, 3], 5)
+    ψ = randomimps(T, [2, 3]; D = 5)
 
     # 恒等通道环境 = 恒等矩阵（AL 严格规范，对应 MPSKit 的 l_LL/r_RR）
     envs = OverlapCache(ψ)
@@ -58,7 +58,7 @@ end
     @test [bonddim(ψ2, ℓ) for ℓ in 1:3] == [2, 4, 2]
 
     # ---- 零填充扩键：同一物理态，观测量必须逐位不变 ----
-    ψu = randomimps(T, fill(2, 3), 4)
+    ψu = randomimps(T, fill(2, 3); D = 4)
     E0 = real(expectationvalue(ψu, Hs))
     ψp = _padbond!(copy(ψu), 2, 1)
     @test [bonddim(ψp, ℓ) for ℓ in 1:3] == [4, 5, 4]
@@ -75,7 +75,7 @@ end
     T = ComplexF64
     Random.seed!(3)
     dims = [2, 3, 2]                       # 单胞内物理维不一致
-    ψ = randomimps(T, dims, 4)
+    ψ = randomimps(T, dims; D = 4)
     @test phydims(ψ) == dims
     @test ismixedcanonical(ψ)
     @test abs(norm(ψ) - 1) < 1e-10

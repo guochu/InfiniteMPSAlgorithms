@@ -23,7 +23,7 @@
     #   该断言不稳定，故不设；固定种子保证其余断言可复现）
     Hm = heisenberg_hamiltonian(T = T)
     Random.seed!(1)
-    ψ, envs, _ = find_groundstate(randomimps(T, [2, 2], 12), Hm,
+    ψ, envs, _ = find_groundstate(randomimps(T, [2, 2]; D = 12), Hm,
                                   VUMPS(D = 12, maxiter = 200, tol = 1e-9))
     @test abs(expectationvalue(ψ, (1,) => Sz(T)^2) - 0.25) < 1e-12
     Czz = correlator(ψ, Sz(T), Sz(T), 1, 2:6)

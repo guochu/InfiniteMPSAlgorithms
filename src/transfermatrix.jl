@@ -173,10 +173,10 @@ algorithm object.
 """
 function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.KrylovAlgorithm)
     isherm = alg isa KrylovKit.Lanczos
-    vals, vecs, _ = eigsolve(operator, x₀, 1, which;
-                             ishermitian = isherm, tol = alg.tol,
-                             krylovdim = alg.krylovdim, maxiter = alg.maxiter,
-                             eager = true)
+    vals, vecs, _ = _eigsolve(operator, x₀, 1, which;
+                              ishermitian = isherm, tol = alg.tol,
+                              krylovdim = alg.krylovdim, maxiter = alg.maxiter,
+                              eager = true)
     return vals[1], vecs[1]
 end
 
@@ -261,14 +261,16 @@ end
 
 function dominant_env(op::Union{Nothing,DenseIMPO}, ψ::CanonicalIMPS;
                       side::Symbol = :left, which::Symbol = :LM,
-                      tol::Real = 1.0e-13, krylovdim::Int = 12, maxiter::Int = 200)
+                      tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
+                      maxiter::Int = Defaults.maxiter)
     identity = isnothing(op)
     D = size(ψ.AL[1], 1)
     dim = identity ? D * D : D * size(op[1], 1) * D
     T = scalartype(ψ)
     matvec = _dominant_env_matvec(op, ψ, side)
     v0 = ones(T, dim)
-    λs, vs, _ = eigsolve(matvec, v0, 1, which; ishermitian = false, tol = tol, krylovdim = krylovdim, maxiter = maxiter)
+    λs, vs, _ = _eigsolve(matvec, v0, 1, which; ishermitian = false, tol = tol,
+                          krylovdim = krylovdim, maxiter = maxiter)
     λ = λs[1]
     L = identity ? reshape(vs[1], D, D) : reshape(vs[1], D, size(op[1], 1), D)
     L ./= norm(L)

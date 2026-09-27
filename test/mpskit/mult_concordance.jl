@@ -16,9 +16,9 @@ d = 2                    # 物理维
 Dψ = 4                   # ψ 键维
 Dw = 3                   # W 键维
 
-ψ = randomimps(T, fill(d, N), Dψ)
-W1 = randomimpo(T, fill(d, N), Dw)
-W2 = randomimpo(T, fill(d, N), 2)
+ψ = randomimps(T, fill(d, N); D = Dψ)
+W1 = randomimpo(T, fill(d, N); D = Dw)
+W2 = randomimpo(T, fill(d, N); D = 2)
 
 @testset "exact_mult mpo*mpo ≡ MPSKit *(DenseIMPO, DenseIMPO)" begin
     P = exact_mult(W1.Ws, W2.Ws)
@@ -40,7 +40,7 @@ end
 @testset "mult VOMPS ≡ MPSKit approximate VOMPS" begin
     Dtar = 8                                    # 精确键维 Dw·Dψ = 12 → 变分压到 8
     y, ov = mult(W1, ψ, VOMPS(D = Dtar, maxiter = 200, tol = 1e-11))
-    ϕk, _, δ = MPSKit.approximate(to_mpskit(randomimps(T, fill(d, N), Dtar)),
+    ϕk, _, δ = MPSKit.approximate(to_mpskit(randomimps(T, fill(d, N); D = Dtar)),
                                   (to_mpskit(W1), to_mpskit(ψ)),
                                   MPSKit.VOMPS(; tol = 1e-11, maxiter = 200))
     # 有损压缩（D < 精确键维）的变分最优点对实现细节敏感：实测本包解对精确
@@ -54,7 +54,7 @@ end
 @testset "mult IDMRG ≡ MPSKit approximate IDMRG" begin
     Dtar = 8
     y, ov = mult(W1, ψ, IDMRG(D = Dtar, maxiter = 200, tol = 1e-11))
-    ϕk, _, δ = MPSKit.approximate(to_mpskit(randomimps(T, fill(d, N), Dtar)),
+    ϕk, _, δ = MPSKit.approximate(to_mpskit(randomimps(T, fill(d, N); D = Dtar)),
                                   (to_mpskit(W1), to_mpskit(ψ)),
                                   MPSKit.IDMRG(; tol = 1e-11, maxiter = 200))
     yk = from_mpskit(ϕk)

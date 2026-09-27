@@ -32,7 +32,7 @@
 
     # ---- 均匀键 D = 4 的基准 ----
     Random.seed!(20260925)
-    ψu = randomimps(T, fill(2, 3), 4)
+    ψu = randomimps(T, fill(2, 3); D = 4)
     e_u = real(expectationvalue(ψu, Hs))
     @test abs(e_u - real(MPSKit.expectation_value(to_mpskit(ψu), Hmk))) < 1e-10
 
@@ -71,7 +71,7 @@ end
     T = ComplexF64
     dims = [2, 3, 2]
     Random.seed!(3)
-    ψ = randomimps(T, dims, 4)
+    ψ = randomimps(T, dims; D = 4)
     # 解析参考：on-site-only 模型 H = Σ_ℓ h1_ℓ ⇒ E = Σ_ℓ ⟨h1_ℓ⟩（无环境路径）
     h1 = [Matrix{T}(h + h') for h in (randn(T, dims[ℓ], dims[ℓ]) for ℓ in 1:3)]
     Hs = SparseIMPO([mpohamiltonian(h1[ℓ], Tuple{Float64,Matrix{T},Matrix{T}}[]) for ℓ in 1:3])
