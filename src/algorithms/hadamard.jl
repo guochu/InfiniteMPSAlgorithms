@@ -103,18 +103,41 @@ end
     svdguess_hadamard(ψ₁, ψ₂, D) -> CanonicalIMPS
 
 Deterministic initial guess of the iterative [`hadamard`](@ref) (reference:
-FiniteMPSAlgorithms' `svdguess_hadamard`): the naive per-site zip (the same
-tensor string as [`exact_hadamard`](@ref), with the exact pointwise product
-amplitudes) followed by the bond-wise SVD truncation to `D`.
+FiniteMPSAlgorithms' `svdguess_hadamard`): the pointwise product's site tensors
+are generated one at a time, **with the streaming carry absorbed during
+construction** (contracting into the zip inputs before fusing — the naive
+product tensor is never materialized), and streamed right→left through a
+truncating right-orthogonalization with bond cap `D`
+([`_lazy_svd_guess`](@ref)); the ring's wrap bond is Schmidt-truncated at
+site 1. Every output bond is ≤ `D`.
 """
 function svdguess_hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, D::Int)
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
-    all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
+    N = length(ψ1)
+    all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:N) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
-    K = [_naive_hadamard_tensor(ψ1.AL[ℓ], ψ2.AL[ℓ]) for ℓ in 1:length(ψ1)]
-    x = CanonicalIMPS(K)
-    return max_bonddim(x) ≤ D ? x : _truncate_bonddim(x, D)
+    # carry 在构造时吸收（kron(A2, A1) 的融合序：左腿 (c 慢, a 快)、右腿 (e 慢, b 快)）：
+    # B'[(c,a), s, f] = Σ_{e,b} A2[c,s,e]·A1[a,s,b]·carry[(e,b), f]
+    # 先用 A1 的 b 腿吸收 carry、再用 A2 的 e 腿收缩 —— 两个矩阵乘，不落地大张量
+    site = (ℓ, carry) -> begin
+        A1 = ψ1.AL[ℓ]; A2 = ψ2.AL[ℓ]
+        carry === nothing && return _naive_hadamard_tensor(A1, A2)
+        a, s, b = size(A1); c, _, e = size(A2)
+        f = size(carry, 2)
+        l4 = reshape(carry, b, e, f)                     # carry 行 = (e-1)·b + b：b 最快
+        B3 = Array{promote_type(eltype(A1), eltype(carry)),4}(undef, c, a, s, f)
+        @inbounds for k in 1:s
+            # Y[a,e,f] = Σ_b A1[a,s,b]·l4[b,e,f]
+            Y = reshape(view(A1, :, k, :) * reshape(l4, b, e * f), a, e, f)
+            # B'[c,a,f] = Σ_e A2[c,s,e]·Y[a,e,f]
+            Bk = view(A2, :, k, :) * reshape(permutedims(Y, (2, 1, 3)), e, a * f)
+            B3[:, :, k, :] = reshape(Bk, c, a, f)
+        end
+        # 左腿 flatten 与 naive 一致：行 = (c-1)·a + a（c 慢 a 快）
+        return reshape(permutedims(B3, (2, 1, 3, 4)), a * c, s, f)
+    end
+    return CanonicalIMPS(_lazy_svd_guess(site, N, D))
 end
 
 """

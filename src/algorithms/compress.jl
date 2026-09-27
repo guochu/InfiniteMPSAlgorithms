@@ -232,6 +232,55 @@ function _truncate_bonddim(ψ::CanonicalIMPS{T}, D::Int) where {T}
     return ψ
 end
 
+# ---- lazy (on-the-fly) naive-SVD initial guess (shared by mult / hadamard) ----
+#
+# 参考 FiniteMPSAlgorithms 的 `_naive_svd_guess`，但收缩路径更省：naive 乘积的
+# site tensor 由 `site(i, carry)` **在构造时就把 carry 吸收进收缩**（优先与 carry
+# 收缩），而不是先 materialize 完整的 naive 大张量再乘 carry —— 后者会多出一个
+# 键维 = 输入键维乘积 的大中间张量。自右向左流式做带截断的右正交化（键 ≤ `D`）：
+# 右因子作为输出 site tensor，`U·diag(s)` 作为 carry 传给左侧下一站。整条 naive
+# 乘积族从不落地，峰值中间内存只有「首个（无 carry 的）大张量 + 键 ≤ D 的输出」。
+# 收尾在 site 1 上对 wrap 键（bond N）做 Schmidt 截断：扫掠是一条线扫，环形闭合
+# 的键在扫掠中截不到；但此时 site 2:L 右规范 ⇒ site 1 张量的 (1,)|(2,3) SVD 恰是
+# 该键的谱（截断精确最优），`uᵀ` 吸收回 site L（右规范保持：(uᵀA)(uᵀA)† = uᵀu）。
+# 因此**输出的每个键都 ≤ D**，调用方无需再做收尾截断。
+
+"""
+    _lazy_svd_guess(site, L, D) -> Vector{Array{T,3}}
+
+`site(i, carry)`（`i = 1:L`，`carry::Union{Nothing,AbstractMatrix}`）现算第 `i`
+站张量并在构造中吸收 carry（见上方注释）；自右向左流式 SVD 截断到键 ≤ `D`，
+收尾做 wrap 键截断。返回右规范串（site 2:L）＋携带余量的 site 1，
+**所有键 ≤ `D`**。
+"""
+function _lazy_svd_guess(site::F, L::Int, D::Int) where {F}
+    B = site(L, nothing)
+    out = Vector{typeof(B)}(undef, L)
+    carry = nothing
+    for i in L:-1:2
+        u, s, v, _ = tsvd(B, (1,), (2, 3); trunc = truncdim(D))
+        out[i] = v
+        carry = u * Diagonal(s)
+        B = site(i - 1, carry)      # 为下一轮准备；i = 2 时即 site(1, carry)
+    end
+    # B = site(1, carry)：wrap 键（bond N）的 Schmidt 截断（bond N = site 1 的左键
+    # = site L 的右键）
+    u, s, v, _ = tsvd(B, (1,), (2, 3); trunc = truncdim(D))
+    v3 = Diagonal(s) * reshape(v, length(s), :)             # v 是秩-3 (r, s, D)
+    out[1] = reshape(v3, length(s), size(B, 2), size(B, 3))
+    if L >= 2
+        NL = out[L]
+        out[L] = @tensor A[a, s2, b] := NL[a, s2, bb] * u[bb, b]    # uᵀ 吸收回 site L 右腿
+    else
+        # L = 1：没有独立的 wrap 键，对第二个键再做一次 SVD（初猜用途的近似）
+        r1, s1, _ = size(out[1])
+        u2, svals, _, _ = tsvd(out[1], (1, 2), (3,); trunc = truncdim(D))
+        u2m = @tensor uu[p, q, f2] := u2[p, q, k] * Diagonal(svals)[k, f2]
+        out[1] = reshape(u2m, r1, s1, length(svals))
+    end
+    return out
+end
+
 # ---- convergence fallback guard of the lazy (compute-on-the-fly) engines ----
 
 """

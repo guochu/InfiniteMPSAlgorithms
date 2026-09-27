@@ -945,18 +945,30 @@ end
     svdguess_mult(W, W2, D) -> CanonicalIMPS
 
 Deterministic initial guess of the iterative [`mult`](@ref) (reference:
-FiniteMPSAlgorithms' `svdguess_mult`): the naive fuse/composition target (the
-same tensor string as [`exact_mult`](@ref)) followed by the bond-wise SVD
-truncation to `D` (the truncation factors act on orthogonality-protected
-bonds, preserving the mixed-canonical form).
+FiniteMPSAlgorithms' `svdguess_mult`): the fusion/product's site tensors are
+generated one at a time, **with the streaming carry absorbed during
+construction** (contracting into the inputs before fusing — the naive product
+tensor is never materialized), and streamed right→left through a truncating
+right-orthogonalization with bond cap `D` ([`_lazy_svd_guess`](@ref)); the
+ring's wrap bond is Schmidt-truncated at site 1. Every output bond is ≤ `D`.
 """
 function svdguess_mult(W, ψ::CanonicalIMPS, D::Int)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     (length(ψ) % length(Wm) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:length(ψ)]
-    x = CanonicalIMPS(collect(K))
-    return max_bonddim(x) ≤ D ? x : _truncate_bonddim(x, D)
+    # carry 在构造时吸收（fuse 的融合序：左 (wl,bl)、右 (wr,br)）：
+    # B'[(wl,bl), u, f] = Σ_{wr,br,d} W[wl,u,wr,d]·AL[bl,d,br]·carry[(wr,br), f]
+    site = (ℓ, carry) -> begin
+        W4 = Wm[ℓ]; A = ψ.AL[ℓ]
+        carry === nothing && return fuse(W4, A)
+        wl, u, wr, dd = size(W4); bl, _, br = size(A)
+        f = size(carry, 2)
+        l4 = reshape(carry, wr, br, f)
+        T4 = @tensor Tb[bl, dd, wr, ff] := A[bl, dd, br] * l4[wr, br, ff]
+        B3 = @tensor B[wl, bl, u, ff] := W4[wl, u, wr, dd] * Tb[bl, dd, wr, ff]
+        return reshape(B3, wl * bl, u, f)
+    end
+    return CanonicalIMPS(_lazy_svd_guess(site, length(ψ), D))
 end
 
 function svdguess_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, D::Int)
@@ -964,9 +976,37 @@ function svdguess_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, D::Int)
     W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
     (length(W2m) % length(Wm) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
-    K4 = [_naive_mul_tensor(Wm[_mod1(ℓ, length(Wm))], W2m[ℓ]) for ℓ in 1:length(W2m)]
-    x = CanonicalIMPS(asmps_view(K4))
-    return max_bonddim(x) ≤ D ? x : _truncate_bonddim(x, D)
+    NW = length(Wm)
+    # carry 在构造时吸收（_naive_mul_tensor 的融合序：左腿 (wl1 慢, wl2 快)、
+    # 右腿 (wr1 慢, wr2 快)）：
+    # B'[(wl1,wl2), u, d, f] =
+    #     Σ_{m,wr1,wr2} W1[wl1,u,wr1,m]·W2[wl2,m,wr2,d]·carry[(wr1,wr2), f]
+    # 显式矩阵乘（先吸收 carry 的 wr2 腿，再收缩 W1 的 m/wr1 腿），不落地大张量
+    site = (ℓ, carry) -> begin
+        W1 = Wm[_mod1(ℓ, NW)]; W2t = W2m[ℓ]
+        if carry === nothing
+            W4 = _naive_mul_tensor(W1, W2t)
+            wl, u, wr, dd = size(W4)
+            return reshape(permutedims(W4, (1, 2, 4, 3)), wl, u * dd, wr)
+        end
+        wl1, u1, wr1, m = size(W1)
+        wl2, _, wr2, dd = size(W2t)
+        f = size(carry, 2)
+        l4 = reshape(carry, wr1, wr2, f)                 # carry 行 = wr1 最快
+        # Tb[wl2, m2, wr1, dd2, ff] = Σ_wr2 W2t[wl2, m2, wr2, dd2]·l4[wr1, wr2, ff]
+        l4p = reshape(permutedims(l4, (2, 1, 3)), wr2, wr1 * f)
+        W2p = reshape(permutedims(W2t, (1, 2, 4, 3)), wl2 * m * dd, wr2)
+        T5 = reshape(W2p * l4p, wl2, m, dd, wr1, f)
+        T5 = permutedims(T5, (1, 2, 4, 3, 5))            # (wl2, m, wr1, dd, f)
+        # B5[wl1, wl2, u1, dd, ff] = Σ_{m,wr1} W1[wl1, u1, wr1, m]·T5[wl2, m, wr1, dd, ff]
+        W1p = reshape(permutedims(W1, (1, 2, 4, 3)), wl1 * u1, m * wr1)
+        T5p = reshape(permutedims(T5, (2, 3, 1, 4, 5)), m * wr1, wl2 * dd * f)
+        B5 = W1p * T5p                                   # (wl1·u1, wl2·dd·f)
+        B5 = reshape(permutedims(reshape(B5, wl1, u1, wl2, dd, f), (1, 3, 2, 4, 5)),
+                     wl1 * wl2, u1 * dd, f)
+        return B5
+    end
+    return CanonicalIMPS(_lazy_svd_guess(site, length(W2m), D))
 end
 
 """

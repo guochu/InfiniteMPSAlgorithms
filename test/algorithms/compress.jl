@@ -234,6 +234,42 @@ end
     gc = svdguess_compress(ψbig, 4)
     @test max_bonddim(gc) == 4 && ismixedcanonical(gc)
 
+    # lazy（流式）构造：naive 乘积的 site tensor 现算、自右向左 SVD 截断，
+    # 整条 naive 串从不 materialize（回归：曾先建整条串再规范化+截断）
+    ψa = randomimps(T, [2, 2], 4)
+    ψb = randomimps(T, [2, 2], 4)
+    nv = CanonicalIMPS([InfiniteMPSAlgorithms._naive_hadamard_tensor(ψa.AL[ℓ], ψb.AL[ℓ])
+                        for ℓ in 1:2])                       # 键 rank ≤ 16
+    ge = svdguess_hadamard(ψa, ψb, 16)                        # D ≥ rank ⇒ 无截断 ⇒ 精确
+    @test abs(dot(ge, nv)) / (norm(ge) * norm(nv)) ≈ 1 atol = 1e-10
+    @test max_bonddim(ge) ≤ 16 && ismixedcanonical(ge)
+    gd = svdguess_hadamard(ψa, ψb, 4)                         # D < rank ⇒ 截断初猜
+    @test max_bonddim(gd) ≤ 4 && ismixedcanonical(gd)
+    @test abs(dot(gd, nv)) / (norm(gd) * norm(nv)) > 0.5
+    # _lazy_svd_guess：carry 在构造时被 site 吸收（这里用朴素吸收作驱动层测试），
+    # wrap 键在 site 1 上 Schmidt 截断 ⇒ 输出的每个键都 ≤ D；site 2:L 右规范
+    ψc = randomimps(T, [2, 2, 2], 4)
+    site = (ℓ, carry) -> begin
+        B = InfiniteMPSAlgorithms._naive_hadamard_tensor(ψa.AL[ℓ], ψc.AL[ℓ])
+        carry === nothing && return B
+        @tensor B2[p, s2, f] := B[p, s2, q] * carry[q, f]
+        return B2
+    end
+    out3 = InfiniteMPSAlgorithms._lazy_svd_guess(site, 3, 3)
+    @test all(size(A, 1) ≤ 3 && size(A, 3) ≤ 3 for A in out3)
+    @test size(out3[1], 1) == size(out3[3], 3)              # 两侧看到同一个 wrap 键
+    for A in out3[2:end-1]
+        m = reshape(A, size(A, 1), :)
+        @test m * m' ≈ I atol = 1e-10                       # 中间站右等距（右规范）
+    end
+    # site L = v∘uᵀ（wrap 键 Schmidt 因子）：u 非方阵时不严格等距，只查键维
+    # （态的正确性由上面的 fid 断言与 CanonicalIMPS 重新规范保证）
+    W3 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
+    nvm = CanonicalIMPS([fuse(W3[ℓ], ψa.AL[ℓ]) for ℓ in 1:2])
+    gme = svdguess_mult(W3, ψa, 9)                            # 键 rank ≤ 12 ⇒ D = 9 有截断
+    @test max_bonddim(gme) ≤ 9 && ismixedcanonical(gme)
+    @test abs(dot(gme, nvm)) / (norm(gme) * norm(nvm)) > 0.5
+
     # svdguess 初猜（默认）与随机初猜（in-place 的 out 提供）都应收敛到
     # 高保真度的压缩结果（与精确构造射线的保真度 ≥ 0.9·N）
     y_exact, _ = mult(W, ψ1)                       # 精确朴素构造（二参数版本）
