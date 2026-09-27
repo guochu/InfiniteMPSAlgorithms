@@ -135,7 +135,7 @@ end
     @test phydims(q) == dims && all(bonddim(q, ℓ) == 6 for ℓ in 1:3)
     y, = compress(ψ, VOMPS(D = 6, maxiter = 10))
     @test phydims(y) == dims
-    ym, _ = mult(H1, ψ)
+    ym = mult(H1, ψ)
     @test phydims(ym) == dims
     @test phydims(superoperator(H1)) == [dims[ℓ]^2 for ℓ in 1:3]
     @test isfinite(real(correlator(ψ, Matrix{T}(I, dims[1], dims[1]),

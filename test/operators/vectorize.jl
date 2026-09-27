@@ -57,11 +57,9 @@
         P = collect(exact_mult(W1.Ws, W2.Ws))        # 精确 MPO 乘积（参考）
         ψref = vectorize(CanonicalIMPO(P))
         # a) 𝓦_L(W1) 作用在 vec(W2)
-        ψa, ova = mult(superoperator(W1; side = :left), vectorize(CanonicalIMPO(W2)))
+        ψa = mult(superoperator(W1; side = :left), vectorize(CanonicalIMPO(W2)))
         # b) 𝓦_R(W2) 作用在 vec(W1)
-        ψb, ovb = mult(superoperator(W2; side = :right), vectorize(CanonicalIMPO(W1)))
-        @test ova ≈ 2 atol = 1e-10                   # 精确路径 overlap = N
-        @test ovb ≈ 2 atol = 1e-10
+        ψb = mult(superoperator(W2; side = :right), vectorize(CanonicalIMPO(W1)))
         @test fidelity(ψa, ψref) ≈ 1 atol = 1e-9          # Hilbert–Schmidt 内积下同态
         @test fidelity(ψb, ψref) ≈ 1 atol = 1e-9
         @test fidelity(ψa, ψb) ≈ 1 atol = 1e-9

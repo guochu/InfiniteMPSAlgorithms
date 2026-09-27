@@ -40,15 +40,21 @@ function push_env_right(R::AbstractMatrix, O::AbstractMatrix, A::AbstractArray{T
 end
 
 "`push_env_left(L, above, below)`: double-layer (above/below) fused transfer
-push of a rank-2 environment."
-function push_env_left(L::AbstractMatrix, above::AbstractArray{T,3}, below::AbstractArray{T,3}) where {T}
-    @tensor L′[a′, b′] := conj(below[a, s, a′]) * L[a, b] * above[b, s, b′]
+push of a rank-2 environment. 显式两步收缩：先收缩键指标、物理指标留到最后
+（三张量一体的收缩序不保证不先消物理指标——那会付出 `O(d·D₁·D₂·D̃₁·D̃₂)`
+的中间张量代价；键优先的两步始终是 `O(d·D·D′)` 平方级）。"
+function push_env_left(L::AbstractMatrix, above::AbstractArray{Ta,3},
+                       below::AbstractArray{Tb,3}) where {Ta,Tb}
+    @tensor Y[a, s, b′] := L[a, b] * above[b, s, b′]          # 键指标 b 先收缩
+    @tensor L′[a′, b′] := conj(below[a, s, a′]) * Y[a, s, b′] # 物理指标最后
 end
 
 "Double-layer fused transfer rightward push of a rank-2 environment (mirrors
-transfer_right)."
-function push_env_right(R::AbstractMatrix, above::AbstractArray{T,3}, below::AbstractArray{T,3}) where {T}
-    @tensor R′[a′, b′] := above[a′, s, a] * conj(below[b′, s, b]) * R[a, b]
+transfer_right). 显式两步收缩（键指标优先，同 [`push_env_left`](@ref)）。"
+function push_env_right(R::AbstractMatrix, above::AbstractArray{Ta,3},
+                        below::AbstractArray{Tb,3}) where {Ta,Tb}
+    @tensor Y[a, s, b′] := R[a, b] * conj(below[b′, s, b])    # 键指标 b 先收缩
+    @tensor R′[a′, b′] := above[a′, s, a] * Y[a, s, b′]       # 物理指标最后
 end
 
 # ---- ternary channels (below = bra conjugated, above = ket unconjugated;
@@ -62,7 +68,9 @@ function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
     @tensor L′[bl′, w′, al′] := conj(below[bl, ū, bl′]) * L[bl, w, al] * W[w, ū, w′, d] * above[al, d, al′]
 end
 
-"Ternary identity-channel left push (w dimension = 1)."
+"Ternary identity-channel left push (w dimension = 1). 三张量一体的收缩由
+TensorOperations 按 flops 最优排序（先键后物理）；不可拆步——L 的字面量
+`1` 腿无法在中间步悬空。"
 function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
                        above::AbstractArray{Ta,3}) where {TL,Tb,Ta}
     @tensor L′[bl′, 1, al′] := conj(below[bl, s, bl′]) * L[bl, 1, al] * above[al, s, al′]
@@ -74,7 +82,9 @@ function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,3},
     @tensor R′[al′, w′, bl′] := above[al′, d, al] * W[w′, ū, w, d] * conj(below[bl′, ū, bl]) * R[al, w, bl]
 end
 
-"Ternary identity-channel right push (w dimension = 1)."
+"Ternary identity-channel right push (w dimension = 1). 三张量一体的收缩由
+TensorOperations 按 flops 最优排序（先键后物理）；不可拆步——L 的字面量
+`1` 腿无法在中间步悬空。"
 function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,3},
                         below::AbstractArray{Tb,3}) where {TR,Ta,Tb}
     @tensor R′[al′, 1, bl′] := above[al′, s, al] * conj(below[bl′, s, bl]) * R[al, 1, bl]
@@ -140,6 +150,40 @@ end
 
 function TransferMatrix(a::AbstractArray{T,3}, b::AbstractArray{T,3}; side::Symbol = :left) where {T}
     return TransferMatrix([a], [b]; side = side)
+end
+
+"""
+    TransferMatrix(abovef::Function, belowf::Function, N::Integer; side = :left)
+
+Lazily tiled identity-channel transfer map: the site tensors are generated on
+demand (`abovef(ℓ)` / `belowf(ℓ)`, e.g. the fused tensors of a `LazyKet`) —
+nothing but the current environment vector is ever stored. Semantics identical
+to `TransferMatrix(above::AbstractVector, below::AbstractVector)`.
+"""
+function TransferMatrix(abovef::F1, belowf::F2, N::Integer;
+                        side::Symbol = :left) where {F1,F2}
+    A = abovef(1)
+    B = belowf(1)
+    T = promote_type(eltype(A), eltype(B))
+    if side === :left
+        f = function (v::AbstractVector)
+            L = reshape(v, size(B, 1), size(A, 1))
+            for ℓ in 1:N
+                L = push_env_left(L, abovef(ℓ), belowf(ℓ))
+            end
+            return vec(L)
+        end
+    else
+        f = function (v::AbstractVector)
+            R = reshape(v, size(A, 1), size(B, 1))
+            for ℓ in N:-1:1
+                R = push_env_right(R, abovef(ℓ), belowf(ℓ))
+            end
+            return vec(R)
+        end
+    end
+    d = size(A, 1) * size(B, 1)
+    return TransferMatrix{T,typeof(f)}(f, (d, d), side)
 end
 
 function TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{T,4},

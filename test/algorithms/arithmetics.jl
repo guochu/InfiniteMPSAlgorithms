@@ -83,9 +83,8 @@ end
           reshape(_dense_mpo_repr(W1), 4, 4) * reshape(_dense_mpo_repr(W2), 4, 4) atol = 1e-10
     # 迭代乘法：W1·I = W1（D = 2 = 目标键维）。与目标平行即可（整体相位/尺度是
     # 输出射线规范的自由度）
-    P1, ov1 = mult(W1, I2, VOMPS(D = 2))
+    P1 = mult(W1, I2, VOMPS(D = 2))
     @test P1 isa CanonicalIMPO && bonddim(P1, 1) == 2
-    @test real(ov1) > 2 - 1e-6   # overlap = N 即方向一致
     dP1 = vec(_dense_mpo_repr(DenseIMPO(P1)))
     dW1v = vec(_dense_mpo_repr(W1))
     ls1 = dot(dP1, dW1v) / dot(dP1, dP1)
@@ -97,7 +96,7 @@ end
     s2 = DenseIMPO(collect(exact_add(wa.Ws, wa.Ws)))
     for alg in (VOMPS(D = 1, maxiter = 200), IDMRG(D = 1, maxiter = 200))
         Random.seed!(1)
-        Pc, ov = mult(s2, I2, alg)
+        Pc = mult(s2, I2, alg)
         @test bonddim(Pc, 1) == 1
         d = _dense_mpo_repr(DenseIMPO(Pc))
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
@@ -114,19 +113,19 @@ end
     W2 = randomimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
     # 精确（无 alg）：naive 构造 + 规范化
-    Pe, _ = mult(W1, W2)
+    Pe = mult(W1, W2)
     @test Pe isa CanonicalIMPO && ismixedcanonical(Pe) && bonddim(Pe, 1) == 6
     # mpo·mps 精确路径
     ψ = randomimps(T, [2, 2]; D = 3)
-    y, _ = mult(W1, ψ)
+    y = mult(W1, ψ)
     @test y isa CanonicalIMPS && ismixedcanonical(y)
     # lazy 路径
-    Pl, _ = mult(W1, I2, VOMPS(D = 2))
+    Pl = mult(W1, I2, VOMPS(D = 2))
     @test Pl isa CanonicalIMPO && ismixedcanonical(Pl)
     # naive 兜底：maxiter = 0 使 lazy 引擎不收敛（overlap 不达 0.9N）而触发兜底
-    Pf, _ = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
+    Pf = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
     @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
-    Pf2, _ = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
+    Pf2 = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
     @test Pf2 isa CanonicalIMPO && ismixedcanonical(Pf2)
 end
 
@@ -149,18 +148,18 @@ end
     @test abs(imag(λs[1])) > 0.9 * abs(λs[1])
 
     # 精确 mult（naive fuse + gaugefix，实通道）：正则且保持实
-    ye, _ = mult(Wo, ψ)
+    ye = mult(Wo, ψ)
     @test ye isa CanonicalIMPS && ismixedcanonical(ye) && scalartype(ye) == Float64
     # VOMPS / IDMRG：复环境通道下不崩溃；结果提升为复（MPSKit 对齐）、
     # 混合正则恒等式严格成立、范数 1
     for alg in (VOMPS(D = 2, maxiter = 50), IDMRG(D = 2, maxiter = 50))
-        yv, _ = mult(Wo, ψ, alg)
+        yv = mult(Wo, ψ, alg)
         @test yv isa CanonicalIMPS && ismixedcanonical(yv)
         @test scalartype(yv) <: Complex
         @test norm(yv) ≈ 1 atol = 1e-10
     end
     # mpo·mpo 兜底（identity 通道，实）：同样正则
-    Pf, _ = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
+    Pf = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
     @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
 end
 

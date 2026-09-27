@@ -403,8 +403,7 @@ end
     # （overlap = 1，输出与输入同向）
     Random.seed!(42)
     ψ0 = randomimps(T, [2]; D = 6)
-    ψa, ov = mult(I1, ψ0, VOMPS(D = 6, maxiter = 50, tol = 1e-10))
-    @test ov ≈ 1 atol = 1e-8
+    ψa = mult(I1, ψ0, VOMPS(D = 6, maxiter = 50, tol = 1e-10))
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
 end
 

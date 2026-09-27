@@ -162,60 +162,45 @@ function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
 end
 
 """
-    _ring_overlap(ALs, K) -> Complex
-    _ring_overlap(ALs, ketf, N) -> Complex
+    _ring_overlap(A1s, A2s) -> Complex
+    _ring_overlap(A1s, ketf, N) -> Complex
     _ring_overlap(ketf1, ketf2, N) -> Complex
 
-Periodic ring trace of ⟨x|K⟩: on the composite space `(x bond, K bond)`,
-`𝔈_ℓ[(a′,β′),(a,β)] = Σ_p conj(x.AL[ℓ][a,p,a′])·K[ℓ][β,p,β′]`; starting from
-`E = I` propagate `E ← 𝔈_ℓ·E` and return `tr(∏𝔈_ℓ)` (the x-bond ring and the
-K-bond ring close independently). In the lazy methods `K[ℓ] = ketf(ℓ)` is
-generated on demand (only `E` is kept; the target family is never stored).
+⟨x|K⟩ as the **dominant eigenvalue** of the overlap transfer matrix on the
+composite space `(A1 bond, A2 bond)` — constructed as a
+[`TransferMatrix`](@ref) (`above = A2`, `below = A1`, the same conjugation
+convention as `dot(ψ₁, ψ₂)`) and solved with [`_eigsolve`](@ref) starting from
+the flattened identity; the per-site contraction is `push_env_left`'s explicit
+two-step kernel (bond indices first, physical index last). In the lazy methods
+`A2[ℓ] = ketf(ℓ)` is generated on demand (the target family is never stored).
+
+性能注记：这里曾经是「一圈收缩取 trace」——每站 `O((D₁D₂)³)` 次乘法、
+`(D₁D₂)²` 内存，naive 目标（键 = `D·D_W`）在 `D ≳ 16` 时即不可行；主导
+特征值与 trace 只差次主导谱（近似平行态下指数小），而每 matvec 仅
+`O(d·(D₁D₂)²)`、内存 `O(krylovdim·D₁D₂)`。
 """
-function _ring_overlap(ALs::Vector{<:AbstractArray{Tx,3}}, K::Vector{<:AbstractArray{Tk,3}}) where {Tx,Tk}
-    T = promote_type(Tx, Tk)
-    N = length(K)
-    Dx, DK = size(ALs[1], 1), size(K[1], 1)
-    E = zeros(T, Dx, DK, Dx, DK)
-    for a in 1:Dx, β in 1:DK
-        E[a, β, a, β] = one(T)
-    end
-    for ℓ in 1:N
-        A = ALs[ℓ]
-        B = K[ℓ]
-        E = @tensor E′[a′, β′, a₀, β₀] := conj(A[a, p, a′]) * B[β, p, β′] * E[a, β, a₀, β₀]
-    end
-    return tr(reshape(E, Dx * DK, Dx * DK))
+function _ring_overlap(a1f::F, a2f::G, N::Int) where {F,G}
+    # ⟨x|K⟩ = overlap 转移矩阵（above = A2、below = A1，共轭约定对齐
+    # `dot(ψ₁, ψ₂) = TransferMatrix(ψ₂.AL, ψ₁.AL)`）的主导特征值；
+    # 站张量经闭包按需生成（惰性目标串从不落地），收缩由
+    # `push_env_left` 的显式两步 kernel 完成（键指标优先）
+    tm = TransferMatrix(a2f, a1f, N)
+    T = promote_type(eltype(a1f(1)), eltype(a2f(1)))
+    v0 = vec(Matrix{T}(I, size(a1f(1), 1), size(a2f(1), 1)))
+    vals, _, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false)
+    return vals[1]
 end
 
-function _ring_overlap(ALs::Vector{<:AbstractArray{Tx,3}}, ketf::F, N::Int) where {Tx,F}
-    T = promote_type(Tx, eltype(ketf(1)))
-    Dx, DK = size(ALs[1], 1), size(ketf(1), 1)
-    E = zeros(T, Dx, DK, Dx, DK)
-    for a in 1:Dx, β in 1:DK
-        E[a, β, a, β] = one(T)
-    end
-    for ℓ in 1:N
-        A = ALs[ℓ]
-        B = ketf(ℓ)
-        E = @tensor E′[a′, β′, a₀, β₀] := conj(A[a, p, a′]) * B[β, p, β′] * E[a, β, a₀, β₀]
-    end
-    return tr(reshape(E, Dx * DK, Dx * DK))
+function _ring_overlap(A1s::AbstractVector{<:AbstractArray{Tx,3}},
+                       A2s::AbstractVector{<:AbstractArray{Tk,3}}) where {Tx,Tk}
+    (length(A1s) == length(A2s)) ||
+        throw(DimensionMismatch("ring overlap requires equal lengths"))
+    return _ring_overlap(ℓ -> A1s[ℓ], ℓ -> A2s[ℓ], length(A2s))
 end
 
-function _ring_overlap(ketf1::F, ketf2::G, N::Int) where {F,G}
-    T = eltype(ketf1(1))
-    D1, D2 = size(ketf1(1), 1), size(ketf2(1), 1)
-    E = zeros(T, D1, D2, D1, D2)
-    for a in 1:D1, β in 1:D2
-        E[a, β, a, β] = one(T)
-    end
-    for ℓ in 1:N
-        A = ketf1(ℓ)
-        B = ketf2(ℓ)
-        E = @tensor E′[a′, β′, a₀, β₀] := conj(A[a, p, a′]) * B[β, p, β′] * E[a, β, a₀, β₀]
-    end
-    return tr(reshape(E, D1 * D2, D1 * D2))
+function _ring_overlap(A1s::AbstractVector{<:AbstractArray{Tx,3}}, ketf::F,
+                       N::Int) where {Tx,F}
+    return _ring_overlap(ℓ -> A1s[ℓ], ketf, N)
 end
 
 "Uniform norm normalization (AC and C are scaled together, preserving the
@@ -436,6 +421,259 @@ struct LazyKet{ALf,ARf,ACf,Cf}
     ARf::ARf
     ACf::ACf
     Cf::Cf
+end
+
+# ---------------- factorized double-MPO lazy engine (bond-first contractions) ----------------
+#
+# mult(W, W2, alg) 的惰性 target：乘积算符 (W1·W2) 的 MPS 视图张量
+# Ket[(wl2·wl1), (u·d), (wr2·wr1)] = Σ_m W1[wl1,u,wr1,m]·W2[wl2,m,wr2,d]。
+# 经由 LazyKet + `_naive_mul_tensor` 闭包的做法在每次 ALf(ℓ) 时物化
+# (D₁·D₂)²·(u·d) 的融合张量——lazy 只推迟了物化，构造路径本身仍是
+# 「先缩物理桥指标 m、铺开全部辅助键」的最差顺序（融合键 D₁·D₂ 通常远大于
+# 物理维度，(D₁·D₂)²·d² 很快不可行）。因子化引擎把 (W1, W2) 对一路保留到
+# 环境收缩里，按「键指标优先、物理指标最后」显式分步 GEMM：最大中间张量
+# 只有 O(D·D₁·D₂·d²)，融合张量从不落地。
+#
+# 乘积因子天然保持规范一致性（W1、W2 各自混合规范 ⇒ 乘积 AL 左正交、AR
+# 右正交、AC·C 一致，C 的外积 kron 布局逐位对齐融合键序），因此 identity
+# 通道固定点机制无需 gauge twist 直接适用。
+
+"`FactorizedKet(ALf1, ALf2, ARf1, ARf2, ACf1, ACf2, Cf1, Cf2)`: a factorized
+double-MPO lazy target — the site's fused tensor `Ket = W1 ⊗_m W2` is **never
+materialized**; the environment contraction consumes the `(W1, W2)` pair
+directly (bond-first explicit GEMM chain)."
+struct FactorizedKet{A1,A2,B1,B2,C1,C2,D1,D2}
+    ALf1::A1; ALf2::A2
+    ARf1::B1; ARf2::B2
+    ACf1::C1; ACf2::C2
+    Cf1::D1;  Cf2::D2
+end
+
+"""
+    _push_env_left(L, below, W1, W2) -> Matrix
+
+Factorized identity-channel left push:
+`L′[bl′, (wr2·wr1)] = Σ conj(below[bl, (u·d), bl′])·L[bl, (wl1·wl2)]·W1·W2`.
+显式三步、每步一个二元收缩（TensorOperations 自动做多腿 GEMM），键指标
+优先（bl → wl1 → (wl2, m, d)）、物理 (u, d, m) 最后——不物化 (D₁·D₂)²
+的融合张量。
+"""
+function _push_env_left(L::AbstractMatrix, below::AbstractArray{Tb,3},
+                        W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {Tb,Tw1,Tw2}
+    wl1, u1, wr1, m = size(W1)
+    wl2, _, wr2, d2 = size(W2)
+    bl, bl′ = size(below, 1), size(below, 3)
+    L4 = permutedims(reshape(L, bl, wl1, wl2), (2, 3, 1))  # L[bl, (wl1·wl2)] → [wl1, wl2, bl]
+    Cb = reshape(below, bl, u1, d2, bl′)           # 融合物理 (u·d)：u 快
+    # 步1（键 bl）：Y[(wl1, wl2), (u, d), bl′]
+    Y = @tensor Y[w1, w2, u, dd, j] := L4[w1, w2, bl] * conj(Cb[bl, u, dd, j])
+    # 步2（键 wl1；物理 u 与 W1 一并收缩）：Z[(wl2, m, wr1, d), bl′]
+    Z = @tensor Z[w2, mm, r1, dd, j] := Y[w1, w2, u, dd, j] * W1[w1, u, r1, mm]
+    # 步3（键 wl2；桥 m 与物理 d 与 W2 一并收缩）
+    Out = @tensor Out[j, r2, r1] := Z[w2, mm, r1, dd, j] * W2[w2, mm, r2, dd]
+    return reshape(permutedims(Out, (1, 3, 2)), bl′, wr2 * wr1)
+end
+
+"Factorized identity-channel right push:
+`R′[(wl1·wl2), bl′] = Σ R[(wr1·wr2), bl]·W1·W2·conj(below[bl, (u·d), bl′])`.
+显式三步二元收缩（键优先：bl → wr2 → (wl1, m, u)；物理 (u, d, m) 最后）。"
+function _push_env_right(R::AbstractMatrix, W1::AbstractArray{Tw1,4},
+                         W2::AbstractArray{Tw2,4}, below::AbstractArray{Tb,3}) where {Tb,Tw1,Tw2}
+    wl1, u1, wr1, m = size(W1)
+    wl2, _, wr2, d2 = size(W2)
+    bl, bl′ = size(below, 1), size(below, 3)
+    R4 = reshape(R, wr1, wr2, bl)                  # 融合行 (wr1·wr2)：wr1 快；列 = below 左键 bl
+    Cb = reshape(below, bl, u1, d2, bl′)           # 融合物理 (u·d)：u 快
+    # 步1（键 bl）：Y[(wr1, wr2), (u, d), bl′]
+    Y = @tensor Y[r1, r2, u, dd, j] := R4[r1, r2, bl] * conj(Cb[bl, u, dd, j])
+    # 步2（键 wr2；物理 d 与 W2 一并收缩）：Z[(wr1, u, bl′), (wl2, m)]
+    Z = @tensor Z[r1, j, u, w2, mm] := Y[r1, r2, u, dd, j] * W2[w2, mm, r2, dd]
+    # 步3（键 wr1；桥 m 与物理 u 与 W1 一并收缩）
+    Out = @tensor Out[j, w2, w1] := Z[r1, j, u, w2, mm] * W1[w1, u, r1, mm]
+    return reshape(permutedims(Out, (3, 2, 1)), wl1 * wl2, bl′)    # ((wl1·wl2), bl′)
+end
+
+"Factorized local AC map (identity channel):
+`ACnew[aL, (u·d), aR] = Σ GL[aL, (wl1·wl2)]·W1AC·W2AC·GR[(wr2·wr1), aR]`.
+显式三步二元收缩（键优先：wl1 → wl2 → (wr1, wr2)；物理 (u, d) 最后）。"
+function _mapAC_fused(GL::AbstractMatrix, GR::AbstractMatrix,
+                      W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {Tw1,Tw2}
+    wl1, u1, wr1, m = size(W1)
+    wl2, _, wr2, d2 = size(W2)
+    aL = size(GL, 1)
+    aR = size(GR, 2)
+    GL4 = reshape(GL, aL, wl1, wl2)                # 融合列 (wl1·wl2)：wl1 快
+    # 步1（键 wl1；物理 u、桥 m 一并收缩）：Y[(aL, wl2, d? 自由), (wr1)]…
+    Y = @tensor Y[jL, w2, u, mm, r1] := GL4[jL, w1, w2] * W1[w1, u, r1, mm]
+    # 步2（键 wl2；桥 m 与物理 d 与 W2 一并收缩）：Z[(aL, u, d), (wr1·wr2)]
+    Z = @tensor Z[jL, u, dd, r1, r2] := Y[jL, w2, u, mm, r1] * W2[w2, mm, r2, dd]
+    # 步3（键 wr1、wr2 与 GR 融合行 (wr2·wr1) 收缩）
+    Zp = reshape(Z, aL * u1 * d2, wr1 * wr2)
+    ACn = Zp * GR                                  # (aL·u·d), aR
+    return reshape(ACn, aL, u1 * d2, aR)
+end
+
+"Factorized local C map (identity channel):
+`Cnew[aL, aR] = Σ GL[aL, (wl1·wl2)]·C2[wl2, wr2]·C1[wl1, wr1]·GR[(wr2·wr1), aR]`.
+显式两步二元收缩（全辅助指标）。"
+function _mapC_fused(GL::AbstractMatrix, GR::AbstractMatrix,
+                     C2::AbstractMatrix, C1::AbstractMatrix)
+    aL = size(GL, 1)
+    wl2, wr2 = size(C2)
+    wl1, wr1 = size(C1)
+    GL3 = reshape(GL, aL, wl1, wl2)                # 融合列 (wl1·wl2)：wl1 快
+    # 步1（键 wl2）：Y[(aL, wl1), wr2]
+    Y = @tensor Y[jL, w1, r2] := GL3[jL, w1, w2] * C2[w2, r2]
+    # 步2（键 wl1）：Z[(aL, wr1, wr2)]
+    Z = @tensor Z[jL, r1, r2] := Y[jL, w1, r2] * C1[w1, r1]
+    return reshape(Z, aL, wr1 * wr2) * GR          # (aL, (wr1·wr2) 列序 = GR 融合行) → (aL, aR)
+end
+
+"""
+    FactorizedKet(ALf1, ALf2, ARf1, ARf2, ACf1, ACf2, Cf1, Cf2)
+
+因子化双 MPO 惰性 target：乘积算符的融合张量 `Ket[(wl1·wl2), (u·d), (wr1·wr2)]
+= W1 ⊗_m W2` **从不物化**，环境收缩直接消费 `(W1, W2)` 张量对（键优先的显式
+分步 GEMM，见 [`_push_env_left`](@ref)）。`(AL·C = C·AR = AC)` 逐点成立。
+"""
+struct FactorizedKet{A1,A2,B1,B2,C1,C2,D1,D2}
+    ALf1::A1; ALf2::A2
+    ARf1::B1; ARf2::B2
+    ACf1::C1; ACf2::C2
+    Cf1::D1;  Cf2::D2
+end
+
+"""
+    _lazy_ternary_fixedpoints(x, ket::FactorizedKet; kwargs...) -> (GLs, GRs)
+
+因子化双 MPO target 的 identity 通道固定点：环境推直接消费 `(W1, W2)` 对
+（[`_push_env_left`](@ref)/[`_push_env_right`](@ref)）。乘积因子各自保持
+规范（W1、W2 各自混合规范 ⇒ 乘积 AL 左正交、AR 右正交、AC·C 一致），无需
+gauge twist。`GL`/`GR` 为 rank-2 `(x 键, 融合键)` 矩阵。
+"""
+function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::FactorizedKet;
+                                   tol::Real = Defaults.tol,
+                                   krylovdim::Int = Defaults.krylovdim,
+                                   maxiter::Int = Defaults.maxiter,
+                                   GL0::Union{Nothing,AbstractArray} = nothing,
+                                   GR0::Union{Nothing,AbstractArray} = nothing)
+    N = length(x)
+    T = scalartype(x)
+    Dl = size(x.AL[1], 1)
+    Dr = size(x.AR[1], 3)
+    Da1 = size(ket.ALf1(1), 1) * size(ket.ALf2(1), 1)
+
+    Tleft = function (v::AbstractVector)
+        GL = reshape(v, Dl, Da1)
+        for ℓ in 1:N
+            GL = _push_env_left(GL, x.AL[ℓ], ket.ALf1(ℓ), ket.ALf2(ℓ))
+        end
+        return vec(GL)
+    end
+    v0L = GL0 === nothing ? ones(T, Dl * Da1) : vec(copy(GL0))
+    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
+                       krylovdim = krylovdim, maxiter = maxiter)
+    TCL = promote_type(T, eltype(GL1[1]))
+    GLs = Vector{Matrix{TCL}}(undef, N)
+    GLs[1] = GL = reshape(GL1[1], Dl, Da1)
+    for ℓ in 2:N
+        GL = _push_env_left(GL, x.AL[ℓ-1], ket.ALf1(ℓ-1), ket.ALf2(ℓ-1))
+        GLs[ℓ] = GL
+    end
+
+    Tright = function (v::AbstractVector)
+        GR = reshape(v, Da1, Dr)
+        for ℓ in N:-1:1
+            GR = _push_env_right(GR, ket.ARf1(ℓ), ket.ARf2(ℓ), x.AR[ℓ])
+        end
+        return vec(GR)
+    end
+    v0R = GR0 === nothing ? ones(T, Da1 * Dr) : vec(copy(GR0))
+    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
+                       krylovdim = krylovdim, maxiter = maxiter)
+    TCR = promote_type(T, eltype(GRN[1]))
+    GRs = Vector{Matrix{TCR}}(undef, N)
+    GRs[N] = GR = reshape(GRN[1], Da1, Dr)
+    for ℓ in N-1:-1:1
+        GR = _push_env_right(GR, ket.ARf1(ℓ+1), ket.ARf2(ℓ+1), x.AR[ℓ+1])
+        GRs[ℓ] = GR
+    end
+
+    # 归一化（MPSKit 约定：GR Frobenius、GL 乘局部 overlap λ）
+    for ℓ in 1:N
+        GRs[ℓ] = GRs[ℓ] ./ norm(GRs[ℓ])
+    end
+    for ℓ in 1:N
+        inext = _mod1(ℓ + 1, N)
+        Cnew = _mapC_fused(GLs[inext], GRs[ℓ], ket.Cf2(ℓ), ket.Cf1(ℓ))
+        λ = dot(x.C[ℓ], Cnew)
+        λ == 0 && error("factorized lazy environment: local overlap λ = 0 at site $ℓ")
+        GLs[inext] = GLs[inext] ./ λ
+    end
+    return GLs, GRs
+end
+
+"因子化 target 的 per-site Galerkin 残差（语义同 `_galerkin_err`）。"
+function _lazy_galerkin_err(x::CanonicalIMPS, ket::FactorizedKet, GLs, GRs, N)
+    ϵ = 0.0
+    for ℓ in 1:N
+        k = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
+        ϵ = max(ϵ, _galerkin(x.AL[ℓ], k))
+    end
+    return ϵ
+end
+
+"因子化 target 的 ⟨x|K⟩（overlap 转移主导特征值，直接消费 (W1, W2) 对）。"
+function _ring_overlap_fused(x::CanonicalIMPS, ket::FactorizedKet, N::Int)
+    T = scalartype(x)
+    Dl = size(x.AL[1], 1)
+    Da1 = size(ket.ALf1(1), 1) * size(ket.ALf2(1), 1)
+    matvec = function (v::AbstractVector)
+        E = reshape(v, Dl, Da1)
+        for ℓ in 1:N
+            E = _push_env_left(E, x.AL[ℓ], ket.ALf1(ℓ), ket.ALf2(ℓ))
+        end
+        return vec(E)
+    end
+    v0 = vec(Matrix{T}(I, Dl, Da1))
+    vals, _, _ = _eigsolve(matvec, v0, 1, :LM; ishermitian = false)
+    return vals[1]
+end
+
+"因子化 target 的变分压缩 sweep（VOMPS/IDMRG）：无 naive 融合张量、无
+gauge twist（乘积因子保规范）；收敛判据为 Galerkin 残差。"
+function _lazy_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
+                      alg::Union{VOMPS,IDMRG}, tol::Real = Defaults.tol,
+                      maxiter::Int = Defaults.maxiter,
+                      verbosity::Int = Defaults.verbosity)
+    isvomps = alg isa VOMPS
+    T = promote_type(scalartype(x0), eltype(ket.ACf1(1)))
+    x = copy(x0)
+    GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
+    x = _promote_scalar(promote_type(T, eltype(GLs[1])), x)
+    ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+    for iter in 1:maxiter
+        ϵ < tol && break
+        eigs_alg = isvomps ? nothing : updatetol(alg.alg_eigsolve, iter, ϵ)
+        ALs = Vector{Array{T,3}}(undef, N)
+        for ℓ in 1:N
+            k = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
+            ĉ = _mapC_fused(GLs[_mod1(ℓ + 1, N)], GRs[ℓ], ket.Cf2(ℓ), ket.Cf1(ℓ))
+            if isvomps
+                ALs[ℓ] = regauge!(k, ĉ; alg = Defaults.alg_orth())
+            else
+                _, AC = fixedpoint(_rank1_hamiltonian(k), x.AC[ℓ], :SR, eigs_alg)
+                _, C = fixedpoint(_rank1_hamiltonian(ĉ), x.C[ℓ], :SR, eigs_alg)
+                ALs[ℓ] = regauge!(AC, C; alg = Defaults.alg_orth())
+            end
+        end
+        gauge_step!(x, ALs, x.C[N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
+        GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
+        ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+        verbosity > 0 && _logiter(stdout, isvomps ? "VOMPS" : "IDMRG", iter, ϵ)
+    end
+    _global_normalize!(x)
+    return x
 end
 
 """
@@ -703,67 +941,36 @@ function _lazy_sweeps(ket::LazyKet, x0::CanonicalIMPS, N::Int; kwargs...)
 end
 
 """
-    _lazy_mpo_result(fams::Vector{<:Tuple}, x0, dus, dds, N; alg) -> (y, overlap)
-
-Lazy assembly of MPO algebra results: each element of `fams` is a tuple
-`(fAL, fAR, fAC, fC)` of rank-4 closures generating one target's AL/AR/AC/C
-families per site on demand (entering [`_lazy_sweeps`](@ref) through the MPS
-view; the local maps add up over the targets); after compression +
-ring-trace amplitude alignment the result is mapped back to rank-4 canonical
-storage (`CanonicalIMPO`) via [`_mpo_from_mps`](@ref).
-"""
-function _lazy_mpo_result(fams::Vector{<:Tuple}, x0::CanonicalIMPS,
-                          dus::AbstractVector{Int}, dds::AbstractVector{Int},
-                          N::Int; alg::Union{VOMPS,IDMRG})
-    kets = [LazyKet(ℓ -> asmps_view([fam[1](ℓ)])[1],
-                    ℓ -> asmps_view([fam[2](ℓ)])[1],
-                    ℓ -> asmps_view([fam[3](ℓ)])[1],
-                    fam[4]) for fam in fams]
-    x, overlap = _lazy_sweeps(kets, x0, N; alg = alg, tol = alg.tol,
-                              maxiter = alg.maxiter, verbosity = alg.verbosity)
-    _global_normalize!(x)
-    return _mpo_from_mps(x, dus, dds), overlap
-end
-
-function _lazy_mpo_result(fAL, fAR, fAC, fC, x0::CanonicalIMPS,
-                          dus::AbstractVector{Int}, dds::AbstractVector{Int},
-                          N::Int; alg::Union{VOMPS,IDMRG})
-    return _lazy_mpo_result([(fAL, fAR, fAC, fC)], x0, dus, dds, N; alg = alg)
-end
-
-"""
-    mult(W, ψ) -> (y::CanonicalIMPS, overlap)
-    mult(W, W2) -> (y::CanonicalIMPO, overlap)
+    mult(W, ψ) -> y::CanonicalIMPS
+    mult(W, W2) -> y::CanonicalIMPO
 
 Exact application/composition without compression: the naive construction
 (fuse / MPO composition) is canonicalized into mixed-canonical storage. The
 output bond dimension is the naive bond dimension (inherently large for large
-inputs); `overlap = N` identically (the output is the target ray itself).
+inputs); the result is normalized (幅值不携带信息，只有方向有意义).
 """
 function mult(W, ψ::CanonicalIMPS)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     (length(ψ) % length(Wm) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    N = length(ψ)
-    T = promote_type(scalartype(Wm), scalartype(ψ))
-    K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:N]
-    y = CanonicalIMPS(collect(K))
-    return _global_normalize!(y), real(T)(N)
+    K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:length(ψ)]
+    return _global_normalize!(CanonicalIMPS(collect(K)))
 end
 
 """
-    mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, overlap)
-    mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPO, overlap)
+    mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
+    mult(W, W2, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPO
 
 The compute-on-the-fly version of the MPO multiplication: find `y ≈ W·ψ`
 (operator application) or `y ≈ W·W2` (operator composition), variationally
 compressed to the bond dimension `alg.D`. Unlike [`naive_mult`](@ref) (naively
 constructing the whole family first, then compressing), this method **never
-materializes the naive target family**: the
-local maps `k = GL·W·ket·GR` are computed per site on the fly under the
-environments (MPO channel / lazy fuse target), with intermediate memory of
-O(single site) only. Applying a time-evolution MPO is
-`ψ′, _ = mult(make_time_mpo(H, dt, WII()), ψ)`.
+materializes the naive target family**: for mpo·mps the local maps
+`k = GL·W·ket·GR` are computed per site on the fly; for mpo·mpo the
+factorized engine consumes the `(W1, W2)` tensor pairs directly with
+bond-first contractions (the fused tensors are never formed). Intermediate
+memory is O(single site) in both cases. Applying a time-evolution MPO is
+`ψ′ = mult(make_time_mpo(H, dt, WII()), ψ)`.
 
 - `W`: an `DenseIMPO`, an `SparseIMPO` (densified into an `DenseIMPO`
   before application), or an `CanonicalIMPO`;
@@ -771,8 +978,8 @@ O(single site) only. Applying a time-evolution MPO is
   (deterministic `svdguess_mult` initial state);
 - both `alg` types share the same fixed point;
 - the output is guaranteed to be in mixed-canonical form (mpo·mps →
-  `CanonicalIMPS`, mpo·mpo → `CanonicalIMPO`); `overlap` is the
-  ring-trace fidelity in [0, N] (= N means same direction);
+  `CanonicalIMPS`, mpo·mpo → `CanonicalIMPO`) and normalized (幅值不携带
+  信息，只有方向有意义);
 - real-valued inputs whose fused transfer has complex leading eigenvalues
   are handled as in MPSKit (environments live on complex spaces there):
   the environments take the eigensolver's complex output and the channel
@@ -799,14 +1006,7 @@ function _mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
     # (preserving the ray), then normalize to the package norm convention
     y = CanonicalIMPS(collect(y.AL), y.C[end])
-    _global_normalize!(y)
-    # overlap = ring-trace fidelity in [0, N] (the target fuse tensors are
-    # generated on demand; the naive family is not materialized)
-    yALs = [y.AL[ℓ] for ℓ in 1:N]
-    fusel = ℓ -> fuse(Wm[ℓ], ψ.AL[ℓ])
-    overlap = N * abs(_ring_overlap(yALs, fusel, N)) /
-              sqrt(real(_ring_overlap(yALs, yALs)) * real(_ring_overlap(fusel, fusel, N)))
-    return y, overlap
+    return _global_normalize!(y)
 end
 
 function mult(W, W2::Union{DenseIMPO,CanonicalIMPO})
@@ -816,17 +1016,15 @@ function mult(W, W2::Union{DenseIMPO,CanonicalIMPO})
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
     N = length(W2m)
     NW = length(Wm)
-    T = promote_type(scalartype(Wm), scalartype(W2m))
     # exact composition: naive fuse family → canonical storage (the output is
-    # the target ray itself → fidelity = N)
+    # the target ray itself, normalized)
     K4 = [_naive_mul_tensor(Wm[_mod1(ℓ, NW)], W2m[ℓ]) for ℓ in 1:N]
     dus = [size(K4[ℓ], 2) for ℓ in 1:N]
     dds = [size(K4[ℓ], 4) for ℓ in 1:N]
     K3 = asmps_view(K4)
     x = CanonicalIMPS(collect(K3))
     _global_normalize!(x)
-    y = _mpo_from_mps(x, dus, dds)
-    return y, real(T)(N)
+    return _mpo_from_mps(x, dus, dds)
 end
 
 mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG}) =
@@ -840,29 +1038,23 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
     N = length(W2m)
     NW = length(Wm)
-    # VOMPS/IDMRG on the lazy fuse target (compute-on-the-fly).
-    # The four family closures of the composite target (fuse preserves the
-    # factor canonical-form consistency: `AL·C = C·AR = AC` pointwise); left
-    # environments use AL, right environments AR (matching the
-    # `_ternary_fixedpoints` gauge convention).
+    # 因子化惰性引擎（compute-on-the-fly）：乘积算符的融合张量从不物化，
+    # 环境收缩直接消费 (W1, W2) 对（键优先显式分步 GEMM；乘积因子各自保持
+    # 规范 ⇒ 无需 gauge twist）。fallback：naive 构造 + 压缩。
     W1c = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
     W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
     dus = [size(W1c.AL[_mod1(ℓ, NW)], 2) for ℓ in 1:N]
     dds = [size(W2c.AL[ℓ], 4) for ℓ in 1:N]
-    physdims = dus .* dds
     x0 = ψ₀ !== nothing ? ψ₀ : svdguess_mult(Wm, W2m, D)
-    f = (fam1, fam2) -> ℓ -> _naive_mul_tensor(fam1[_mod1(ℓ, NW)], fam2[ℓ])
-    # the C bond order matches the column-major reshape: composite bond
-    # (wl2 major, wl1 minor)
-    # lazy fuse engine + naive fallback (see _lazy_or_fallback; the naive family
-    # is only materialized when the fallback fires)
-    return _lazy_or_fallback(
-        () -> _lazy_mpo_result(f(W1c.AL, W2c.AL), f(W1c.AR, W2c.AR), f(W1c.AC, W2c.AC),
-                               ℓ -> kron(W2c.C[ℓ], W1c.C[_mod1(ℓ, NW)]),
-                               x0, dus, dds, N; alg = alg),
-        () -> _compress_mpo_result([_naive_mul_tensor(Wm[_mod1(ℓ, NW)], W2m[ℓ]) for ℓ in 1:N],
-                                   D, alg),
-        N)
+    ket = FactorizedKet(
+        ℓ -> W1c.AL[_mod1(ℓ, NW)], ℓ -> W2c.AL[ℓ],
+        ℓ -> W1c.AR[_mod1(ℓ, NW)], ℓ -> W2c.AR[ℓ],
+        ℓ -> W1c.AC[_mod1(ℓ, NW)], ℓ -> W2c.AC[ℓ],
+        ℓ -> W1c.C[_mod1(ℓ, NW)], ℓ -> W2c.C[ℓ])
+    x = _lazy_sweeps(ket, x0, N; alg = alg, tol = alg.tol,
+                     maxiter = alg.maxiter, verbosity = alg.verbosity)
+    _global_normalize!(x)
+    return _mpo_from_mps(x, dus, dds)
 end
 
 "Fallback assembly of the lazy mpo·mpo path: naive construction + compression,
@@ -1045,7 +1237,7 @@ function mult!(out::CanonicalIMPS, W, ψ::CanonicalIMPS,
                alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = _mult(W, ψ, alg, out; D = D)
+    y = _mult(W, ψ, alg, out; D = D)
     return _copyinto!(out, y)
 end
 
@@ -1054,6 +1246,6 @@ function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO},
     D = max_bonddim(out)
     changebond!(out; D = D)
     ψ0 = CanonicalIMPS(asmps_view(collect(out.AC)))
-    y, _ = _mult(W, W2, alg, ψ0; D = D)
+    y = _mult(W, W2, alg, ψ0; D = D)
     return _copyinto!(out, y)
 end

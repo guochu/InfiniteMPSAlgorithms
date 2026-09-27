@@ -76,20 +76,18 @@
 
     # ---- mult / w1w2 ----
     I2 = identityimpo(T, [2, 2])
-    ψa, ova = mult(I2, ψg)
+    ψa = mult(I2, ψg)
     @test abs(dot(ψa, ψg)) ≈ 1 atol = 1e-8
-    @test real(ova) ≈ 2 atol = 1e-8                            # 恒等 MPO 和式期望 = N
 
     # WII 时间演化（make_time_mpo 直接接受 2-site Schur 哈密顿量）：能量守恒
     # （D = nothing → 精确的朴素构造 + 规范存储，不压缩）
     W2t = make_time_mpo(H, 0.01, WII())
-    ψw, ovw = mult(W2t, ψg)
+    ψw = mult(W2t, ψg)
     @test abs(real(expectationvalue(ψw, H) / 2) - eg) < 1e-4
-    @test real(ovw) > 0.999
 
     # WI 路径（阈值覆盖 WI MPO 自身 O(dt) 能量不守恒，同 1-site 测试）
     W1t = make_time_mpo(H, 0.01, WI())
-    ψw1, _ = mult(W1t, ψg)
+    ψw1 = mult(W1t, ψg)
     @test abs(real(expectationvalue(ψw1, H) / 2) - eg) < 1e-4
 
     # MPO 压缩：2-site 恒等 MPO 压到 D=1
