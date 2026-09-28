@@ -79,10 +79,10 @@ is carried by the algorithm object (`alg.D`); the in-place twins take it from
 the provided initial guess `out` instead:
 
 ```julia
-ψ′, ov = mult(W, ψ, VOMPS(D = 32))         # apply an MPO, compress to bond 32
-W2,  ov = mult(W1, W2, IDMRG(D = 12))      # compose two MPOs
-h,   ov = hadamard(ψ1, ψ2, VOMPS(D = 16))  # elementwise product c1 .* c2
-y,   ov = compress(ψ, VOMPS(D = 8))        # variational bond-dimension reduction
+ψ′ = mult(W, ψ, VOMPS(D = 32))             # apply an MPO, compress to bond 32
+W3 = mult(W1, W2, IDMRG(D = 12))           # compose two MPOs
+h = hadamard(ψ1, ψ2, VOMPS(D = 16))        # elementwise product c1 .* c2
+y = compress(ψ, VOMPS(D = 8))              # variational bond-dimension reduction
 mult!(out, W, ψ, VOMPS(D = 4))             # in-place: D taken from `out` (alg.D ignored)
 ```
 

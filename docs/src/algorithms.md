@@ -89,13 +89,13 @@ application) or an MPO (operator composition), with **compute-on-the-fly**
 compression: the naive target family is never materialized, and intermediate
 memory stays at the single-site level. The algorithm object is positional:
 [`VOMPS`](@ref) (overlap-maximizing ALS sweeps) or [`IDMRG`](@ref)
-(rank-1 effective-Hamiltonian eigen-solves); both share the same fixed point.
+(rank-1 effective-Hamiltonian local solves); both share the same fixed point.
 
 ```julia
-mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, overlap)
-mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPO, overlap)
-hadamard(ψ1, ψ2, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
-compress(x, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
+mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
+mult(W, W2, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPO
+hadamard(ψ1, ψ2, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
+compress(x, alg::Union{VOMPS,IDMRG}) -> y
 ```
 
 - The target bond dimension is carried by the algorithm object: `alg.D`
@@ -112,10 +112,10 @@ compress(x, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
   perform the exact naive construction + canonical storage (no compression).
 - The debug twins `naive_mult` / `naive_hadamard` materialize the complete
   naive family before compressing (reference implementations).
-- `overlap` is the ring-trace fidelity in `[0, N]` (`= N` means same
-  direction; see [Conventions](@ref)).
+- All iterative engines return the optimized chain only; convergence is judged
+  by the Galerkin residual (no overlap is computed anywhere).
 
-Applying a time-evolution MPO is `ψ′, _ = mult(make_time_mpo(H, dt, WII()), ψ)`.
+Applying a time-evolution MPO is `ψ′ = mult(make_time_mpo(H, dt, WII()), ψ)`.
 
 ## Time-evolution MPOs (W^I / W^II)
 

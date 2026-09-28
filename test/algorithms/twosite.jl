@@ -92,8 +92,8 @@
 
     # MPO 压缩：2-site 恒等 MPO 压到 D=1
     comp = mpo_compress(I2, 1)
-    @test max_bonddim(comp.W) == 1
-    @test abs(comp.overlap - 2) < 1e-8
+    @test comp isa DenseIMPO && max_bonddim(comp) == 1
+    @test fidelity(vectorize(comp), vectorize(I2)) ≈ 1 atol = 1e-8
 
     # ---- tdvp ----
     tspan = 0:0.01:0.1

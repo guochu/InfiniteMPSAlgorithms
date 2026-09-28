@@ -118,35 +118,35 @@ end
     ψsum = CanonicalIMPS(collect(exact_add(ψ1.AL, ψ1.AL)))
     @test max_bonddim(ψsum) == 8
 
-    # D ≥ 输入键：短路精确返回（无压缩，overlap = N）
-    y0, ov0 = compress(ψsum, VOMPS(D = 8))
+    # D ≥ 输入键：短路精确返回（无压缩）
+    y0 = compress(ψsum, VOMPS(D = 8))
     @test max_bonddim(y0) == 8
-    @test real(ov0) ≈ length(ψsum) atol = 1e-10
+    @test fidelity(y0, ψsum) ≈ 1 atol = 1e-10
 
-    # 有损压缩：overlap ∈ (0, N]，且不劣于随机初猜的同键压缩（随机初猜经
-    # in-place 版本提供）
+    # 有损压缩：不劣于随机初猜的同键压缩（随机初猜经 in-place 版本提供）
     ψbig = randomimps(T, [2, 2]; D = 8)
-    y4, ov4 = compress(ψbig, VOMPS(D = 4))
-    @test max_bonddim(y4) == 4 && 0 < real(ov4) ≤ length(ψbig) + 1e-12
+    y4 = compress(ψbig, VOMPS(D = 4))
+    @test max_bonddim(y4) == 4
     yr = randomimps(T, [2, 2]; D = 4)
     compress!(yr, ψbig, VOMPS(D = 4))
     @test abs(real(dot(yr, y4))) / sqrt(abs(dot(yr, yr)) * abs(dot(y4, y4))) ≈ 1 atol = 1e-6
 
-    # IDMRG 路径同一不动点（有损压缩）
+    # IDMRG 路径同一不动点（有损压缩，射线方向一致）
     ψbig = randomimps(T, [2, 2]; D = 8)
-    y4, ov4 = compress(ψbig, VOMPS(D = 4))
-    y4b, ov4b = compress(ψbig, IDMRG(D = 4, maxiter = 200))
-    @test abs(real(ov4b) - real(ov4)) < 1e-4
+    y4 = compress(ψbig, VOMPS(D = 4))
+    y4b = compress(ψbig, IDMRG(D = 4, maxiter = 200))
+    @test abs(real(dot(y4, y4b))) /
+          sqrt(abs(dot(y4, y4)) * abs(dot(y4b, y4b))) ≈ 1 atol = 1e-3
 
     # MPO 版：CanonicalIMPO 与 DenseIMPO（随机谱平缓，两者均为重叠最大化
     # 收敛停点，断言一致到收敛差异内）；DenseIMPO 输入同样返回 CanonicalIMPO
     W = randomimpo(T, [2, 2]; D = 6)
     Wc = CanonicalIMPO(collect(W.Ws))
-    Vc, ovc = compress(Wc, VOMPS(D = 3))
+    Vc = compress(Wc, VOMPS(D = 3))
     @test max_bonddim(Vc) == 3 && ismixedcanonical(Vc)
-    Vd, ovd = compress(W, VOMPS(D = 3))
+    Vd = compress(W, VOMPS(D = 3))
     @test Vd isa CanonicalIMPO && max_bonddim(Vd) == 3 && ismixedcanonical(Vd)
-    @test abs(real(ovc) - real(ovd)) < 0.1
+    @test fidelity(Vc, Vd) > 0.9
 end
 
 @testset "compress：MPO 输入一律返回 CanonicalIMPO 且 ismixedcanonical" begin
@@ -155,16 +155,15 @@ end
     Random.seed!(81)
     Wr = randomimpo(T, [2, 2]; D = 3)
     # 压缩路径：DenseIMPO 输入 → CanonicalIMPO
-    y2, ov2 = compress(Wr, VOMPS(D = 2))
+    y2 = compress(Wr, VOMPS(D = 2))
     @test y2 isa CanonicalIMPO && max_bonddim(y2) == 2 && ismixedcanonical(y2)
     # IDMRG 路径同
-    y2b, _ = compress(Wr, IDMRG(D = 2, maxiter = 200))
+    y2b = compress(Wr, IDMRG(D = 2, maxiter = 200))
     @test y2b isa CanonicalIMPO && ismixedcanonical(y2b)
     # D ≥ max_bonddim：短路——输入先转规范存储再返回（强制归一化非纯规范，
     # 算符值整体缩放但射线严格不变），仍为 CanonicalIMPO
-    yr0, ov0 = compress(Wr, VOMPS(D = 3))
+    yr0 = compress(Wr, VOMPS(D = 3))
     @test yr0 isa CanonicalIMPO && ismixedcanonical(yr0)
-    @test real(ov0) ≈ 2 atol = 1e-10
     dr = vec(_dense_mpo_repr(DenseIMPO(yr0)))
     dw = vec(_dense_mpo_repr(Wr))
     ls = dot(dr, dw) / dot(dr, dr)
@@ -172,7 +171,7 @@ end
     # 实数输入：正则性成立；标量类型随通道转移的实际 eltype（ALS 期间融合
     # 转移可为复主导，通道按 MPSKit 对齐提升为复，故不断言实性）
     Wf = randomimpo(Float64, [2, 2]; D = 3)
-    yf, _ = compress(Wf, VOMPS(D = 2))
+    yf = compress(Wf, VOMPS(D = 2))
     @test yf isa CanonicalIMPO && ismixedcanonical(yf)
 end
 
@@ -185,7 +184,7 @@ end
     # hadamard!（初猜 out 提供 D）
     out = randomimps(T, [2, 2]; D = 4)
     hadamard!(out, ψ1, ψ2, VOMPS(D = 4))
-    yh, ovh = hadamard(ψ1, ψ2, VOMPS(D = 4))
+    yh = hadamard(ψ1, ψ2, VOMPS(D = 4))
     @test abs(dot(out, yh)) / sqrt(abs(dot(out, out)) * abs(dot(yh, yh))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mps，初猜 out 提供 D）
@@ -210,7 +209,7 @@ end
     ψbig = randomimps(T, [2, 2]; D = 8)
     out = randomimps(T, [2, 2]; D = 4)
     compress!(out, ψbig, VOMPS(D = 4))
-    yc, ovc = compress(ψbig, VOMPS(D = 4))
+    yc = compress(ψbig, VOMPS(D = 4))
     @test abs(dot(out, yc)) / sqrt(abs(dot(out, out)) * abs(dot(yc, yc))) ≈ 1 atol = 1e-8
 end
 

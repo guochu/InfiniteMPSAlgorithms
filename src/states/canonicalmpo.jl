@@ -274,7 +274,7 @@ fidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = fidelity(vectorize(W₁), v
 infidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = 1 - fidelity(W₁, W₂)
 
 """
-    mpo_compress(W::DenseIMPO, D; tol=1e-10, maxiter=100, verbosity=0) -> (; W, overlap)
+    mpo_compress(W::DenseIMPO, D; tol=1e-10, maxiter=100, verbosity=0) -> DenseIMPO
 
 Variationally compress an MPO to bond dimension `D`: view the MPO as an MPS
 (`asmps_view`) and run VOMPS overlap-maximization sweeps on the identity
@@ -284,8 +284,7 @@ eigenvector of the double-layer transfer `W⊗W̄`). The output is the
 (`norm = ‖AC[1]‖ = 1`, the package-wide norm convention; the absolute operator
 amplitude is deliberately not restored — accuracy is measured with
 [`fidelity`](@ref)/[`infidelity`](@ref), which are invariant under scale and
-phase). Returns the compressed `DenseIMPO` and the final overlap
-(normalized fidelity × N; see `_overlap_sweeps`).
+phase). No overlap is computed (same contract as the other iterative engines).
 """
 function mpo_compress(W::DenseIMPO, D::Int;
                       tol::Real = 1.0e-10, maxiter::Int = 100, verbosity::Int = 0)
@@ -295,11 +294,11 @@ function mpo_compress(W::DenseIMPO, D::Int;
     K = asmps_view(W.Ws)
     ket = CanonicalIMPS(K)       # canonicalize the MPS view of the MPO as the ket
     x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N]; D = D)
-    x, overlap = _overlap_sweeps(nothing, ket, x0, K;
-                                 tol = tol, maxiter = maxiter, verbosity = verbosity)
+    x, _ = _overlap_sweeps(nothing, ket, x0, K;
+                           tol = tol, maxiter = maxiter, verbosity = verbosity)
     _global_normalize!(x)
     ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
-    return (; W = DenseIMPO(ALs4), overlap = overlap)
+    return DenseIMPO(ALs4)
 end
 
 """

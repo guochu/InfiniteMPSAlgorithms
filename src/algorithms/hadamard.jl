@@ -3,8 +3,10 @@
 # Elementwise waveform product `c₁₂ = c₁ .* c2`: virtual legs zipped per site,
 # physical leg shared (kernel `_naive_hadamard_tensor` in arithmetics.jl);
 # the physical dimension is unchanged and the bond dimension becomes the product
-# of the two. The compression assembly is shared with the algebra operations
-# (_compress_ket / _algebra_result in compress.jl).
+# of the two. The iterative version runs the factorized zip engine (`_lazy_sweeps`
+# on the `ZipKet` target — the fused zip tensors are never materialized, the
+# environment/本地映射直接消费 (ψ1, ψ2) 因子对); the naive/debug reference is
+# `naive_hadamard` (`_algebra_result` in compress.jl).
 
 """
     hadamard(ψ₁, ψ₂) -> CanonicalIMPS
@@ -30,16 +32,17 @@ function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS)
 end
 
 """
-    hadamard(ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
+    hadamard(ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
 
 Compute-on-the-fly variational compression of the Hadamard/Schur product to
-the bond dimension `alg.D`: the zip target is generated
-site by site on demand (lazy zip; the zip family is never materialized) and
+the bond dimension `alg.D`: the zip target is consumed in **factorized form**
+(the (ψ1, ψ2) tensor pairs go straight into the environment/局部映射收缩 — the
+fused zip tensors are never materialized) and
 variationally compressed with the positional algorithm
 object `alg` (VOMPS/IDMRG), starting from the deterministic
-`svdguess_hadamard` initial state; `overlap`
-is the ring-trace fidelity in [0, N] (= N means same direction; returned as
-`(result, overlap)`). For a naive reference implementation (construct the
+`svdguess_hadamard` initial state. Convergence is judged by the Galerkin
+residual alone (no overlap is computed — same contract as `mult`/`compress`).
+For a naive reference implementation (construct the
 whole family, then compress) see [`naive_hadamard`](@ref).
 """
 hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
@@ -52,26 +55,19 @@ function _hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMR
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
     N = length(ψ1)
-    # lazy zip target (compute-on-the-fly). All four family closures
-    # preserve the factor canonical forms (a zip of isometries is an isometry);
-    # the C closure `C_zip = kron(C₂, C₁)` matches the bond order of the zip
-    # kernel (`kron(A₂, A₁)`, A₂ major); left environments use AL, right
-    # environments AR (matching the `_ternary_fixedpoints` gauge convention).
-    ket = LazyKet(
-        ℓ -> _naive_hadamard_tensor(ψ1.AL[ℓ], ψ2.AL[ℓ]),
-        ℓ -> _naive_hadamard_tensor(ψ1.AR[ℓ], ψ2.AR[ℓ]),
-        ℓ -> _naive_hadamard_tensor(ψ1.AC[ℓ], ψ2.AC[ℓ]),
-        ℓ -> kron(ψ2.C[ℓ], ψ1.C[ℓ]),
+    # 因子化 zip target（compute-on-the-fly）：融合 zip 张量从不物化，环境与
+    # 局部映射直接消费 (ψ1, ψ2) 因子对（先与环境收缩——键优先的显式分步 GEMM，
+    # 见 `_zip_push_left`/`_mapAC_zip`）；C 的融合序 = `kron(C2, C1)` 与 zip
+    # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。
+    ket = ZipKet(
+        ℓ -> ψ1.AL[ℓ], ℓ -> ψ2.AL[ℓ],
+        ℓ -> ψ1.AR[ℓ], ℓ -> ψ2.AR[ℓ],
+        ℓ -> ψ1.AC[ℓ], ℓ -> ψ2.AC[ℓ],
+        ℓ -> ψ1.C[ℓ],  ℓ -> ψ2.C[ℓ],
     )
     x0 = x0 === nothing ? svdguess_hadamard(ψ1, ψ2, D) : x0
-    # lazy zip engine + naive fallback (see _lazy_or_fallback; the naive family
-    # is only materialized when the fallback fires)
-    return _lazy_or_fallback(
-        () -> _lazy_sweeps(ket, x0, N; alg = alg, tol = alg.tol,
-                           maxiter = alg.maxiter, verbosity = alg.verbosity),
-        () -> _compress_ket([_naive_hadamard_tensor(ψ1.AL[ℓ], ψ2.AL[ℓ]) for ℓ in 1:N],
-                            phydims(ψ1), D, alg),
-        N)
+    return _lazy_sweeps(ket, x0, N; alg = alg, tol = alg.tol,
+                        maxiter = alg.maxiter, verbosity = alg.verbosity)
 end
 
 # ---------------- naive_hadamard (debug: naive family construction + optional compression) ----------------
@@ -81,8 +77,8 @@ end
 
 Naive reference implementation of [`hadamard`](@ref) (debug only): first
 construct the complete zip family (memory O(N·D₁D₂)), then
-compress to `alg.D` with the positional algorithm object `alg`. `overlap` is the
-ring-trace fidelity in [0, N]. Large input
+compress to `alg.D` with the positional algorithm object `alg`. No overlap is
+computed (same contract as [`hadamard`](@ref)). Large input
 bond dimensions produce huge intermediate families — use [`hadamard`](@ref)
 for production use.
 """
@@ -165,6 +161,6 @@ function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = _hadamard(ψ1, ψ2, alg, out; D = D)
+    y = _hadamard(ψ1, ψ2, alg, out; D = D)
     return _copyinto!(out, y)
 end

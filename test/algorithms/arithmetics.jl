@@ -184,7 +184,7 @@ end
 
     # 压缩路径（两算法）：D = 9 = 精确键维 → 无损，与 exact 平行
     for alg in (VOMPS(D = 9, maxiter = 200), IDMRG(D = 9, maxiter = 200))
-        Hc, _ = hadamard(ψ1, ψ2, alg)
+        Hc = hadamard(ψ1, ψ2, alg)
         @test max_bonddim(Hc) == 9
         @test abs(dot(Hc, H12)) > 1 - 1e-8
     end

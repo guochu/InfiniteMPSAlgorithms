@@ -32,10 +32,10 @@
     @test abs(real(expectationvalue(out3ψ, HJ) / 2) - e0) < 1e-4
 
     # MPO 压缩：恒等 MPO 压到 D=1（本包扩展，MPSKit 无对标）。结构 + 压缩保真度
-    # （归一化保真度 × N）是规范不变的；输出的逐 site 相位是压缩本征解的规范
+    # （vectorize 后的射线保真度）是规范不变的；输出的逐 site 相位是压缩本征解的规范
     # 自由度（MPSKit 同样不钉定本征解相位），期望值等规范依赖量不作断言。
     I2 = identityimpo(T, [2, 2])
     comp = mpo_compress(I2, 1)
-    @test max_bonddim(comp.W) == 1
-    @test abs(comp.overlap - 2) < 1e-8
+    @test comp isa DenseIMPO && max_bonddim(comp) == 1
+    @test fidelity(vectorize(comp), vectorize(I2)) ≈ 1 atol = 1e-8
 end

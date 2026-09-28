@@ -152,40 +152,6 @@ function TransferMatrix(a::AbstractArray{T,3}, b::AbstractArray{T,3}; side::Symb
     return TransferMatrix([a], [b]; side = side)
 end
 
-"""
-    TransferMatrix(abovef::Function, belowf::Function, N::Integer; side = :left)
-
-Lazily tiled identity-channel transfer map: the site tensors are generated on
-demand (`abovef(ℓ)` / `belowf(ℓ)`, e.g. the fused tensors of a `LazyKet`) —
-nothing but the current environment vector is ever stored. Semantics identical
-to `TransferMatrix(above::AbstractVector, below::AbstractVector)`.
-"""
-function TransferMatrix(abovef::F1, belowf::F2, N::Integer;
-                        side::Symbol = :left) where {F1,F2}
-    A = abovef(1)
-    B = belowf(1)
-    T = promote_type(eltype(A), eltype(B))
-    if side === :left
-        f = function (v::AbstractVector)
-            L = reshape(v, size(B, 1), size(A, 1))
-            for ℓ in 1:N
-                L = push_env_left(L, abovef(ℓ), belowf(ℓ))
-            end
-            return vec(L)
-        end
-    else
-        f = function (v::AbstractVector)
-            R = reshape(v, size(A, 1), size(B, 1))
-            for ℓ in N:-1:1
-                R = push_env_right(R, abovef(ℓ), belowf(ℓ))
-            end
-            return vec(R)
-        end
-    end
-    d = size(A, 1) * size(B, 1)
-    return TransferMatrix{T,typeof(f)}(f, (d, d), side)
-end
-
 function TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{T,4},
                         b::AbstractArray{T,3}; side::Symbol = :left) where {T}
     N = 1

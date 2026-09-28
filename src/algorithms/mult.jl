@@ -5,8 +5,12 @@
 # arithmetics.jl; this file provides the iterative (variational) versions:
 # - `VOMPS`: overlap-maximizing ALS sweeps (mirrors MPSKit VOMPS,
 #   src/algorithms/approximate/vomps.jl);
-# - `IDMRG`: rank-1 effective-Hamiltonian eigen-solver sweeps (converging to
+# - `IDMRG`: rank-1 effective-Hamiltonian local-map sweeps (converging to
 #   the same fixed point as VOMPS).
+#
+# No engine computes or returns an overlap: convergence is judged by the
+# Galerkin residual alone (MPSKit `approximate` contract), and the interfaces
+# return the optimized chain only.
 #
 # VOMPS template (mirroring MPSKit):
 # 1. ternary fixed-point environments `MultCache(x, operator, ket)`
@@ -15,7 +19,7 @@
 #    `AC_new = AC_hamiltonian(ℓ)·ket.AC[ℓ]`, `C_new = C_hamiltonian(ℓ)·ket.C[ℓ]`
 #    → `regauge!(AC_new, C_new)` yields candidate `AL`s;
 # 3. gauge: `gaugefix!(; order = :R)` restores the right gauge;
-# 4. overlap = N·Re⟨x|B⟩/Re⟨x|x⟩ (rank-3 composite-space ring closure).
+# 4. convergence: `_galerkin_err` (tangent-space Galerkin residual).
 
 # ---------------- environment cache of the MPO-application channel (MultCache) ----------------
 
@@ -161,48 +165,6 @@ function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
     return Cnew
 end
 
-"""
-    _ring_overlap(A1s, A2s) -> Complex
-    _ring_overlap(A1s, ketf, N) -> Complex
-    _ring_overlap(ketf1, ketf2, N) -> Complex
-
-⟨x|K⟩ as the **dominant eigenvalue** of the overlap transfer matrix on the
-composite space `(A1 bond, A2 bond)` — constructed as a
-[`TransferMatrix`](@ref) (`above = A2`, `below = A1`, the same conjugation
-convention as `dot(ψ₁, ψ₂)`) and solved with [`_eigsolve`](@ref) starting from
-the flattened identity; the per-site contraction is `push_env_left`'s explicit
-two-step kernel (bond indices first, physical index last). In the lazy methods
-`A2[ℓ] = ketf(ℓ)` is generated on demand (the target family is never stored).
-
-性能注记：这里曾经是「一圈收缩取 trace」——每站 `O((D₁D₂)³)` 次乘法、
-`(D₁D₂)²` 内存，naive 目标（键 = `D·D_W`）在 `D ≳ 16` 时即不可行；主导
-特征值与 trace 只差次主导谱（近似平行态下指数小），而每 matvec 仅
-`O(d·(D₁D₂)²)`、内存 `O(krylovdim·D₁D₂)`。
-"""
-function _ring_overlap(a1f::F, a2f::G, N::Int) where {F,G}
-    # ⟨x|K⟩ = overlap 转移矩阵（above = A2、below = A1，共轭约定对齐
-    # `dot(ψ₁, ψ₂) = TransferMatrix(ψ₂.AL, ψ₁.AL)`）的主导特征值；
-    # 站张量经闭包按需生成（惰性目标串从不落地），收缩由
-    # `push_env_left` 的显式两步 kernel 完成（键指标优先）
-    tm = TransferMatrix(a2f, a1f, N)
-    T = promote_type(eltype(a1f(1)), eltype(a2f(1)))
-    v0 = vec(Matrix{T}(I, size(a1f(1), 1), size(a2f(1), 1)))
-    vals, _, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false)
-    return vals[1]
-end
-
-function _ring_overlap(A1s::AbstractVector{<:AbstractArray{Tx,3}},
-                       A2s::AbstractVector{<:AbstractArray{Tk,3}}) where {Tx,Tk}
-    (length(A1s) == length(A2s)) ||
-        throw(DimensionMismatch("ring overlap requires equal lengths"))
-    return _ring_overlap(ℓ -> A1s[ℓ], ℓ -> A2s[ℓ], length(A2s))
-end
-
-function _ring_overlap(A1s::AbstractVector{<:AbstractArray{Tx,3}}, ketf::F,
-                       N::Int) where {Tx,F}
-    return _ring_overlap(ℓ -> A1s[ℓ], ketf, N)
-end
-
 "Uniform norm normalization (AC and C are scaled together, preserving the
 consistency of `AC = AL·C` and `AR = C[ℓ-1]⁻¹·AC`)."
 function _global_normalize!(x::CanonicalIMPS)
@@ -250,44 +212,20 @@ function _galerkin_err(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
     return ϵ
 end
 
-"Channel overlap: `Re⟨x|operator|ket⟩` (equal per-site contractions under the
-closed-channel environment; site 1 is used; `operator = nothing` means
-`Re⟨x|ket⟩`). With `x` globally normalized this is the real projection of the
-target onto the ray of `x`."
-function _channel_overlap(x::CanonicalIMPS, operator::Union{Nothing,DenseIMPO},
-                          ket::CanonicalIMPS, envs)
-    O = isnothing(operator) ? nothing : operator[1]
-    return real(dot(x.AC[1], _mapAC(leftenv(envs, 1), O, rightenv(envs, 1), ket.AC[1])))
-end
-
-"Overlap report: channel inner product when `K = nothing`, otherwise the
-ring-trace fidelity (in [0, N])."
-function _report_overlap(x::CanonicalIMPS, operator::Union{Nothing,DenseIMPO},
-                         ket::CanonicalIMPS, envs,
-                         K::Union{Nothing,<:Vector{<:Array}})
-    if K === nothing
-        return _channel_overlap(x, operator, ket, envs)
-    end
-    N = length(ket)
-    xALs = [x.AL[ℓ] for ℓ in 1:N]
-    return N * abs(_ring_overlap(xALs, K)) /
-           sqrt(real(_ring_overlap(xALs, xALs)) * real(_ring_overlap(K, K)))
-end
-
 """
-    _overlap_sweeps(operator, ket, x0, K; tol, maxiter, verbosity) -> (x, overlap)
+    _overlap_sweeps(operator, ket, x0, K; tol, maxiter, verbosity) -> (x, envs)
 
 Overlap-maximizing variational sweeps (MPSKit VOMPS template): find `x`
 approximating `operator|ket⟩` (with `operator = nothing`, approximating the ket
-itself — variational compression). `K` is the target tensor string used for the
-overlap report; with `K = nothing` the overlap is reported via the channel
-inner product and no naive target family is ever generated
-(compute-on-the-fly). Each round: ternary fp environments → per-site local maps
-+ `regauge!` → `gaugefix!(:R)` → environment refresh + Galerkin-residual
-convergence (mirroring MPSKit's `localupdate_step!`/`gauge_step!`/
-`envs_step!`/`calc_galerkin` pipeline).
-overlap: ring-trace fidelity in [0, N] when `K` is given (same direction ⇔
-= N); otherwise the channel inner product `Re⟨x|operator|ket⟩`.
+itself — variational compression). `K` is only kept in the interface for
+backward compatibility; no overlap is computed anywhere in the sweep (mirroring
+MPSKit's `approximate`, whose convergence measure is the Galerkin residual
+alone). Each round: ternary fp environments → per-site local maps + `regauge!`
+→ `gaugefix!(:R)` → environment refresh + Galerkin-residual convergence
+(mirroring MPSKit's `localupdate_step!`/`gauge_step!`/`envs_step!`/
+`calc_galerkin` pipeline). Returns the optimized state and its final
+environments (MPSKit `approximate` convention: `(ψ, envs, ϵ)`); callers that
+want a fidelity diagnostic can compute it once from `envs` afterwards.
 """
 function _overlap_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
                          x0::CanonicalIMPS, K::Union{Nothing,<:Vector{<:Array}};
@@ -300,7 +238,6 @@ function _overlap_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
     ϵ = _galerkin_err(operator, ket, x, envs)
-    overlap = _report_overlap(x, operator, ket, envs, K)
     for iter in 1:maxiter
         ϵ < tol && break
         # localupdate: per-site local maps + regauge (MPSKit VOMPS local step)
@@ -315,49 +252,49 @@ function _overlap_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
         # seeded with state.C[end])
         gauge_step!(x, ALs, x.C[N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
         # envs_step! + calc_galerkin: tangent-space residual for the new state/environments
-        envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+        # （环境热启动：上一轮的不动点作为 eigsolve 初值——逐轮不动点连续变化，
+        #   热启动把每轮的支配本征对求解压到一两轮重启）
+        envs = isnothing(operator) ?
+               OverlapCache(x, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N]) :
+               MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N])
         ϵ = _galerkin_err(operator, ket, x, envs)
-        overlap = _report_overlap(x, operator, ket, envs, K)
-        verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ, "overlap" => overlap)
+        verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
     end
     _global_normalize!(x)
-    return x, overlap
+    return x, envs
 end
 
 # ---------------- compression sweeps of the IDMRG template ----------------
 
-"Rank-1 effective Hamiltonian `ℋ = 𝕀 − |k⟩⟨k|/⟨k,k⟩` (Hermitian positive
-semidefinite; its :SR smallest eigenvector is uniquely the k direction, no
-degeneracy)."
-function _rank1_hamiltonian(k::AbstractArray{T}) where {T}
-    kn2 = dot(k, k)
-    kn2 == 0 && error("rank-1 effective Hamiltonian: zero vector")
-    return x -> x .- (dot(k, x) / kn2) .* k
-end
-
 """
-    _idmrg_sweeps(ket, x0, K; tol, maxiter, verbosity, alg_eigsolve) -> (x, overlap)
+    _idmrg_sweeps(ket, x0, K; tol, maxiter, verbosity, alg_eigsolve) -> (x, envs)
 
 Compression sweeps of the IDMRG template (converging to the same fixed point
-as the VOMPS template of [`_overlap_sweeps`](@ref) through a different code
-path — the local update uses eigen solves rather than pure maps). Under the
-mixed-canonical identity channel, VOMPS's local exact solution
-`k = GL·ket.AC·GR` is itself the map output; a direct eigen solve of the map
-`x ↦ GL·x·GR` degenerates (the dominant eigenspace contains arbitrary physical
-index combinations), so the rank-1 effective Hamiltonian
-`ℋ = 𝕀 − |k⟩⟨k|/‖k‖²` is used, whose :SR smallest eigenvector is uniquely the
-k direction. Each round (MPSKit template):
+as the VOMPS template of [`_overlap_sweeps`](@ref)). Under the mixed-canonical
+identity channel, VOMPS's local exact solution `k = GL·ket.AC·GR` is itself the
+map output; a direct eigen solve of the map `x ↦ GL·x·GR` degenerates (the
+dominant eigenspace contains arbitrary physical index combinations), so the
+rank-1 effective Hamiltonian `ℋ = 𝕀 − |k⟩⟨k|/‖k‖²` is used. Its :SR smallest
+eigenvector has the **closed form** `k/‖k‖` (ℋ is positive semidefinite and its
+complementary spectrum is exactly 1), so the local update applies it directly
+instead of running an iterative eigen solve — the eigensolver route costs
+hundreds of matvecs per site per round for the same result. Each round
+(MPSKit template):
 
-1. `localupdate`: `k`, `ĉ = GL₊·ket.C·GR` → `fixedpoint(ℋ, x, :SR)` solves the
-   AC and C subproblems → `regauge!` yields candidate `AL`s;
+1. `localupdate`: `k`, `ĉ = GL₊·ket.C·GR` → `AC = k/‖k‖`, `C = ĉ/‖ĉ‖` →
+   `regauge!` yields candidate `AL`s;
 2. `gauge_step!`: `gaugefix!(; order = :R)` restores the right gauge,
    `AC = AL·C`;
-3. environments are recomputed;
+3. environments are recomputed (warm-started from the previous round's fixed
+   points);
 4. convergence criterion `_galerkin_err` (tangent-space Galerkin residual).
 
 With `operator ≠ nothing` this is the MPO-channel version
-(`k = GL·O·ket.AC·GR` computed per site on the fly, compute-on-the-fly);
-with `K = nothing` the overlap is reported via the channel inner product.
+(`k = GL·O·ket.AC·GR` computed per site on the fly, compute-on-the-fly).
+No overlap is computed anywhere in the sweep (mirroring MPSKit's `approximate`);
+the final environments are returned alongside the state, so callers that want a
+fidelity diagnostic can compute it once from `envs`. `alg_eigsolve` is kept for
+interface compatibility (the local problems no longer run eigen solves).
 """
 function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
                        K::Union{Nothing,<:Vector{<:Array}},
@@ -374,53 +311,29 @@ function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
     ϵ = _galerkin_err(operator, ket, x, envs)
     for iter in 1:maxiter
         ϵ < tol && break
-        eigs_alg = updatetol(alg_eigsolve, iter, ϵ)
-        # localupdate: solve the rank-1 AC and C subproblems site by site
-        # (mirrors MPSKit VUMPS localupdate_step!)
+        # localupdate: closed-form solution of the rank-1 AC and C subproblems
+        # site by site (the :SR eigenvector of ℋ = 𝕀 − |k⟩⟨k|/⟨k,k⟩ is k/‖k‖)
         ALs = Vector{Array{T,3}}(undef, N)
         for ℓ in 1:N
             O = isnothing(operator) ? nothing : operator[_mod1(ℓ, length(operator))]
             k = _mapAC(leftenv(envs, ℓ), O, rightenv(envs, ℓ), ket.AC[ℓ])
-            _, AC = fixedpoint(_rank1_hamiltonian(k), x.AC[ℓ], :SR, eigs_alg)
             ĉ = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ), ket.C[ℓ])
-            _, C = fixedpoint(_rank1_hamiltonian(ĉ), x.C[ℓ], :SR, eigs_alg)
-            ALs[ℓ] = regauge!(AC, C; alg = Defaults.alg_orth())
+            nk = norm(k)
+            nk == 0 && error("rank-1 local map: zero vector at site $ℓ")
+            ALs[ℓ] = regauge!(k ./ nk, ĉ ./ norm(ĉ); alg = Defaults.alg_orth())
         end
         # gauge: restore the global right gauge (mirrors MPSKit gauge_step!)
         gauge_step!(x, ALs, x.C[N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
-        # envs_step! + convergence criterion (mirrors MPSKit calc_galerkin)
-        envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+        # envs_step! + convergence criterion (mirrors MPSKit calc_galerkin;
+        # warm start, see _overlap_sweeps)
+        envs = isnothing(operator) ?
+               OverlapCache(x, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N]) :
+               MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N])
         ϵ = _galerkin_err(operator, ket, x, envs)
         verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
     end
     _global_normalize!(x)
-    overlap = _report_overlap(x, operator, ket, envs, K)
-    return x, overlap
-end
-
-# ---------------- generic compression engine for lazy (compute-on-the-fly) targets ----------------
-#
-# The four canonical families (AL/AR/AC/C) of the target are generated on
-# demand per site by closures (the zip / blockdiag / fuse composite constructions
-# all have exact closed forms); the naive target family is never stored — the
-# naive-construction memory cost drops from O(N·Dᵏ) to a single-site transient
-# footprint. The environments are ternary identity-channel fixed points (left
-# environments use the target's AL, right environments its AR — matching the
-# gauge convention of `_ternary_fixedpoints`).
-
-"""
-    LazyKet(ALf, ARf, ACf, Cf)
-
-Canonical families of a lazy target: four closures `f(ℓ) -> tensor` generate
-the `AL/AR/AC/C` of site ℓ on demand, with semantics identical to the same
-fields of `CanonicalIMPS` (`AL·C = C·AR = AC` holds pointwise under the
-closed forms, e.g. `zip(AL₁,AL₂)·zip(C₁,C₂) = zip(AC₁,AC₂)`).
-"""
-struct LazyKet{ALf,ARf,ACf,Cf}
-    ALf::ALf
-    ARf::ARf
-    ACf::ACf
-    Cf::Cf
+    return x, envs
 end
 
 # ---------------- factorized double-MPO lazy engine (bond-first contractions) ----------------
@@ -464,17 +377,19 @@ function _push_env_left(L::AbstractMatrix, below::AbstractArray{Tb,3},
 end
 
 "Factorized identity-channel right push:
-`R′[(wl1·wl2), bl′] = Σ R[(wr1·wr2), bl]·W1·W2·conj(below[bl, (u·d), bl′])`.
+`R′[(wl1·wl2), bl′] = Σ R[(wr1·wr2), bl]·W1·W2·conj(below[bl′, (u·d), bl])`
+（below = x.AR：第一维为新键、第三维为旧键，同 `push_env_right`）。
 显式三步二元收缩（键优先：bl → wr2 → (wl1, m, u)；物理 (u, d, m) 最后）。"
 function _push_env_right(R::AbstractMatrix, W1::AbstractArray{Tw1,4},
                          W2::AbstractArray{Tw2,4}, below::AbstractArray{Tb,3}) where {Tb,Tw1,Tw2}
     wl1, u1, wr1, m = size(W1)
     wl2, _, wr2, d2 = size(W2)
-    bl, bl′ = size(below, 1), size(below, 3)
-    R4 = reshape(R, wr1, wr2, bl)                  # 融合行 (wr1·wr2)：wr1 快；列 = below 左键 bl
-    Cb = reshape(below, bl, u1, d2, bl′)           # 融合物理 (u·d)：u 快
+    bl′ = size(below, 1)                           # 新 below 键（输出列）
+    bl = size(below, 3)                            # 旧 below 键（R 的列）
+    R4 = reshape(R, wr1, wr2, bl)                  # 融合行 (wr1·wr2)：wr1 快；列 = below 右键
+    Cb = reshape(below, bl′, u1, d2, bl)           # 融合物理 (u·d)：u 快
     # 步1（键 bl）：Y[(wr1, wr2), (u, d), bl′]
-    Y = @tensor Y[r1, r2, u, dd, j] := R4[r1, r2, bl] * conj(Cb[bl, u, dd, j])
+    Y = @tensor Y[r1, r2, u, dd, j] := R4[r1, r2, bl] * conj(Cb[j, u, dd, bl])
     # 步2（键 wr2；物理 d 与 W2 一并收缩）：Z[(wr1, u, bl′), (wl2, m)]
     Z = @tensor Z[r1, j, u, w2, mm] := Y[r1, r2, u, dd, j] * W2[w2, mm, r2, dd]
     # 步3（键 wr1；桥 m 与物理 u 与 W1 一并收缩）
@@ -612,25 +527,8 @@ function _lazy_galerkin_err(x::CanonicalIMPS, ket::FactorizedKet, GLs, GRs, N)
     return ϵ
 end
 
-"因子化 target 的 ⟨x|K⟩（overlap 转移主导特征值，直接消费 (W1, W2) 对）。"
-function _ring_overlap_fused(x::CanonicalIMPS, ket::FactorizedKet, N::Int)
-    T = scalartype(x)
-    Dl = size(x.AL[1], 1)
-    Da1 = size(ket.ALf1(1), 1) * size(ket.ALf2(1), 1)
-    matvec = function (v::AbstractVector)
-        E = reshape(v, Dl, Da1)
-        for ℓ in 1:N
-            E = _push_env_left(E, x.AL[ℓ], ket.ALf1(ℓ), ket.ALf2(ℓ))
-        end
-        return vec(E)
-    end
-    v0 = vec(Matrix{T}(I, Dl, Da1))
-    vals, _, _ = _eigsolve(matvec, v0, 1, :LM; ishermitian = false)
-    return vals[1]
-end
-
 "因子化 target 的变分压缩 sweep（VOMPS/IDMRG）：无 naive 融合张量、无
-gauge twist（乘积因子保规范）；收敛判据为 Galerkin 残差。"
+gauge twist（乘积因子保规范）；收敛判据为 Galerkin 残差；环境逐轮热启动。"
 function _lazy_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
                       alg::Union{VOMPS,IDMRG}, tol::Real = Defaults.tol,
                       maxiter::Int = Defaults.maxiter,
@@ -643,7 +541,6 @@ function _lazy_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
     ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
     for iter in 1:maxiter
         ϵ < tol && break
-        eigs_alg = isvomps ? nothing : updatetol(alg.alg_eigsolve, iter, ϵ)
         ALs = Vector{Array{T,3}}(undef, N)
         for ℓ in 1:N
             k = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
@@ -651,13 +548,14 @@ function _lazy_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
             if isvomps
                 ALs[ℓ] = regauge!(k, ĉ; alg = Defaults.alg_orth())
             else
-                _, AC = fixedpoint(_rank1_hamiltonian(k), x.AC[ℓ], :SR, eigs_alg)
-                _, C = fixedpoint(_rank1_hamiltonian(ĉ), x.C[ℓ], :SR, eigs_alg)
-                ALs[ℓ] = regauge!(AC, C; alg = Defaults.alg_orth())
+                # rank-1 局部问题的闭式解（同 _idmrg_sweeps）
+                nk = norm(k)
+                nk == 0 && error("rank-1 local map: zero vector at site $ℓ")
+                ALs[ℓ] = regauge!(k ./ nk, ĉ ./ norm(ĉ); alg = Defaults.alg_orth())
             end
         end
         gauge_step!(x, ALs, x.C[N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
-        GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
+        GLs, GRs = _lazy_ternary_fixedpoints(x, ket; GL0 = GLs[1], GR0 = GRs[N])
         ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
         verbosity > 0 && _logiter(stdout, isvomps ? "VOMPS" : "IDMRG", iter, ϵ)
     end
@@ -665,16 +563,153 @@ function _lazy_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
     return x
 end
 
-"""
-    _lazy_ternary_fixedpoints(x, ket::LazyKet; tol, krylovdim, maxiter, GL0, GR0) -> (GLs, GRs)
+# ---------------- factorized zip engine (hadamard channel; bond-first contractions) ----------------
+#
+# hadamard 的惰性 target：`Ket[(c,a), s, (e,b)] = A2[c,s,e]·A1[a,s,b]`（ψ2 键为
+# 主指标、ψ1 为次指标，与 `kron(A2, A1)` 融合序一致；物理腿 s 是 below/A1/A2
+# 三方共享的收缩边）。经由 LazyKet 闭包的做法每次调用都先物化 (D1·D2, d, D1·D2)
+# 的融合张量、再与环境收缩——等价于「先做乘法再压缩」的最差收缩路径（中间张量
+# O((D1·D2)²·d)）。因子化引擎把 (A1, A2) 对一路保留到环境/局部映射的收缩里：
+# 共享物理腿按站点分片（per-s 片 GEMM，同 `_naive_hadamard_tensor` 的 kron 方
+# 案）、键指标优先——最大中间张量 O(Dx·D1·D2·d)，融合 zip 张量从不落地。
 
-Identity-channel ternary fixed points with the target's AL/AR tensors generated
-on demand. Conventions identical to `_ternary_fixedpoints` (mirroring MPSKit:
-GR Frobenius-normalized, GL scaled by the local overlap λ). `GL0`/`GR0`
-optionally warm start the eigsolves with the previous environments (keeps the
-fixed-point choice continuous across sweeps for block-degenerate targets).
 """
-function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
+    ZipKet(ALf1, ALf2, ARf1, ARf2, ACf1, ACf2, Cf1, Cf2)
+
+因子化 zip（Hadamard/Schur 乘积）惰性 target：`Ket[(c,a), s, (e,b)] =
+A2[c,s,e]·A1[a,s,b]`（ψ2 键为主指标、ψ1 为次指标；`AL·C = C·AR = AC` 逐点
+成立，C 的融合序 = `kron(C2, C1)`）。环境与局部映射直接消费 `(A1, A2)` 因子
+对——融合 zip 张量从不物化。
+"""
+struct ZipKet{A1,A2,B1,B2,C1,C2,D1,D2}
+    ALf1::A1; ALf2::A2
+    ARf1::B1; ARf2::B2
+    ACf1::C1; ACf2::C2
+    Cf1::D1;  Cf2::D2
+end
+
+"""
+    _zip_push_left(L, below, A2, A1) -> Matrix
+
+因子化 zip 的 identity 通道左推（环境 `L` 为 `(x 键, 融合键 (c·a))` 矩阵，
+a 为快指标）：
+`L′[bl′, (e·b)] = Σ conj(below[bl, s, bl′])·L[bl, (c·a)]·A2[c,s,e]·A1[a,s,b]`.
+物理腿 s 为 below/A2/A1 三方共享边 ⇒ 按物理片收缩（per-s 切片 @tensor，同
+`_naive_hadamard_tensor` 的 kron 方案）：最大中间张量 O(Dx·D1·D2·d)，融合
+zip 张量从不物化。
+"""
+function _zip_push_left(L::AbstractMatrix, below::AbstractArray{Tb,3},
+                        A2::AbstractArray{Ta,3}, A1::AbstractArray{T1,3}) where {Tb,Ta,T1}
+    Dx = size(L, 1)
+    bl′ = size(below, 3)
+    D2, d = size(A2, 1), size(A2, 2)       # A2[c, s, e]
+    D1 = size(A1, 1)                       # A1[a, s, b]
+    T = promote_type(eltype(L), eltype(below), eltype(A2), eltype(A1))
+    L3 = reshape(L, Dx, D1, D2)            # (bl, a, c)：融合 (c·a) 的 a 为快指标
+    belowC = conj(below)                   # (bl, s, bl′)
+    W = zeros(T, D2, D1, bl′)              # 各 s 片累加：(e, b, bl′)
+    for s in 1:d
+        below_s = @view belowC[:, s, :]    # (bl, bl′)
+        A1s = @view A1[:, s, :]            # (a, b)
+        A2s = @view A2[:, s, :]            # (c, e)
+        @tensor W[e, b, bl′] += L3[bl, a, c] * A2s[c, e] * A1s[a, b] * below_s[bl, bl′]
+    end
+    return reshape(permutedims(W, (3, 2, 1)), bl′, D1 * D2)      # (bl′, (e·b))：b 为快指标
+end
+
+"""
+    _zip_push_right(R, A2, A1, below) -> Matrix
+
+因子化 zip 的 identity 通道右推（环境 `R` 为 `(融合键 (e·b), x 键)` 矩阵，
+b 为快指标）：
+`R′[(c·a), bl′] = Σ R[(e·b), bl]·A2[c,s,e]·A1[a,s,b]·conj(below[bl′, s, bl])`
+（below = x.AR：第一维为新键、第三维为旧键）。物理腿按物理片收缩（per-s
+切片 @tensor），最大中间张量 O(D2·D1·Dx·d)，融合 zip 张量从不物化。
+"""
+function _zip_push_right(R::AbstractMatrix, A2::AbstractArray{Ta,3},
+                         A1::AbstractArray{T1,3}, below::AbstractArray{Tb,3}) where {Ta,T1,Tb}
+    bl′ = size(below, 1)                   # 新 below 键（输出列）
+    bl = size(below, 3)                    # 旧 below 键（R 的列）
+    D2, d = size(A2, 1), size(A2, 2)       # A2ar[e, s, c]
+    D1 = size(A1, 1)                       # A1ar[b, s, a]
+    T = promote_type(eltype(R), eltype(below), eltype(A2), eltype(A1))
+    R3 = reshape(R, D1, D2, bl)            # (b, e, bl)：GR 行 = b + (e-1)·D1，b 为快指标
+    belowC = conj(below)                   # (bl′, s, bl)
+    W = zeros(T, D1, D2, bl′)              # 各 s 片累加：(a, c, bl′)
+    for s in 1:d
+        below_s = @view belowC[:, s, :]    # (bl′, bl)
+        A1s = @view A1[:, s, :]            # (a, b)：A1 的左键 a 为行
+        A2s = @view A2[:, s, :]            # (c, e)：A2 的左键 c 为行
+        @tensor W[a, c, bl′] += A2s[c, e] * A1s[a, b] * R3[b, e, bl] * below_s[bl′, bl]
+    end
+    return reshape(W, D1 * D2, bl′)                             # ((c, a), bl′)：a 为快指标
+end
+
+"""
+    _mapAC_zip(GL, GR, A2ac, A1ac) -> Array{T,3}
+
+因子化 zip 的 identity 通道局部 AC 映射：
+`k[xL, p, xR] = Σ GL[xL, (c·a)]·A2ac[c,p,e]·A1ac[a,p,b]·GR[(e·b), xR]`.
+物理腿 p 为两因子共享的开放指标（非收缩边），分两步 @tensor：键 c → 键 a →
+融合右键 (e·b)，最大中间张量 O(Dx·D1·d·D2)，融合 zip AC 张量从不物化。
+"""
+function _mapAC_zip(GL::AbstractMatrix, GR::AbstractMatrix,
+                    A2ac::AbstractArray{Ta,3}, A1ac::AbstractArray{T1,3}) where {Ta,T1}
+    Dx = size(GL, 1)
+    D2, d = size(A2ac, 1), size(A2ac, 2)   # A2ac[c, p, e]
+    D1 = size(A1ac, 1)                     # A1ac[a, p, b]
+    T = promote_type(eltype(GL), eltype(GR), eltype(A2ac), eltype(A1ac))
+    GL3 = reshape(GL, Dx, D1, D2)          # (xL, a, c)：融合 (c·a) 的 a 为快指标
+    GR3 = reshape(GR, D1, D2, size(GR, 2)) # (b, e, xR)：融合 (e·b) 的 b 为快指标
+    # 步1（键 c）：Y[a, xL, p, e] = Σ_c GL3[xL, a, c]·A2ac[c, p, e]
+    @tensor Y[a, xL, p, e] := GL3[xL, a, c] * A2ac[c, p, e]      # 中间 Dx·D1·d·D2
+    # 步2a（键 a；p 逐片——p 为两因子共享的开放指标，@tensor 不支持批量共享，
+    #      按物理片 batched GEMM）：Z[p, b, e, xL] = Σ_a Y[a, xL, p, e]·A1ac[a, p, b]
+    Y3 = reshape(Y, D1, Dx, d, D2)                               # (a, xL, p, e)
+    Z = zeros(T, d, D1, D2, Dx)
+    for p in 1:d
+        A1p = view(A1ac, :, p, :)                                # (a, b)
+        Yp = @view Y3[:, :, p, :]                                # (a, xL, e)
+        # GEMM → (b, (xL, e))，重排为 (b, e, xL) 后写入 Z[p, b, e, xL]
+        Z[p, :, :, :] .= reshape(permutedims(
+            reshape(transpose(A1p) * reshape(Yp, D1, Dx * D2), D1, Dx, D2), (1, 3, 2)), D1, D2, Dx)
+    end
+    # 步2b（键 b, e）：k[xL, p, xR] = Σ Z·GR
+    xR = size(GR, 2)
+    Zp = reshape(permutedims(Z, (1, 4, 2, 3)), d * Dx, D1 * D2)  # (p, xL, b, e)：列 = b + (e-1)·D1
+    kR = Zp * reshape(GR3, D1 * D2, xR)                           # (d·D1, xR)
+    return reshape(permutedims(reshape(kR, d, Dx, xR), (2, 1, 3)), Dx, d, xR)
+end
+
+"""
+    _mapC_zip(GL, C2, C1, GR) -> Matrix
+
+因子化 zip 的 identity 通道局部 C 映射：
+`Cnew[xL, xR] = Σ GL[xL, (c·a)]·C2[c, e]·C1[a, b]·GR[(e·b), xR]`.
+分两步 @tensor（键 c 与键 b），最大中间张量 O(Dx·D1·D2)，`kron(C2, C1)`
+从不物化。
+"""
+function _mapC_zip(GL::AbstractMatrix, C2::AbstractMatrix,
+                   C1::AbstractMatrix, GR::AbstractMatrix)
+    D2, D1 = size(C2, 1), size(C1, 1)
+    Dx = size(GL, 1)
+    GL3 = reshape(GL, Dx, D1, D2)          # (xL, a, c)：融合 (c·a) 的 a 为快指标
+    GR3 = reshape(GR, D1, D2, size(GR, 2)) # (b, e, xR)：融合 (e·b) 的 b 为快指标
+    @tensor Y[a, xL, e] := GL3[xL, a, c] * C2[c, e]              # 中间 Dx·D1·D2
+    @tensor S[a, e, xR] := C1[a, b] * GR3[b, e, xR]              # 中间 D1·D2·Dx
+    @tensor Cnew[xL, xR] := Y[a, xL, e] * S[a, e, xR]
+    return Cnew
+end
+
+"""
+    _lazy_ternary_fixedpoints(x, ket::ZipKet; tol, krylovdim, maxiter, GL0, GR0) -> (GLs, GRs)
+
+因子化 zip target 的 identity 通道固定点：环境推直接消费 `(A1, A2)` 因子对
+（[`_zip_push_left`](@ref)/[`_zip_push_right`](@ref)）。`GL`/`GR` 为
+`(x 键, 融合键 (c·a)/(e·b))` 矩阵。`GL0`/`GR0` 可选：用上一轮环境热启动
+eigsolve（保持不动点在逐轮之间的连续性）。
+"""
+function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::ZipKet;
                                    tol::Real = Defaults.tol,
                                    krylovdim::Int = Defaults.krylovdim,
                                    maxiter::Int = Defaults.maxiter,
@@ -682,34 +717,32 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
                                    GR0::Union{Nothing,AbstractArray} = nothing)
     N = length(x)
     T = scalartype(x)
-    # 环境一律定义在键 N 上；非均匀键下 size(x.AR[1],3) 是键 1 的键维，不能混用
     Dl = size(x.AL[1], 1)
-    Dr = Dl
-    Da1 = size(ket.ALf(1), 1)
+    Dr = size(x.AR[1], 3)
+    Da1 = size(ket.ALf1(1), 1) * size(ket.ALf2(1), 1)
 
     Tleft = function (v::AbstractVector)
-        GL = reshape(v, Dl, 1, Da1)
+        GL = reshape(v, Dl, Da1)
         for ℓ in 1:N
-            GL = push_env_left(GL, x.AL[ℓ], ket.ALf(ℓ))
+            GL = _zip_push_left(GL, x.AL[ℓ], ket.ALf2(ℓ), ket.ALf1(ℓ))
         end
         return vec(GL)
     end
     v0L = GL0 === nothing ? ones(T, Dl * Da1) : vec(copy(GL0))
     _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
                        krylovdim = krylovdim, maxiter = maxiter)
-    TCL = promote_type(T, eltype(GL1[1]))   # 复环境提升（MPSKit 对齐）
-    GLs = Vector{Array{TCL,3}}(undef, N)
-    GL = reshape(GL1[1], Dl, 1, Da1)
-    GLs[1] = GL
+    TCL = promote_type(T, eltype(GL1[1]))
+    GLs = Vector{Matrix{TCL}}(undef, N)
+    GLs[1] = GL = reshape(GL1[1], Dl, Da1)
     for ℓ in 2:N
-        GL = push_env_left(GL, x.AL[ℓ-1], ket.ALf(ℓ-1))
+        GL = _zip_push_left(GL, x.AL[ℓ-1], ket.ALf2(ℓ-1), ket.ALf1(ℓ-1))
         GLs[ℓ] = GL
     end
 
     Tright = function (v::AbstractVector)
-        GR = reshape(v, Da1, 1, Dr)
+        GR = reshape(v, Da1, Dr)
         for ℓ in N:-1:1
-            GR = push_env_right(GR, ket.ARf(ℓ), x.AR[ℓ])
+            GR = _zip_push_right(GR, ket.ARf2(ℓ), ket.ARf1(ℓ), x.AR[ℓ])
         end
         return vec(GR)
     end
@@ -717,216 +750,71 @@ function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::LazyKet;
     _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
                        krylovdim = krylovdim, maxiter = maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
-    GRs = Vector{Array{TCR,3}}(undef, N)
-    GR = reshape(GRN[1], Da1, 1, Dr)
-    GRs[N] = GR
+    GRs = Vector{Matrix{TCR}}(undef, N)
+    GRs[N] = GR = reshape(GRN[1], Da1, Dr)
     for ℓ in N-1:-1:1
-        GR = push_env_right(GR, ket.ARf(ℓ+1), x.AR[ℓ+1])
+        GR = _zip_push_right(GR, ket.ARf2(ℓ+1), ket.ARf1(ℓ+1), x.AR[ℓ+1])
         GRs[ℓ] = GR
     end
 
-    # normalization (mirroring MPSKit: GR Frobenius-normalized, GL scaled by the
-    # local overlap λ)
+    # 归一化（MPSKit 约定：GR Frobenius、GL 乘局部 overlap λ）
     for ℓ in 1:N
-        GRs[ℓ] .= GRs[ℓ] ./ norm(GRs[ℓ])
+        GRs[ℓ] = GRs[ℓ] ./ norm(GRs[ℓ])
     end
     for ℓ in 1:N
         inext = _mod1(ℓ + 1, N)
-        Cnew = _mapC(GLs[inext], GRs[ℓ], ket.Cf(ℓ))
+        Cnew = _mapC_zip(GLs[inext], ket.Cf2(ℓ), ket.Cf1(ℓ), GRs[ℓ])
         λ = dot(x.C[ℓ], Cnew)
-        λ == 0 && error("lazy ternary environment: local overlap λ = 0 at site $ℓ")
-        GLs[inext] .= GLs[inext] ./ λ
+        λ == 0 && error("factorized zip environment: local overlap λ = 0 at site $ℓ")
+        GLs[inext] = GLs[inext] ./ λ
     end
     return GLs, GRs
 end
 
-"Maximum per-site Galerkin residual of the lazy target (AC families, consistent
-with `_galerkin_err`). Multi-target form: the local map is the **sum** over the
-targets' partial maps (wavefunction sum; each channel has its own
-non-degenerate environments)."
-function _lazy_galerkin_err(x::CanonicalIMPS, kets::Vector{<:LazyKet},
-                            GLset::Vector, GRset::Vector, N::Int)
+"因子化 zip target 的 per-site Galerkin 残差（语义同 `_galerkin_err`）。"
+function _lazy_galerkin_err(x::CanonicalIMPS, ket::ZipKet, GLs, GRs, N)
     ϵ = 0.0
     for ℓ in 1:N
-        k = reduce(+, (_mapAC(GLset[j][ℓ], nothing, GRset[j][ℓ], kets[j].ACf(ℓ))
-                       for j in eachindex(kets)))
+        k = _mapAC_zip(GLs[ℓ], GRs[ℓ], ket.ACf2(ℓ), ket.ACf1(ℓ))
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], k))
     end
     return ϵ
 end
 
-"Ring-trace fidelity of the lazy target
-`N·|⟨x|ket⟩|/√(⟨x|x⟩⟨ket|ket⟩)` ∈ [0, N] (same direction ⇔ = N); same formula
-as the K version of `_report_overlap`, with the target tensors generated on
-demand by the closures. Multi-target form: the overlaps add linearly over the
-targets, and `⟨ket|ket⟩` includes the pairwise ring overlaps."
-function _lazy_overlap(x::CanonicalIMPS, kets::Vector{<:LazyKet}, N::Int)
-    xALs = [x.AL[ℓ] for ℓ in 1:N]
-    num = sum(_ring_overlap(xALs, kets[j].ALf, N) for j in eachindex(kets))
-    norm2 = sum(_ring_overlap(kets[i].ALf, kets[j].ALf, N)
-                for i in eachindex(kets), j in eachindex(kets))
-    return N * abs(num) / sqrt(real(_ring_overlap(xALs, xALs)) * real(norm2))
-end
-
-function _lazy_overlap(x::CanonicalIMPS, ket::LazyKet, N::Int)
-    return _lazy_overlap(x, [ket], N)
-end
-
-"`(X^{1/2}, X^{-1/2})` of a (numerically) positive definite matrix: phase-align
-by tr first (the overall phase of the fixed point is arbitrary), Hermitianize,
-and clip negative eigenvalues (round-off noise, or the not-fully-converged
-components of a degenerate fixed-point space — a clipped approximate fp still
-yields an effective twist whose residual the ALS absorbs)."
-function _pd_sqrt_invsqrt(X::AbstractMatrix{T}) where {T}
-    trx = tr(X)
-    abs(trx) > sqrt(eps(real(T))) * norm(X) ||
-        error("lazy gauge twist: gram fixed point has tr ≈ 0; phase undeterminable")
-    Xh = (X * (conj(trx) / abs(trx)) + X' * (trx / abs(trx))) / 2
-    vals, vecs = eigen(Hermitian(Xh))
-    tol = sqrt(eps(real(T))) * maximum(abs, vals)
-    rt = sqrt.(max.(vals, tol))   # clip negative eigenvalues to a tiny positive floor
-    return vecs * Diagonal(rt) * vecs', vecs * Diagonal(inv.(rt)) * vecs'
-end
-
-"""
-    _twist_lazy_ket(ket::LazyKet, N) -> LazyKet
-
-Effective gauge twist of the lazy target: solve the gram fixed point
-`X_{ℓ+1} = ALf(ℓ)†·X_ℓ·ALf(ℓ)` (dominant eigenpair of the periodic product
-transfer, positive definite) and twist the four family closures as
-`X_ℓ^{1/2}·f(ℓ)·X_{ℓ+1}^{-1/2}` (C as `X_{ℓ+1}^{1/2}·C·X_{ℓ+1}^{-1/2}`) into
-the **effective mixed-canonical form**.
-
-For non-canonical composite constructions (the shared-physical-index sums of
-zip / fuse do not factorize, so the left/right orthogonality sums fail), the
-ALS fixed points of the identity-channel machinery get distorted by the gram
-twist — after the twist the transfer fixed points return to the identity, and
-`AL·C = C·AR = AC` is preserved pointwise under the twist (the intermediate
-`X^{±1/2}` factors cancel). For blockdiag (direct sums) `X = 𝕀` and the twist
-is trivial. `X_ℓ` 是键 ℓ-1 上的一只矩阵（非均匀键下逐键尺寸不同），内存 O(N·D²)，
-与环境的量级相同 —— 仍然按需计算。
-"""
-function _twist_lazy_ket(ket::LazyKet, N::Int)
-    T = eltype(ket.ALf(1))
-    # χ[ℓ] = 键 ℓ-1 的键维（= ALf(ℓ) 的左键维）；X_ℓ 定义在键 ℓ-1 上，χ[ℓ]×χ[ℓ]
-    χ = [size(ket.ALf(ℓ), 1) for ℓ in 1:N]
-    Dk = χ[1]                       # 键 N 的键维：周期不动点所在的（方阵）空间
-    # gram fixed point: dominant eigenvector of the periodic product transfer
-    # X_{ℓ+1} = ALf(ℓ)†·X_ℓ·ALf(ℓ)  （逐键为矩形映射；复合一周后回到键 N）
-    bondmap = function (ℓ::Int, Xl::AbstractMatrix)
-        A = ket.ALf(ℓ)
-        @tensor tmp[bl, br] := conj(A[bm, s, bl]) * Xl[bm, bp] * A[bp, s, br]
-        return tmp
-    end
-    Tgram = function (v::AbstractVector)
-        X = reshape(v, Dk, Dk)
-        for ℓ in 1:N
-            X = bondmap(ℓ, X)
-        end
-        return vec(X)
-    end
-    # 简并固定点空间内 eigsolve 可能不收敛属预期（warn 关闭）；收敛残差由
-    # 后续幂迭代（polish）指数压低。krylovdim 保留局部覆盖（2N > 30 时放宽）。
-    _, X1 = _eigsolve(Tgram, ones(T, Dk * Dk), 1, :LM; ishermitian = false,
-                      krylovdim = max(Defaults.krylovdim, N * 2), warn = false)
-    XN = reshape(X1[1], Dk, Dk)
-    # Polish with a fixed-point iteration of the CP map: the gram transfer is a
-    # direct sum for blockdiag-type targets, so the fp space is degenerate and
-    # eigsolve may return a not-fully-converged vector inside it (which is not
-    # positive definite after Hermitianization). The power iteration preserves
-    # Hermiticity/PSD and exponentially suppresses the non-fp components.
-    for _ in 1:200
-        Xn = reshape(Tgram(vec(XN)), Dk, Dk)
-        λ = dot(vec(XN), vec(Xn)) / dot(XN, XN)
-        res = norm(vec(Xn) .- λ .* vec(XN)) / norm(XN)
-        XN = Xn ./ norm(Xn)
-        res < 1.0e-12 && break
-    end
-    # 从键 N 上的不动点正向展开出逐键的 X：Xs[ℓ] 定义在键 ℓ-1 上
-    Xs = Vector{Matrix{T}}(undef, N)
-    Xs[1] = XN
-    for ℓ in 1:N-1
-        Xs[ℓ + 1] = bondmap(ℓ, Xs[ℓ])
-    end
-    half = Vector{Matrix{T}}(undef, N + 1)
-    ihalf = Vector{Matrix{T}}(undef, N + 1)
-    for ℓ in 1:N
-        half[ℓ], ihalf[ℓ] = _pd_sqrt_invsqrt(Xs[ℓ])
-    end
-    inext(ℓ) = _mod1(ℓ + 1, N)
-    twist = (g, A, gi) -> @tensor B[bl, s, br] := g[bl, bm] * A[bm, s, bp] * gi[bp, br]
-    return LazyKet(
-        ℓ -> twist(half[ℓ], ket.ALf(ℓ), ihalf[inext(ℓ)]),
-        ℓ -> twist(half[ℓ], ket.ARf(ℓ), ihalf[inext(ℓ)]),
-        ℓ -> twist(half[ℓ], ket.ACf(ℓ), ihalf[inext(ℓ)]),
-        ℓ -> half[inext(ℓ)] * ket.Cf(ℓ) * ihalf[inext(ℓ)],
-    )
-end
-
-"""
-    _lazy_sweeps(kets::Vector{<:LazyKet}, x0, N; alg, tol, maxiter, verbosity) -> (x, overlap)
-    _lazy_sweeps(ket::LazyKet, x0, N; kwargs...) -> (x, overlap)
-
-Generic compression engine for lazy (compute-on-the-fly) targets, shared by
-the VOMPS and IDMRG templates: each target's AL/AR/AC/C families are generated
-on demand per site by its closures; the local map
-`k = Σ_j GL_j·kets[j].ACf(ℓ)·GR_j` sums the per-target partial maps (the
-wavefunction sum — each channel `⟨x|ket_j⟩` has its own non-degenerate
-environments, so block-degenerate sums such as `add` stay reliable); the naive
-target families are never materialized.
-overlap = ring-trace fidelity in [0, N] (= N means same direction).
-"""
-function _lazy_sweeps(kets::Vector{<:LazyKet}, x0::CanonicalIMPS, N::Int;
+"因子化 zip target 的变分压缩 sweep（VOMPS/IDMRG）：无融合 zip 张量、无
+gauge twist；收敛判据为 Galerkin 残差；环境逐轮热启动。"
+function _lazy_sweeps(ket::ZipKet, x0::CanonicalIMPS, N::Int;
                       alg::Union{VOMPS,IDMRG}, tol::Real = Defaults.tol,
                       maxiter::Int = Defaults.maxiter,
                       verbosity::Int = Defaults.verbosity)
     isvomps = alg isa VOMPS
-    kets = [_twist_lazy_ket(ket, N) for ket in kets]   # effective gauge twists
-    T = promote_type(scalartype(x0), eltype(kets[1].ACf(1)))
+    T = promote_type(scalartype(x0), eltype(ket.ACf1(1)))
     x = copy(x0)
-    fps = [_lazy_ternary_fixedpoints(x, ket) for ket in kets]
-    GLset = [fp[1] for fp in fps]
-    GRset = [fp[2] for fp in fps]
-    # 通道标量类型（MPSKit 对齐，见 _overlap_sweeps 注释）
-    T = promote_type(T, eltype(GLset[1][1]))
-    x = _promote_scalar(T, x)
-    ϵ = _lazy_galerkin_err(x, kets, GLset, GRset, N)
-    overlap = _lazy_overlap(x, kets, N)
+    GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
+    x = _promote_scalar(promote_type(T, eltype(GLs[1])), x)
+    ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
     for iter in 1:maxiter
         ϵ < tol && break
-        eigs_alg = isvomps ? nothing : updatetol(alg.alg_eigsolve, iter, ϵ)
-        # localupdate: per-site local maps (VOMPS) or rank-1 eigen solves (IDMRG)
         ALs = Vector{Array{T,3}}(undef, N)
         for ℓ in 1:N
-            k = reduce(+, (_mapAC(GLset[j][ℓ], nothing, GRset[j][ℓ], kets[j].ACf(ℓ))
-                           for j in eachindex(kets)))
-            ĉ = reduce(+, (_mapC(GLset[j][_mod1(ℓ + 1, N)], GRset[j][ℓ], kets[j].Cf(ℓ))
-                           for j in eachindex(kets)))
+            k = _mapAC_zip(GLs[ℓ], GRs[ℓ], ket.ACf2(ℓ), ket.ACf1(ℓ))
+            ĉ = _mapC_zip(GLs[_mod1(ℓ + 1, N)], ket.Cf2(ℓ), ket.Cf1(ℓ), GRs[ℓ])
             if isvomps
                 ALs[ℓ] = regauge!(k, ĉ; alg = Defaults.alg_orth())
             else
-                _, AC = fixedpoint(_rank1_hamiltonian(k), x.AC[ℓ], :SR, eigs_alg)
-                _, C = fixedpoint(_rank1_hamiltonian(ĉ), x.C[ℓ], :SR, eigs_alg)
-                ALs[ℓ] = regauge!(AC, C; alg = Defaults.alg_orth())
+                # rank-1 局部问题的闭式解（同 _idmrg_sweeps）
+                nk = norm(k)
+                nk == 0 && error("rank-1 local map: zero vector at site $ℓ")
+                ALs[ℓ] = regauge!(k ./ nk, ĉ ./ norm(ĉ); alg = Defaults.alg_orth())
             end
         end
-        # gauge: restore the global right gauge (mirrors MPSKit gauge_step!)
         gauge_step!(x, ALs, x.C[N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
-        # envs_step! + calc_galerkin
-        fps = [_lazy_ternary_fixedpoints(x, ket) for ket in kets]
-        GLset = [fp[1] for fp in fps]
-        GRset = [fp[2] for fp in fps]
-        ϵ = _lazy_galerkin_err(x, kets, GLset, GRset, N)
-        overlap = _lazy_overlap(x, kets, N)
-        verbosity > 0 && _logiter(stdout, isvomps ? "VOMPS" : "IDMRG", iter, ϵ,
-                                  "overlap" => overlap)
+        GLs, GRs = _lazy_ternary_fixedpoints(x, ket; GL0 = GLs[1], GR0 = GRs[N])
+        ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+        verbosity > 0 && _logiter(stdout, isvomps ? "VOMPS" : "IDMRG", iter, ϵ)
     end
     _global_normalize!(x)
-    return x, overlap
-end
-
-function _lazy_sweeps(ket::LazyKet, x0::CanonicalIMPS, N::Int; kwargs...)
-    return _lazy_sweeps([ket], x0, N; kwargs...)
+    return x
 end
 
 """
@@ -1046,33 +934,17 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
     return _mpo_from_mps(x, dus, dds)
 end
 
-"Fallback assembly of the lazy mpo·mpo path: naive construction + compression,
-always returning `(result, overlap)`; the result is mixed-canonical
-(`CanonicalIMPO`, satisfying `ismixedcanonical`)."
-function _compress_mpo_result(K4::Vector{<:Array{T,4}}, D::Int, alg::Algorithm) where {T}
-    naive = DenseIMPO(K4)
-    dmax = max_bonddim(naive)
-    D ≥ dmax && return CanonicalIMPO(collect(naive.Ws)), real(T)(length(K4))
-    N = length(K4)
-    dus = [size(K4[ℓ], 2) for ℓ in 1:N]
-    dds = [size(K4[ℓ], 4) for ℓ in 1:N]
-    K3 = asmps_view(K4)
-    x, overlap = _compress_ket(K3, [dus[ℓ] * dds[ℓ] for ℓ in 1:N], D, alg)
-    _global_normalize!(x)
-    return _mpo_from_mps(x, dus, dds), overlap
-end
-
 # ---------------- naive_mult (debug: naive family construction + optional compression) ----------------
 
 """
-    naive_mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
-    naive_mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y, overlap)
+    naive_mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
+    naive_mult(W, W2, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPO
 
 Naive reference implementation of [`mult`](@ref) (debug only): first construct
 the complete target family (`fuse` / MPO composition, memory O(N·D₁D₂)), then
 compress to `alg.D` with the positional algorithm object `alg`
-(VOMPS/IDMRG). `overlap` is the ring-trace
-fidelity in [0, N] (= N means same direction). Large input bond dimensions
+(VOMPS/IDMRG). No overlap is computed (same contract as [`mult`](@ref)).
+Large input bond dimensions
 produce huge intermediate families — use [`mult`](@ref) for production use.
 """
 function naive_mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
@@ -1084,12 +956,11 @@ function naive_mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
     K = [fuse(Wm[ℓ], ψ.AL[ℓ]) for ℓ in 1:N]        # naive target ray (fuse of W·ψ)
     ket = CanonicalIMPS(K)                   # canonical storage of the target (for the sweeps)
     x0 = svdguess_mult(Wm, ψ, D)
-    y, overlap = _mult_compress(alg, ket, x0, K)
+    y = _mult_compress(alg, ket, x0, K)
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
     # (preserving the ray), then normalize to the package norm convention
     y = CanonicalIMPS(collect(y.AL), y.C[end])
-    _global_normalize!(y)
-    return y, overlap
+    return _global_normalize!(y)
 end
 
 function naive_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG})
@@ -1104,24 +975,24 @@ function naive_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMR
     dds = [size(K4[ℓ], 4) for ℓ in 1:N]
     K3 = asmps_view(K4)                             # MPS-view target of the MPO product
     ket = CanonicalIMPS(K3)
-    physdims = [size(K3[ℓ], 2) for ℓ in 1:N]
     x0 = svdguess_mult(Wm, W2m, D)
-    x, overlap = _mult_compress(alg, ket, x0, K3)
+    x = _mult_compress(alg, ket, x0, K3)
     _global_normalize!(x)                           # 归一化输出（MPSKit 约定）
-    y = _mpo_from_mps(x, dus, dds)                  # → CanonicalIMPO (re-canonicalized)
-    return y, overlap
+    return _mpo_from_mps(x, dus, dds)               # → CanonicalIMPO (re-canonicalized)
 end
 
 "Compression engine dispatch for mult: `VOMPS` → overlap-maximizing sweeps,
-`IDMRG` → eigen-solver sweeps."
+`IDMRG` → rank-1 local-map sweeps."
 function _mult_compress(alg::VOMPS, ket, x0, K)
-    return _overlap_sweeps(nothing, ket, x0, K;
+    x, _ = _overlap_sweeps(nothing, ket, x0, K;
                            tol = alg.tol, maxiter = alg.maxiter, verbosity = alg.verbosity)
+    return x
 end
 function _mult_compress(alg::IDMRG, ket, x0, K)
-    return _idmrg_sweeps(ket, x0, K;
+    x, _ = _idmrg_sweeps(ket, x0, K;
                          tol = alg.tol, maxiter = alg.maxiter, verbosity = alg.verbosity,
                          alg_eigsolve = alg.alg_eigsolve)
+    return x
 end
 
 # ---------------- svdguess_mult (deterministic initial guess) & mult! (in-place) ----------------
