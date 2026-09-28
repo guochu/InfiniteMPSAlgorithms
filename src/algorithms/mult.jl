@@ -438,17 +438,6 @@ end
 # 右正交、AC·C 一致，C 的外积 kron 布局逐位对齐融合键序），因此 identity
 # 通道固定点机制无需 gauge twist 直接适用。
 
-"`FactorizedKet(ALf1, ALf2, ARf1, ARf2, ACf1, ACf2, Cf1, Cf2)`: a factorized
-double-MPO lazy target — the site's fused tensor `Ket = W1 ⊗_m W2` is **never
-materialized**; the environment contraction consumes the `(W1, W2)` pair
-directly (bond-first explicit GEMM chain)."
-struct FactorizedKet{A1,A2,B1,B2,C1,C2,D1,D2}
-    ALf1::A1; ALf2::A2
-    ARf1::B1; ARf2::B2
-    ACf1::C1; ACf2::C2
-    Cf1::D1;  Cf2::D2
-end
-
 """
     _push_env_left(L, below, W1, W2) -> Matrix
 
