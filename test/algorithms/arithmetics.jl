@@ -66,7 +66,7 @@ end
           reshape(_dense_mpo_repr(W1), 4, 4) * reshape(_dense_mpo_repr(W2), 4, 4) atol = 1e-10
     # 迭代乘法：W1·I = W1（D = 2 = 目标键维）。与目标平行即可（整体相位/尺度是
     # 输出射线规范的自由度）
-    P1 = mult(W1, I2, VOMPS(D = 2))
+    P1, _ = mult(W1, I2, VOMPS(D = 2))
     @test P1 isa CanonicalIMPO && bonddim(P1, 1) == 2
     dP1 = vec(_dense_mpo_repr(DenseIMPO(P1)))
     dW1v = vec(_dense_mpo_repr(W1))
@@ -79,7 +79,7 @@ end
     s2 = DenseIMPO([cat(wa[ℓ], wa[ℓ]; dims = (1, 3)) for ℓ in 1:length(wa)])   # blockdiag(wa, wa)
     for alg in (VOMPS(D = 1, maxiter = 200), IDMRG(D = 1, maxiter = 200))
         Random.seed!(1)
-        Pc = mult(s2, I2, alg)
+        Pc, _ = mult(s2, I2, alg)
         @test bonddim(Pc, 1) == 1
         d = _dense_mpo_repr(DenseIMPO(Pc))
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
@@ -103,12 +103,12 @@ end
     y = mult(W1, ψ)
     @test y isa CanonicalIMPS && ismixedcanonical(y)
     # lazy 路径
-    Pl = mult(W1, I2, VOMPS(D = 2))
+    Pl, _ = mult(W1, I2, VOMPS(D = 2))
     @test Pl isa CanonicalIMPO && ismixedcanonical(Pl)
     # naive 兜底：maxiter = 0 使 lazy 引擎不收敛（overlap 不达 0.9N）而触发兜底
-    Pf = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
+    Pf, _ = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
     @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
-    Pf2 = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
+    Pf2, _ = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
     @test Pf2 isa CanonicalIMPO && ismixedcanonical(Pf2)
 end
 
@@ -136,13 +136,13 @@ end
     # VOMPS / IDMRG：复环境通道下不崩溃；结果提升为复（MPSKit 对齐）、
     # 混合正则恒等式严格成立、范数 1
     for alg in (VOMPS(D = 2, maxiter = 50), IDMRG(D = 2, maxiter = 50))
-        yv = mult(Wo, ψ, alg)
+        yv, _ = mult(Wo, ψ, alg)
         @test yv isa CanonicalIMPS && ismixedcanonical(yv)
         @test scalartype(yv) <: Complex
         @test norm(yv) ≈ 1 atol = 1e-10
     end
     # mpo·mpo 兜底（identity 通道，实）：同样正则
-    Pf = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
+    Pf, _ = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
     @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
 end
 
@@ -168,7 +168,7 @@ end
     # 压缩路径（两算法）：D = 9 = 精确键维 → 无损，与严格乘积的规范代表平行
     H12c = CanonicalIMPS(collect(H12.As))
     for alg in (VOMPS(D = 9, maxiter = 200), IDMRG(D = 9, maxiter = 200))
-        Hc = hadamard(ψ1, ψ2, alg)
+        Hc, _ = hadamard(ψ1, ψ2, alg)
         @test max_bonddim(Hc) == 9
         @test abs(dot(Hc, H12c)) > 1 - 1e-8
     end
@@ -190,9 +190,9 @@ end
 
 # ---------------- mult!/compress!/hadamard! 完全对齐 ----------------
 #
-# 迭代计数经由内部函数获取：`_mult`/`_compress`/`_hadamard` 额外返回扫掠轮数
-# `(y, iters)`；导出层（mult/compress/hadamard 及其 in-place 版本）不携带该
-# 信息。
+# 收敛信息经由内部函数取得：`_mult`/`_compress`/`_hadamard` 返回 `(y, info)`
+# （info::IterativeConvergenceInfo，niter = 扫掠轮数）；导出层
+# （mult/compress/hadamard）返回 `(y, info)`，in-place 版本不携带该信息。
 
 @testset "mult! ≡ compress!（完全对齐：同初态+同参数 → 同迭代数、终态一致）" begin
     # 语义对齐：mult!(out, W, ψ, alg)（compute-on-the-fly 通道）与
@@ -217,7 +217,7 @@ end
         y1, i1 = InfiniteMPSAlgorithms._mult(W, ψ, alg, out1; D = D0)
         y2, i2 = InfiniteMPSAlgorithms._compress(CanonicalIMPS(collect(ψraw.As)),
                                                  alg, out2; D = D0)
-        @test i1 == i2
+        @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))
         ls = dot(v2, v1) / dot(v2, v2)
@@ -231,7 +231,7 @@ end
         z2, j2 = InfiniteMPSAlgorithms._compress(CanonicalIMPO(collect(Wraw.Ws)),
                                                  alg, vectorize(m2);
                                                  D = D0)
-        @test j1 == j2
+        @test j1.niter == j2.niter
         w1 = vectorize(z1)
         w2 = vectorize(z2)
         # 同迭代数 + fidelity → 1（两路径环境重解的 round-off ~1e-10）
@@ -264,7 +264,7 @@ end
         out2 = copy(out1)
         y1, i1 = InfiniteMPSAlgorithms._mult(W1, ψ2, alg, out1; D = D0)
         y2, i2 = InfiniteMPSAlgorithms._hadamard(ψ1, ψ2, alg, out2; D = D0)
-        @test i1 == i2
+        @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))
         ls = dot(v2, v1) / dot(v2, v2)

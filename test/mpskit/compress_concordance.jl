@@ -6,7 +6,7 @@
 # - 相同的随机目标态与随机初态（同一组张量，两包各持独立副本）；
 # - 完全相同的算法参数（tol / maxiter）；
 # - VOMPS / IDMRG：逐迭代对比（maxiter = k、tol = 0 强制两包都恰好跑 k 轮）；
-# - 收敛迭代数一致（iters Ref ↔ MPSKit 的最小收敛轮数扫描）；
+# - 收敛迭代数一致（info.niter ↔ MPSKit 的最小收敛轮数扫描）；
 # - 收敛终态在数值精度下一致（dense 周期 trace 表示的射线残差）。
 # MPSKit 的 approximate 无 MPO 目标版本 ⇒ MPO 压缩按 `vectorize` 转成 MPS
 # 视图（恒等 MPO 通道）对比。
@@ -102,21 +102,19 @@ end
 
 @testset "compress VOMPS 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
-    iters = Ref(0)
-    y = InfiniteMPSAlgorithms._overlap_vomps_sweeps(ψ, x0;
-                                                    tol = tol, maxiter = 500, iters = iters)[1]
+    y, _, info = InfiniteMPSAlgorithms._overlap_vomps_sweeps(
+        ψ, x0, VOMPS(D = D0, tol = tol, maxiter = 500))
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.VOMPS, tol)
-    @test iters[] == mk_iter
+    @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
 end
 
 @testset "compress IDMRG 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
-    iters = Ref(0)
-    y = InfiniteMPSAlgorithms._overlap_idmrg_sweeps(ψ, x0;
-                                                    tol = tol, maxiter = 500, iters = iters)[1]
+    y, _, info = InfiniteMPSAlgorithms._overlap_idmrg_sweeps(
+        ψ, x0, IDMRG(D = D0, tol = tol, maxiter = 500))
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
-    @test iters[] == mk_iter
+    @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
 end
 

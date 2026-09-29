@@ -119,13 +119,13 @@ end
     @test max_bonddim(ψsum) == 8
 
     # D ≥ 输入键：短路精确返回（无压缩）
-    y0 = compress(ψsum, VOMPS(D = 8))
+    y0, _ = compress(ψsum, VOMPS(D = 8))
     @test max_bonddim(y0) == 8
     @test fidelity(y0, ψsum) ≈ 1 atol = 1e-10
 
     # 有损压缩：不劣于随机初猜的同键压缩（随机初猜经 in-place 版本提供）
     ψbig = randomimps(T, [2, 2]; D = 8)
-    y4 = compress(ψbig, VOMPS(D = 4))
+    y4, _ = compress(ψbig, VOMPS(D = 4))
     @test max_bonddim(y4) == 4
     yr = randomimps(T, [2, 2]; D = 4)
     compress!(yr, ψbig, VOMPS(D = 4))
@@ -133,8 +133,8 @@ end
 
     # IDMRG 路径同一不动点（有损压缩，射线方向一致）
     ψbig = randomimps(T, [2, 2]; D = 8)
-    y4 = compress(ψbig, VOMPS(D = 4))
-    y4b = compress(ψbig, IDMRG(D = 4, maxiter = 200))
+    y4, _ = compress(ψbig, VOMPS(D = 4))
+    y4b, _ = compress(ψbig, IDMRG(D = 4, maxiter = 200))
     @test abs(real(dot(y4, y4b))) /
           sqrt(abs(dot(y4, y4)) * abs(dot(y4b, y4b))) ≈ 1 atol = 1e-3
 
@@ -142,9 +142,9 @@ end
     # 收敛停点，断言一致到收敛差异内）；DenseIMPO 输入同样返回 CanonicalIMPO
     W = randomimpo(T, [2, 2]; D = 6)
     Wc = CanonicalIMPO(collect(W.Ws))
-    Vc = compress(Wc, VOMPS(D = 3))
+    Vc, _ = compress(Wc, VOMPS(D = 3))
     @test max_bonddim(Vc) == 3 && ismixedcanonical(Vc)
-    Vd = compress(W, VOMPS(D = 3))
+    Vd, _ = compress(W, VOMPS(D = 3))
     @test Vd isa CanonicalIMPO && max_bonddim(Vd) == 3 && ismixedcanonical(Vd)
     @test fidelity(Vc, Vd) > 0.9
 end
@@ -155,14 +155,14 @@ end
     Random.seed!(81)
     Wr = randomimpo(T, [2, 2]; D = 3)
     # 压缩路径：DenseIMPO 输入 → CanonicalIMPO
-    y2 = compress(Wr, VOMPS(D = 2))
+    y2, _ = compress(Wr, VOMPS(D = 2))
     @test y2 isa CanonicalIMPO && max_bonddim(y2) == 2 && ismixedcanonical(y2)
     # IDMRG 路径同
-    y2b = compress(Wr, IDMRG(D = 2, maxiter = 200))
+    y2b, _ = compress(Wr, IDMRG(D = 2, maxiter = 200))
     @test y2b isa CanonicalIMPO && ismixedcanonical(y2b)
     # D ≥ max_bonddim：短路——输入先转规范存储再返回（强制归一化非纯规范，
     # 算符值整体缩放但射线严格不变），仍为 CanonicalIMPO
-    yr0 = compress(Wr, VOMPS(D = 3))
+    yr0, _ = compress(Wr, VOMPS(D = 3))
     @test yr0 isa CanonicalIMPO && ismixedcanonical(yr0)
     dr = vec(_dense_mpo_repr(DenseIMPO(yr0)))
     dw = vec(_dense_mpo_repr(Wr))
@@ -171,7 +171,7 @@ end
     # 实数输入：正则性成立；标量类型随通道转移的实际 eltype（ALS 期间融合
     # 转移可为复主导，通道按 MPSKit 对齐提升为复，故不断言实性）
     Wf = randomimpo(Float64, [2, 2]; D = 3)
-    yf = compress(Wf, VOMPS(D = 2))
+    yf, _ = compress(Wf, VOMPS(D = 2))
     @test yf isa CanonicalIMPO && ismixedcanonical(yf)
 end
 
@@ -184,21 +184,21 @@ end
     # hadamard!（初猜 out 提供 D）
     out = randomimps(T, [2, 2]; D = 4)
     hadamard!(out, ψ1, ψ2, VOMPS(D = 4))
-    yh = hadamard(ψ1, ψ2, VOMPS(D = 4))
+    yh, _ = hadamard(ψ1, ψ2, VOMPS(D = 4))
     @test abs(dot(out, yh)) / sqrt(abs(dot(out, out)) * abs(dot(yh, yh))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mps，初猜 out 提供 D）
     W = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     out = randomimps(T, [2, 2]; D = 4)
     mult!(out, W, ψ1, VOMPS(D = 4))
-    ym = mult(W, ψ1, VOMPS(D = 4))
+    ym, _ = mult(W, ψ1, VOMPS(D = 4))
     @test abs(dot(out, ym)) / sqrt(abs(dot(out, out)) * abs(dot(ym, ym))) ≈ 1 atol = 1e-8
 
     # mult!（mpo·mpo）
     W2 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     outo = CanonicalIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     mult!(outo, W, W2, VOMPS(D = 3))
-    yo = mult(W, W2, VOMPS(D = 3))
+    yo, _ = mult(W, W2, VOMPS(D = 3))
     @test max_bonddim(outo) == 3 && ismixedcanonical(outo)
     # 幅值无关的射线比较（转移半径自身归一）
     vo, vy = vectorize(outo), vectorize(yo)
@@ -209,7 +209,7 @@ end
     ψbig = randomimps(T, [2, 2]; D = 8)
     out = randomimps(T, [2, 2]; D = 4)
     compress!(out, ψbig, VOMPS(D = 4))
-    yc = compress(ψbig, VOMPS(D = 4))
+    yc, _ = compress(ψbig, VOMPS(D = 4))
     @test abs(dot(out, yc)) / sqrt(abs(dot(out, out)) * abs(dot(yc, yc))) ≈ 1 atol = 1e-8
 end
 
@@ -280,7 +280,7 @@ end
     # svdguess 初猜（默认）与随机初猜（in-place 的 out 提供）都应收敛到
     # 高保真度的压缩结果（与精确构造射线的保真度 ≥ 0.9·N）
     y_exact = mult(W, ψ1)                          # 精确朴素构造（二参数版本）
-    y_svd = mult(W, ψ1, VOMPS(D = 3))              # svdguess 初猜
+    y_svd, _ = mult(W, ψ1, VOMPS(D = 3))           # svdguess 初猜
     @test fidelity(y_svd, y_exact) > 0.9           # 方向一致（幅值无意义）
     out = randomimps(T, [2, 2]; D = 3)
     mult!(out, W, ψ1, VOMPS(D = 3))                # 随机初猜（in-place）

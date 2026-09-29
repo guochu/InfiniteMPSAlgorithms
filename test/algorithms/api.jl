@@ -382,11 +382,11 @@ end
     T = ComplexF64
     H = tfim_hamiltonian(T = T)
     Random.seed!(41)
-    ψg, envs_g, ϵg = find_groundstate(randomimps(T, [2]; D = 10), H,
-                                       VUMPS(D = 10, maxiter = 300, tol = 1e-11, verbosity = 0))
-    # calc_galerkin 公开接口
-    @test calc_galerkin(ψg, H, envs_g) == ϵg
-    @test ϵg < 1e-9
+    ψg, envs_g, info_g = find_groundstate(randomimps(T, [2]; D = 10), H,
+                                          VUMPS(D = 10, maxiter = 300, tol = 1e-11, verbosity = 0))
+    # calc_galerkin 公开接口（info.itererr = 末轮 Galerkin 残差）
+    @test calc_galerkin(ψg, H, envs_g) == info_g.itererr
+    @test info_g.itererr < 1e-9
 
     # timestep（对标 MPSKit Infinite TDVP 测试）：基态上演化 dt 后能量守恒
     dt = 0.1
@@ -403,7 +403,7 @@ end
     # （overlap = 1，输出与输入同向）
     Random.seed!(42)
     ψ0 = randomimps(T, [2]; D = 6)
-    ψa = mult(I1, ψ0, VOMPS(D = 6, maxiter = 50, tol = 1e-10))
+    ψa, _ = mult(I1, ψ0, VOMPS(D = 6, maxiter = 50, tol = 1e-10))
     @test abs(dot(ψa, ψ0)) ≈ 1 atol = 1e-6
 end
 

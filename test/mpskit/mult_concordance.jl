@@ -40,7 +40,7 @@ end
 
 @testset "mult VOMPS ≡ MPSKit approximate VOMPS" begin
     Dtar = 8                                    # 精确键维 Dw·Dψ = 12 → 变分压到 8
-    y = mult(W1, ψ, VOMPS(D = Dtar, maxiter = 200, tol = 1e-11))
+    y, _ = mult(W1, ψ, VOMPS(D = Dtar, maxiter = 200, tol = 1e-11))
     ϕk, _, δ = MPSKit.approximate(to_mpskit(randomimps(T, fill(d, N); D = Dtar)),
                                   (to_mpskit(W1), to_mpskit(ψ)),
                                   MPSKit.VOMPS(; tol = 1e-11, maxiter = 200))
@@ -54,7 +54,7 @@ end
 
 @testset "mult IDMRG ≡ MPSKit approximate IDMRG" begin
     Dtar = 8
-    y = mult(W1, ψ, IDMRG(D = Dtar, maxiter = 200, tol = 1e-11))
+    y, _ = mult(W1, ψ, IDMRG(D = Dtar, maxiter = 200, tol = 1e-11))
     ϕk, _, δ = MPSKit.approximate(to_mpskit(randomimps(T, fill(d, N); D = Dtar)),
                                   (to_mpskit(W1), to_mpskit(ψ)),
                                   MPSKit.IDMRG(; tol = 1e-11, maxiter = 200))
@@ -63,8 +63,8 @@ end
 end
 
 @testset "mult VOMPS ≡ IDMRG（本包双算法不动点一致）" begin
-    yv = mult(W1, ψ, VOMPS(D = 8, maxiter = 200, tol = 1e-11))
-    yi = mult(W1, ψ, IDMRG(D = 8, maxiter = 200, tol = 1e-11))
+    yv, _ = mult(W1, ψ, VOMPS(D = 8, maxiter = 200, tol = 1e-11))
+    yi, _ = mult(W1, ψ, IDMRG(D = 8, maxiter = 200, tol = 1e-11))
     @test abs(dot(yv, yi)) > 1 - 1e-6
 end
 
@@ -72,11 +72,11 @@ end
     # 恒等 MPO 复合：mult(W2, I2) 精确恢复 W2 的射线（两算法）
     I2 = identityimpo(T, [2, 2])
     for alg in (VOMPS(D = 2, maxiter = 200, tol = 1e-11), IDMRG(D = 2, maxiter = 200, tol = 1e-11))
-        y = mult(W2, I2, alg)
+        y, _ = mult(W2, I2, alg)
         @test y isa CanonicalIMPO && ismixedcanonical(y)
         @test mpo_ray_residual(DenseIMPO(y), W2) < 1e-6
     end
     # 变分复合 vs 朴素精确：满键维时 overlap = N 且稠密表示平行
-    y = mult(W1, W2, VOMPS(D = 6, maxiter = 300, tol = 1e-12))
+    y, _ = mult(W1, W2, VOMPS(D = 6, maxiter = 300, tol = 1e-12))
     @test mpo_ray_residual(DenseIMPO(y), W1 * W2) < 1e-6
 end

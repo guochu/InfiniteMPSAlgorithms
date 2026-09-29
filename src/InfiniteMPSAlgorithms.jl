@@ -112,7 +112,7 @@ export
     recalculate!, leftenv, rightenv,
     AC_hamiltonian, C_hamiltonian, calc_galerkin,
     # ground-state and time-evolution algorithms
-    Algorithm, VUMPS, IDMRG, TDVP, VOMPS,
+    Algorithm, VUMPS, IDMRG, TDVP, VOMPS, IterativeConvergenceInfo,
     find_groundstate, timestep, time_evolve, integrate,
     mult, hadamard,
     fuse, copyphyims,

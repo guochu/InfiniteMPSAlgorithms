@@ -274,11 +274,13 @@ end
 
 """
     find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG, [envs])
-        -> (ψ, envs, ϵ)
+        -> (ψ, envs, info)
 
 IDMRG ground-state search. `operator` **必须是 `SparseIMPO`**（同
 [`find_groundstate`](@ref) 的 VUMPS 版说明：`DenseIMPO` 的周期 trace 期望不是
-能量，传入会报 `ArgumentError`）。
+能量，传入会报 `ArgumentError`）。The third return is the
+[`IterativeConvergenceInfo`](@ref)（`niter` 迭代轮数、`losses` = [初始 Galerkin
+残差, 逐轮 bond-0 中心矩阵漂移...]、`converged` 收敛标志）。
 """
 function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG,
                           envs::Environments = DMRGCache(ψ₀, operator))
@@ -287,6 +289,8 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG
     E = expectationvalue(ψ, operator, envs)
     alg.verbosity > 0 && _logiter(stdout, "IDMRG", 0, ϵ, "f" => E)
     iter = 0
+    losses = Float64[ϵ]
+    converged = false
     for outer iter in 1:alg.maxiter
         # MPSKit 第 iter 次扫描时 state.iter = iter-1
         alg_eigsolve = updatetol(alg.alg_eigsolve, iter - 1, ϵ)
@@ -296,11 +300,15 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG
         ψ, envs = alg.finalize(iter, ψ, operator, envs)
         # error criterion（bond 0 中心矩阵之差）
         ϵ = norm(ψ.C[0] - C_old)
+        push!(losses, ϵ)
         # new energy
         ΔE = (E_new - E) / 2
         E = E_new
         alg.verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ, "f" => E, "ΔE" => ΔE)
-        ϵ ≤ alg.tol && break
+        if ϵ ≤ alg.tol
+            converged = true
+            break
+        end
     end
     # 规范恢复：从 AR 重建（对标 MPSKit 的 `InfiniteMPS(mps.AR)`）
     N = length(ψ)
@@ -308,5 +316,5 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG
     ψ′ = CanonicalIMPS([ψ.AR[ℓ] for ℓ in 1:N];
                            tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
     recalculate!(envs, ψ′, operator)
-    return ψ′, envs, ϵ
+    return ψ′, envs, IterativeConvergenceInfo(iter, losses, converged)
 end

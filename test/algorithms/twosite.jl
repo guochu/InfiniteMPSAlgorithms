@@ -26,10 +26,10 @@
 
     # ---- vumps ----
     Random.seed!(71)
-    ψg, envsg, ϵg = find_groundstate(randomimps(T, [2, 2]; D = 12), H,
-                                     VUMPS(D = 12, maxiter = 300, tol = 1e-10, verbosity = 0))
+    ψg, envsg, infog = find_groundstate(randomimps(T, [2, 2]; D = 12), H,
+                                        VUMPS(D = 12, maxiter = 300, tol = 1e-10, verbosity = 0))
     eg = real(expectationvalue(ψg, H, envsg) / 2)
-    @test ϵg < 1e-9
+    @test infog.itererr < 1e-9
     @test abs(eg - e_exact) < 2e-4
 
     # TFIM 2-site 单胞：e₀ = −4/π（临界点解析解）
@@ -91,7 +91,7 @@
     @test abs(real(expectationvalue(ψw1, H) / 2) - eg) < 1e-4
 
     # MPO 压缩：2-site 恒等 MPO 压到 D=1
-    comp = compress(I2, VOMPS(D = 1))
+    comp, _ = compress(I2, VOMPS(D = 1))
     @test comp isa CanonicalIMPO && max_bonddim(comp) == 1
     @test fidelity(comp, CanonicalIMPO(I2)) ≈ 1 atol = 1e-8
 

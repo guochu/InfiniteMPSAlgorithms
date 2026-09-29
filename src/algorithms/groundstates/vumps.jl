@@ -33,12 +33,14 @@ end
 
 """
     find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS, [envs]; which = :SR)
-        -> (ψ, envs, ϵ)
+        -> (ψ, envs, info)
 
 VUMPS ground-state search. `operator` **必须是 `SparseIMPO`**（哈密顿量的 Schur
 形式）：只有它才给出能量泛函的正确收缩（闭列公式 + 非齐次线性解的环境）。
 `DenseIMPO` 的周期 trace 期望不是能量（见 [`DMRGCache`](@ref) 的 `DenseIMPO`
-版说明），传入会直接报 `ArgumentError`。
+版说明），传入会直接报 `ArgumentError`。The third return is the
+[`IterativeConvergenceInfo`](@ref)（`niter` 迭代轮数、`losses` = [初始 Galerkin
+残差, 逐轮 Galerkin 残差...]、`converged` 收敛标志）。
 """
 function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS,
                           envs::Environments = DMRGCache(ψ₀, operator);
@@ -47,7 +49,10 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS
     ϵ = calc_galerkin(ψ, operator, envs)
     alg_envs = updatetol(alg.alg_environments, 0, ϵ)
     recalculate!(envs, ψ, operator; tol = alg_envs.tol)
-    for iter in 1:alg.maxiter
+    losses = Float64[ϵ]
+    converged = false
+    iter = 0
+    for outer iter in 1:alg.maxiter
         # at MPSKit's iteration `iter`, state.iter = iter - 1
         siter = iter - 1
         alg_eigsolve = updatetol(alg.alg_eigsolve, siter, ϵ)
@@ -62,15 +67,19 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS
         # finalize
         ψ, envs = alg.finalize(iter, ψ, operator, envs)
         ϵ = calc_galerkin(ψ, operator, envs)
+        push!(losses, ϵ)
         f = expectationvalue(ψ, operator, envs)
         alg.verbosity > 0 && _logiter(stdout, "VUMPS", iter, ϵ, "f" => f)
-        ϵ ≤ alg.tol && break
+        if ϵ ≤ alg.tol
+            converged = true
+            break
+        end
     end
-    return ψ, envs, ϵ
+    return ψ, envs, IterativeConvergenceInfo(iter, losses, converged)
 end
 
 """
-    find_groundstate(operator::SparseIMPO, alg::Union{VUMPS,IDMRG}, [envs]) -> (ψ, envs, ϵ)
+    find_groundstate(operator::SparseIMPO, alg::Union{VUMPS,IDMRG}, [envs]) -> (ψ, envs, info)
 
 Convenience method without an explicit initial state: `ψ₀` is generated
 randomly (`randomimps`) with bond dimension `alg.D`, taking the physical

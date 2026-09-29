@@ -120,3 +120,20 @@ the state with a global `gaugefix!` (right-canonical).
     gaugemaxiter::Int = Defaults.maxiter
     finalize::F = Defaults._finalize
 end
+
+struct IterativeConvergenceInfo
+	niter::Int
+	converged::Bool
+	losses::Vector{Float64}
+	itererr::Float64
+	residual::Union{Float64, Nothing}
+end
+
+function IterativeConvergenceInfo(niter::Int, losses::Vector{Float64}, converged::Bool; residual::Union{Float64, Nothing} = nothing)
+	# IDMRG 模板的 losses 逐轮记录（maxiter = 0 时为空）
+	itererr = isempty(losses) ? NaN : losses[end]
+	return IterativeConvergenceInfo(niter, converged, losses, itererr, residual)
+end
+# since we may have considered initial loss
+IterativeConvergenceInfo(losses::Vector{Float64}, converged::Bool; kwargs...) = IterativeConvergenceInfo(length(losses) - 1, losses, converged, kwargs...)
+

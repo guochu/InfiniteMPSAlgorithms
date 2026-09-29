@@ -50,9 +50,9 @@ function svdguess_compress(ALs::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
 end
 
 """
-    compress(x::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) -> CanonicalIMPS
-    compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) -> CanonicalIMPO
-    compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) -> CanonicalIMPO
+    compress(x::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPS, info)
+    compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPO, info)
+    compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPO, info)
 
 Bond-dimension-`alg.D` variational approximation of a single chain (mirroring
 MPSKit's `approximate`: maximize the overlap between the compressed chain and
@@ -66,39 +66,37 @@ default initial guess is [`svdguess_compress`](@ref) (the input's own SVD
 truncation). The positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or
 [`IDMRG`](@ref) (MPSKit sequential Gauss–Seidel sweeps with on-the-fly
 environment transfer), which share the same fixed point.
+
+The second return is the engine's [`IterativeConvergenceInfo`](@ref)
+（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、`converged` 收敛标志；短路的精确
+路径为 0 轮、已收敛）。
 """
 compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
-    first(_compress(ψ, alg, nothing; D = alg.D))
+    _compress(ψ, alg, nothing; D = alg.D)
 
 compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) =
-    first(_compress(W, alg, nothing; D = alg.D))
+    _compress(W, alg, nothing; D = alg.D)
 
 compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) =
-    first(_compress(W, alg, nothing; D = alg.D))
+    _compress(W, alg, nothing; D = alg.D)
 
 function _compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
                    x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    D >= max_bonddim(ψ) && return copy(ψ), 0
+    D >= max_bonddim(ψ) &&
+        return copy(ψ), IterativeConvergenceInfo(0, Float64[0.0], true)
     x0 = x0 === nothing ? svdguess_compress(ψ, D) : x0
-    iters = Ref(0)
-    x, _ = if alg isa VOMPS
-        _overlap_vomps_sweeps(ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge,
-                              alg_environments = alg.alg_environments,
-                              alg_orth = alg.alg_orth, finalize = alg.finalize)
+    x, _, info = if alg isa VOMPS
+        _overlap_vomps_sweeps(ψ, x0, alg)
     else
-        _overlap_idmrg_sweeps(ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
-                              finalize = alg.finalize)
+        _overlap_idmrg_sweeps(ψ, x0, alg)
     end
-    return _global_normalize!(x), iters[]
+    return _global_normalize!(x), info
 end
 
 function _compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG},
                    x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    D >= max_bonddim(W) && return copy(W), 0
+    D >= max_bonddim(W) &&
+        return copy(W), IterativeConvergenceInfo(0, Float64[0.0], true)
     # 目标 MPS 的 ray 必须取 **AL 家族**（左正则串）：其周期 trace 才是算符串的
     # wavefunction（相似变换不变）；AC 家族在张量间携带 C 加权
     # （AC[ℓ] = AL[ℓ]·C[ℓ]），周期 trace 是规范依赖的加权量，作为压缩目标会
@@ -106,43 +104,28 @@ function _compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG},
     # `vectorize` 逐家族携带规范数据，其 AL 家族正是该 ray 的左正则串。
     ket = vectorize(W)
     x0 = x0 === nothing ? svdguess_compress(W, D) : x0
-    iters = Ref(0)
-    x, _ = if alg isa VOMPS
-        _overlap_vomps_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge,
-                              alg_environments = alg.alg_environments,
-                              alg_orth = alg.alg_orth, finalize = alg.finalize)
+    x, _, info = if alg isa VOMPS
+        _overlap_vomps_sweeps(ket, x0, alg)
     else
-        _overlap_idmrg_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
-                              finalize = alg.finalize)
+        _overlap_idmrg_sweeps(ket, x0, alg)
     end
     x = _global_normalize!(x)
-    return devectorize(x), iters[]
+    return devectorize(x), info
 end
 
 function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG},
                    x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    D >= max_bonddim(W) && return CanonicalIMPO(collect(W.Ws)), 0
+    D >= max_bonddim(W) &&
+        return CanonicalIMPO(collect(W.Ws)), IterativeConvergenceInfo(0, Float64[0.0], true)
     ket = CanonicalIMPS(vectorize(W).As)
     x0 = x0 === nothing ? svdguess_compress(ket, D) : x0
-    iters = Ref(0)
-    x, _ = if alg isa VOMPS
-        _overlap_vomps_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge,
-                              alg_environments = alg.alg_environments,
-                              alg_orth = alg.alg_orth, finalize = alg.finalize)
+    x, _, info = if alg isa VOMPS
+        _overlap_vomps_sweeps(ket, x0, alg)
     else
-        _overlap_idmrg_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
-                              finalize = alg.finalize)
+        _overlap_idmrg_sweeps(ket, x0, alg)
     end
     x = _global_normalize!(x)
-    return devectorize(x), iters[]
+    return devectorize(x), info
 end
 
 # ---------------- compress! (in-place) ----------------
@@ -189,7 +172,7 @@ end
 "Variational compression of a raw strict-algebra result
 (`DenseIMPO * DenseIMPS`, not yet canonicalized)."
 compress(ψ::DenseIMPS, alg::Union{VOMPS,IDMRG}) =
-    first(_compress(CanonicalIMPS(collect(ψ.As)), alg, nothing; D = alg.D))
+    _compress(CanonicalIMPS(collect(ψ.As)), alg, nothing; D = alg.D)
 
 # ---------------- 共享的代数压缩装配（原 add.jl；add 已删除） ----------------
 
@@ -208,8 +191,7 @@ function _compress_ket(K::Vector{<:Array{T,3}}, physdims::AbstractVector{Int}, D
                        alg::VOMPS; x0::Union{Nothing,CanonicalIMPS} = nothing) where {T}
     ket = CanonicalIMPS(K)
     x0 = x0 === nothing ? _truncate_bonddim(copy(ket), D) : x0
-    x, _ = _overlap_vomps_sweeps(ket, x0;
-                                 tol = alg.tol, maxiter = alg.maxiter, verbosity = alg.verbosity)
+    x, _, _ = _overlap_vomps_sweeps(ket, x0, alg)
     return _global_normalize!(x)
 end
 
@@ -217,9 +199,7 @@ function _compress_ket(K::Vector{<:Array{T,3}}, physdims::AbstractVector{Int}, D
                        alg::IDMRG; x0::Union{Nothing,CanonicalIMPS} = nothing) where {T}
     ket = CanonicalIMPS(K)
     x0 = x0 === nothing ? _truncate_bonddim(copy(ket), D) : x0
-    x, _ = _overlap_idmrg_sweeps(ket, x0;
-                                 tol = alg.tol, maxiter = alg.maxiter,
-                                 verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve)
+    x, _, _ = _overlap_idmrg_sweeps(ket, x0, alg)
     return _global_normalize!(x)
 end
 

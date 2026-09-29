@@ -7,7 +7,7 @@
                                     VUMPS(D = 12, maxiter = 300, tol = 1e-10))
     ev = real(expectationvalue(ψv, H, envsv) / 2)
 
-    ψi, envsi, ϵ = find_groundstate(randomimps(T, [2, 2]; D = 12), H,
+    ψi, envsi, _ = find_groundstate(randomimps(T, [2, 2]; D = 12), H,
                                     IDMRG(D = 12, maxiter = 300, tol = 1e-9))
     ei = real(expectationvalue(ψi, H, envsi) / 2)
 
@@ -29,7 +29,7 @@
                         [(1.0, Sx(T), Sx(T)), (1.0, Sy(T), Sy(T)), (1.0, Sz(T), Sz(T))])
     H2 = SparseIMPO([Wd, Wd])
     Random.seed!(71)
-    ψc, envsc, ϵc = find_groundstate(H2, IDMRG(D = 12, maxiter = 300, tol = 1e-9))
+    ψc, envsc, _ = find_groundstate(H2, IDMRG(D = 12, maxiter = 300, tol = 1e-9))
     @test max_bonddim(ψc) <= 12
     ec = real(expectationvalue(ψc, H2, envsc) / 2)
     @test abs(ec - e_exact) < 2e-4

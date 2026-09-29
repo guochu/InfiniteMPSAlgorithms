@@ -134,7 +134,7 @@ end
     q = copy(ψ)
     changebond!(q; D = 6)
     @test phydims(q) == dims && all(bonddim(q, ℓ) == 6 for ℓ in 1:3)
-    y = compress(ψ, VOMPS(D = 6, maxiter = 10))
+    y, _ = compress(ψ, VOMPS(D = 6, maxiter = 10))
     @test phydims(y) == dims
     ym = mult(H1, ψ)
     @test phydims(ym) == dims
