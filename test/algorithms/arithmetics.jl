@@ -95,8 +95,8 @@ end
     W1 = randomimpo(T, [2, 2]; D = 2)
     W2 = randomimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
-    # 精确（无 alg）：naive 构造 + 规范化
-    Pe = mult(W1, W2)
+    # 精确（无 alg）：严格 `*` + 规范化（mult 的两参数 mpo·mpo 版本已删除）
+    Pe = InfiniteMPSAlgorithms._global_normalize!(CanonicalIMPO(W1 * W2))
     @test Pe isa CanonicalIMPO && ismixedcanonical(Pe) && bonddim(Pe, 1) == 6
     # mpo·mps 精确路径
     ψ = randomimps(T, [2, 2]; D = 3)

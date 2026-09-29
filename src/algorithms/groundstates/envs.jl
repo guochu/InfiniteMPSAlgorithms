@@ -4,7 +4,9 @@
 # 非齐次线性解 `linsolve`（Schur 逐 level 通道）、恒等层固定点投影
 # `regularize!`、以及 DenseMPO 通道的转移矩阵主本征向量 `dominant_env`。
 
-"`_to3(L)`: `(bra, ket)` 矩阵环境的 rank-3 视图（w 维 = 1）。"
+"`_to3(L)`: `(bra, ket)` 矩阵环境的 rank-3 视图（w 维 = 1）——恒等通道
+（OverlapCache 的 rank-2 环境）进入统一有效哈密顿量 kernel 的升维入口
+（effective.jl `C_hamiltonian`/`AC_hamiltonian`）。"
 _to3(L::AbstractMatrix{T}) where {T} = reshape(L, size(L, 1), 1, size(L, 2))
 _to3(L::AbstractArray{T,3}) where {T} = L
 
@@ -76,8 +78,8 @@ end
     dominant_env(W, ψ; side=:left, which=:LM, kwargs...) -> (λ, L)
 
 Dominant eigenvector of the identity/MPO-channel transfer matrix (tiled over
-one unit cell). The identity channel uses AL/AR (strictly canonical) and
-returns `λ ≈ 1`.
+one unit cell), rank-3 `(bond, w, bond)`（identity 通道 w = 1）. The identity
+channel uses AL/AR (strictly canonical) and returns `λ ≈ 1`.
 """
 function dominant_env(ψ::CanonicalIMPS; side::Symbol = :left, which::Symbol = :LM, kwargs...)
     return dominant_env(nothing, ψ; side = side, which = which, kwargs...)
@@ -96,7 +98,7 @@ function dominant_env(op::Union{Nothing,DenseIMPO}, ψ::CanonicalIMPS;
     λs, vs, _ = _eigsolve(matvec, v0, 1, which; ishermitian = false, tol = tol,
                           krylovdim = krylovdim, maxiter = maxiter)
     λ = λs[1]
-    L = identity ? reshape(vs[1], D, D) : reshape(vs[1], D, size(op[1], 1), D)
+    L = identity ? reshape(vs[1], D, 1, D) : reshape(vs[1], D, size(op[1], 1), D)
     L ./= norm(L)
     return λ, L
 end

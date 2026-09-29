@@ -36,7 +36,7 @@ C′[α, β] = Σ GL[α, w, α′] · C[α′, β′] · GR[β′, w, β]
 ```
 """
 function C_hamiltonian(site::Int, below, operator, above, envs::Environments)
-    # OverlapCache 的环境为 rank-2 矩阵，经 _to3 升为 (b, 1, b') 后进统一 kernel
+    # 恒等通道（OverlapCache）的环境为 rank-2 矩阵，经 _to3 升为 (b, 1, b') 后进统一 kernel
     return MPO_C_Hamiltonian(_to3(leftenv(envs, site + 1)), _to3(rightenv(envs, site)))
 end
 

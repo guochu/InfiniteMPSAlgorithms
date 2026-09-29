@@ -60,7 +60,7 @@ function OverlapCache(ψ::CanonicalIMPS; kwargs...)
     return OverlapCache(ψ, ψ, lefts, rights)
 end
 
-# rank-2 恒等通道固定点（environments.jl `_ternary_fixedpoints` 的无算符分支
+# rank-2 恒等通道固定点（mult.jl `_ternary_fixedpoints` 的无算符分支
 # 的 rank-2 版；rank-2 双层 push 的 (above, below) 参数序见文件头注释）。
 # `alg`（如 `Defaults.alg_environments()` 或动态容差适配后的副本）提供
 # `tol`/`maxiter`；`krylovdim` 取 `Defaults.krylovdim`。

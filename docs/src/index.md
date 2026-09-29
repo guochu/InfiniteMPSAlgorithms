@@ -90,7 +90,7 @@ The strict (compression-free) constructions are the typed operators
 `W1 * W2` / `W * ψ` / `hadamard(ψ1, ψ2)` on the raw `DenseIMPO`/`DenseIMPS`
 containers (no canonicalization; `CanonicalIMPS`/`CanonicalIMPO` inputs are
 not accepted — convert explicitly first), plus the two-argument canonical
-forms `mult(W, ψ)` / `mult(W, W2)`. The `naive_*` twins of
+form `mult(W, ψ)`（mpo·mpo 组合的规范代表即 `CanonicalIMPO(W1 * W2)`）. The `naive_*` twins of
 `mult` / `hadamard` materialize the full target family first and are intended
 for debugging.
 

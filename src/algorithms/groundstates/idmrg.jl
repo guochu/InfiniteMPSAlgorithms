@@ -56,11 +56,11 @@ function DMRGCache(ψ::CanonicalIMPS, operator::DenseIMPO; kwargs...)
     rights = Vector{Array{T,3}}(undef, N)
     _, L0 = dominant_env(operator, ψ; side = :left, kwargs...)
     _, R0 = dominant_env(operator, ψ; side = :right, kwargs...)
-    lefts[1] = _to3(L0)
+    lefts[1] = L0
     for ℓ in 2:N
         lefts[ℓ] = push_env_left(lefts[ℓ-1], operator[ℓ-1], ψ.AL[ℓ-1])
     end
-    rights[N] = _to3(R0)
+    rights[N] = R0
     for ℓ in N-1:-1:1
         rights[ℓ] = push_env_right(rights[ℓ+1], operator[ℓ+1], ψ.AR[ℓ+1])
     end

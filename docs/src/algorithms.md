@@ -113,9 +113,9 @@ compress(x, alg::Union{VOMPS,IDMRG}) -> y
 - The strict (compression-free) constructions are the typed operators
   `Base.:*(::DenseIMPO, ::DenseIMPO)` / `Base.:*(::DenseIMPO, ::DenseIMPS)` /
   `hadamard(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
-  `operators/linalg.jl`) plus the two-argument canonical forms
-  `mult(W, ψ)` / `mult(W, W2)`; the strict operators do not accept
-  `CanonicalIMPS`/`CanonicalIMPO` (convert explicitly first).
+  `operators/linalg.jl`) plus the two-argument canonical form `mult(W, ψ)`
+  （mpo·mpo 组合的规范代表即 `CanonicalIMPO(W1 * W2)`）; the strict operators
+  do not accept `CanonicalIMPS`/`CanonicalIMPO` (convert explicitly first).
 - The debug twins `naive_mult` / `naive_hadamard` were removed: the strict
   typed operators (`Base.:*` / `hadamard` on `DenseIMPO`/`DenseIMPS`) followed
   by `compress` / `compress!` express the same pipeline.

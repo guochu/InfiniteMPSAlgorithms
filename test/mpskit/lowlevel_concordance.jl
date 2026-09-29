@@ -359,11 +359,12 @@ end
     λR, R1 = InfiniteMPSAlgorithms.dominant_env(ψA; side = :right)
     @test abs(λR - 1) < 1e-8
     @test norm(R1) ≈ 1 atol = 1e-12
-    # 与 MPSKit 环境恒等 level 的固定点对齐（N = 1，无构造歧义）
+    # 与 MPSKit 环境恒等 level 的固定点对齐（N = 1，无构造歧义；
+    # dominant_env 恒返回 rank-3 (bond, w, bond)，恒等通道 w = 1）
     menvs1 = MPSKit.environments(ψ_mk1, H_mk1)
     GL1 = envarray(convert(TensorMap, MPSKit.leftenv(menvs1, 1, ψ_mk1)))[:, 1, :]
     sL = dot(vec(GL1), vec(L1)) / dot(vec(GL1), vec(GL1))
-    @test norm(L1 .- sL .* GL1) < 1e-6
+    @test norm(L1[:, 1, :] .- sL .* GL1) < 1e-6
 end
 
 @testset "dot ≡ MPSKit（默认 krylovdim = 30）" begin

@@ -52,9 +52,9 @@ dimensions), `DenseIMPO * DenseIMPS` applies with kernel
 [`fuse`](@ref) (bond dimension = W bond × ψ bond). Unit-cell lengths must be
 compatible (`length(target) % length(W) == 0`). No canonicalization or
 normalization is performed — the raw fused tensor string is returned
-(`DenseIMPO`/`DenseIMPS`). For the canonicalized, normalized representatives
-use `mult(W, W2)` / `mult(W, ψ)`; for the variational compression use
-`mult(W, ψ, alg)`.
+(`DenseIMPO`/`DenseIMPS`). For the canonicalized representative use
+`CanonicalIMPO(W * W2)` / `mult(W, ψ)`; for the variational compression use
+`mult(W, ψ, alg)` / `mult(W, W2, alg)`.
 """
 function Base.:*(W::DenseIMPO, W2::DenseIMPO)
     (length(W2) % length(W) == 0) ||
