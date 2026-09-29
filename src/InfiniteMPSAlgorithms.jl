@@ -66,6 +66,7 @@ include("effective.jl")
 #               VOMPS / IDMRG compression engines, and the exact_* debug
 #               constructors;
 include("algorithms/algdefs.jl")
+include("algorithms/groundstates/envs.jl")
 include("algorithms/groundstates/vumps.jl")
 include("algorithms/groundstates/idmrg.jl")
 include("algorithms/timeevo/tdvp.jl")

@@ -80,41 +80,7 @@ function MultCache(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO,
 end
 
 # 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 overlap.jl
-
-"""
-    fuse(W, AL) -> Array{T,3}
-
-Per-site fusion of an MPO tensor with a left-orthogonal MPS tensor:
-`B[(wl·bl), u, (wr·br)] = Σ_d W[wl, u, wr, d] · AL[bl, d, br]`.
-"""
-function fuse(W::AbstractArray{T,4}, AL::AbstractArray{T,3}) where {T}
-    wl, u, wr, _ = size(W)
-    bl, _, br = size(AL)
-    @tensor B5[wl, bl, u, wr, br] := W[wl, u, wr, d] * AL[bl, d, br]
-    return reshape(B5, wl * bl, u, wr * br)
-end
-
-"""
-    _naive_mul_tensor(W1, W2) -> W12
-
-Rank-4 bond fusion (MPO multiplication kernel, mirroring MPSKit's
-`fuse_mul_mpo`): the middle physical index `m` = W1's d = W2's u, and the bond
-dimension = product of the two bond dimensions (they need not be equal):
-
-```julia
-W12[(wl1, wl2), u, (wr1, wr2), d] = Σ_m W1[wl1, u, wr1, m] · W2[wl2, m, wr2, d]
-```
-"""
-function _naive_mul_tensor(W1::AbstractArray{T,4}, W2::AbstractArray{T,4}) where {T}
-    size(W1, 4) == size(W2, 2) ||
-        throw(DimensionMismatch("MPO multiplication requires W1's physical in (d) to match W2's physical out (u)"))
-    # this package's TensorOperations version does not support tuple composite
-    # indices; use a flat intermediate tensor + reshape (as in fuse)
-    @tensor W6[wl1, wl2, u, wr1, wr2, d] :=
-        W1[wl1, u, wr1, m] * W2[wl2, m, wr2, d]
-    return reshape(W6, size(W1, 1) * size(W2, 1), size(W1, 2),
-                   size(W1, 3) * size(W2, 3), size(W2, 4))
-end
+# 严格乘法的 kernel（fuse / _naive_mul_tensor）见 operators/linalg.jl
 
 "VOMPS local AC map (mirrors MPSKit `AC_hamiltonian·ket.AC`):
 AC_new = (GL·O·GR)·ket.AC (各参量允许不同标量类型，自动提升)."

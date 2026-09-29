@@ -71,14 +71,14 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
         return vec(GL)
     end
     v0L = GL0 === nothing ? ones(T, Dl * Dw * Da) : vec(copy(GL0))
-    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false,
-                       tol = alg.tol, krylovdim = Defaults.krylovdim,
-                       maxiter = alg.maxiter)
+    env_alg = KrylovKit.Arnoldi(; tol = alg.tol, krylovdim = Defaults.krylovdim,
+                                maxiter = alg.maxiter)
+    _, vL = fixedpoint(Tleft, v0L, :LM, env_alg)
     # 复环境提升（MPSKit 对齐：环境张量按 eigsolve 返回的实际 eltype 存放；
     # 实输入下融合转移的 leading vector 可为复，通道随后整体升为复算术）
-    TCL = promote_type(T, eltype(GL1[1]))
+    TCL = promote_type(T, eltype(vL))
     GLs = Vector{Array{TCL,3}}(undef, N)
-    GLs[1] = reshape(GL1[1], Dl, Dw, Da)
+    GLs[1] = reshape(vL, Dl, Dw, Da)
     for ℓ in 2:N
         W = Wop(ℓ - 1)
         GLs[ℓ] = isnothing(W) ? push_env_left(GLs[ℓ-1], below.AL[ℓ-1], above.AL[ℓ-1]) :
@@ -96,12 +96,10 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
         return vec(GR)
     end
     v0R = GR0 === nothing ? ones(T, Da * Dw * Dr) : vec(copy(GR0))
-    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false,
-                       tol = alg.tol, krylovdim = Defaults.krylovdim,
-                       maxiter = alg.maxiter)
-    TCR = promote_type(T, eltype(GRN[1]))
+    _, vR = fixedpoint(Tright, v0R, :LM, env_alg)
+    TCR = promote_type(T, eltype(vR))
     GRs = Vector{Array{TCR,3}}(undef, N)
-    GRs[N] = reshape(GRN[1], Da, Dw, Dr)
+    GRs[N] = reshape(vR, Da, Dw, Dr)
     for ℓ in N-1:-1:1
         W = Wop(ℓ + 1)
         GRs[ℓ] = isnothing(W) ? push_env_right(GRs[ℓ+1], above.AR[ℓ+1], below.AR[ℓ+1]) :
