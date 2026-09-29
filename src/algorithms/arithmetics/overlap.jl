@@ -201,7 +201,8 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
                                iters::Union{Nothing,Base.RefValue{Int}} = nothing,
                                alg_gauge = Defaults.alg_gauge(),
                                alg_environments = Defaults.alg_environments(),
-                               alg_orth = Defaults.alg_orth())
+                               alg_orth = Defaults.alg_orth(),
+                               finalize = Defaults._finalize)
     N = length(ket)
     x = copy(x0)
     envs = OverlapCache(x, ket, alg_environments)
@@ -226,6 +227,8 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
         # envs_step!（热启动 + 动态环境容差）
         alg_envs = updatetol(alg_environments, iter - 1, ϵ)
         envs = OverlapCache(x, ket, alg_envs; GL0 = envs.lefts[1], GR0 = envs.rights[N])
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        x, envs = finalize(iter, x, ket, envs)
         ϵ = _galerkin_err(ket, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
@@ -251,7 +254,9 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
                                tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                                verbosity::Int = Defaults.verbosity,
                                iters::Union{Nothing,Base.RefValue{Int}} = nothing,
-                               alg_gauge = Defaults.alg_gauge())
+                               alg_gauge = Defaults.alg_gauge(),
+                               alg_orth = Defaults.alg_orth(),
+                               finalize = Defaults._finalize)
     N = length(ket)
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
@@ -267,14 +272,14 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
         for ℓ in 1:N
             x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), ket.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ])
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg_orth)
             transfer_leftenv!(envs, x, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
             x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), ket.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ])
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg_orth)
             transfer_rightenv!(envs, x, ket, ℓ - 1)
         end
         # 环境重标定
@@ -282,6 +287,8 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
         # 收敛判据：bond 0 中心矩阵漂移
         ϵ = norm(x.C[0] - C_old)
         verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        x, envs = finalize(iter, x, ket, envs)
         ϵ < tol && break
     end
     iters === nothing || (iters[] = iter)

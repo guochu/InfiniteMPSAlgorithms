@@ -249,14 +249,9 @@ function recalculate!(envs::DMRGCache, ψ::CanonicalIMPS,
     return envs
 end
 
-"_transpose_tail(A) / _transpose_front(A): swap the front and back indices
-`(Dl, d, Dr) ↔ (Dr, d, Dl)`."
-_transpose_tail(A::AbstractArray{T,3}) where {T} = permutedims(A, (3, 2, 1))
-_transpose_front(A::AbstractArray{T,3}) where {T} = permutedims(A, (3, 2, 1))
-
 "MPSKit's `_localupdate_sweep_idmrg!`: forward + backward sweep; returns
 `(ψ, envs, C_old, E)`."
-function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve)
+function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve, alg_orth)
     N = length(ψ)
     local E
     C_old = ψ.C[0]
@@ -264,14 +259,14 @@ function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve)
     for pos in 1:N
         h = AC_hamiltonian(pos, ψ, H, ψ, envs)
         _, ψ.AC[pos] = fixedpoint(h, ψ.AC[pos], :SR, alg_eigsolve)
-        ψ.AL[pos], ψ.C[pos] = leftorth(ψ.AC[pos], (1, 2), (3,))
+        ψ.AL[pos], ψ.C[pos] = _leftsplit(ψ.AC[pos], alg_orth)
         transfer_leftenv!(envs, ψ, H, ψ, pos + 1)
     end
     # right to left sweep
     for pos in N:-1:1
         h = AC_hamiltonian(pos, ψ, H, ψ, envs)
         E, ψ.AC[pos] = fixedpoint(h, ψ.AC[pos], :SR, alg_eigsolve)
-        ψ.C[pos - 1], ψ.AR[pos] = rightorth(ψ.AC[pos], (1,), (2, 3))
+        ψ.C[pos - 1], ψ.AR[pos] = _rightsplit(ψ.AC[pos], alg_orth)
         transfer_rightenv!(envs, ψ, H, ψ, pos - 1)
     end
     return ψ, envs, C_old, E
@@ -295,7 +290,10 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG
     for outer iter in 1:alg.maxiter
         # MPSKit 第 iter 次扫描时 state.iter = iter-1
         alg_eigsolve = updatetol(alg.alg_eigsolve, iter - 1, ϵ)
-        ψ, envs, C_old, E_new = _localupdate_sweep_idmrg!(ψ, operator, envs, alg_eigsolve)
+        ψ, envs, C_old, E_new = _localupdate_sweep_idmrg!(ψ, operator, envs,
+                                                          alg_eigsolve, alg.alg_orth)
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        ψ, envs = alg.finalize(iter, ψ, operator, envs)
         # error criterion（bond 0 中心矩阵之差）
         ϵ = norm(ψ.C[0] - C_old)
         # new energy

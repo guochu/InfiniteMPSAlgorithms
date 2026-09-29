@@ -86,11 +86,12 @@ function _compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
                               verbosity = alg.verbosity, iters = iters,
                               alg_gauge = alg.alg_gauge,
                               alg_environments = alg.alg_environments,
-                              alg_orth = alg.alg_orth)
+                              alg_orth = alg.alg_orth, finalize = alg.finalize)
     else
         _overlap_idmrg_sweeps(ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
                               verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge)
+                              alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
+                              finalize = alg.finalize)
     end
     return _global_normalize!(x), iters[]
 end
@@ -111,11 +112,12 @@ function _compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG},
                               verbosity = alg.verbosity, iters = iters,
                               alg_gauge = alg.alg_gauge,
                               alg_environments = alg.alg_environments,
-                              alg_orth = alg.alg_orth)
+                              alg_orth = alg.alg_orth, finalize = alg.finalize)
     else
         _overlap_idmrg_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
                               verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge)
+                              alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
+                              finalize = alg.finalize)
     end
     x = _global_normalize!(x)
     return devectorize(x), iters[]
@@ -132,11 +134,12 @@ function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG},
                               verbosity = alg.verbosity, iters = iters,
                               alg_gauge = alg.alg_gauge,
                               alg_environments = alg.alg_environments,
-                              alg_orth = alg.alg_orth)
+                              alg_orth = alg.alg_orth, finalize = alg.finalize)
     else
         _overlap_idmrg_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
                               verbosity = alg.verbosity, iters = iters,
-                              alg_gauge = alg.alg_gauge)
+                              alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
+                              finalize = alg.finalize)
     end
     x = _global_normalize!(x)
     return devectorize(x), iters[]

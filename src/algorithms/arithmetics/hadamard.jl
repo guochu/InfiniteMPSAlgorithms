@@ -45,11 +45,12 @@ function _hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMR
                       verbosity = alg.verbosity, iters = iters,
                       alg_gauge = alg.alg_gauge,
                       alg_environments = alg.alg_environments,
-                      alg_orth = alg.alg_orth)
+                      alg_orth = alg.alg_orth, finalize = alg.finalize)
     else
         _idmrg_sweeps(ψ2, ψ1, x0; tol = alg.tol, maxiter = alg.maxiter,
                       verbosity = alg.verbosity, iters = iters,
-                      alg_gauge = alg.alg_gauge)
+                      alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
+                      finalize = alg.finalize)
     end
     return y, iters[]
 end
@@ -382,7 +383,8 @@ function _vomps_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIM
                        iters::Union{Nothing,Base.RefValue{Int}} = nothing,
                        alg_gauge = Defaults.alg_gauge(),
                        alg_environments = Defaults.alg_environments(),
-                       alg_orth = Defaults.alg_orth())
+                       alg_orth = Defaults.alg_orth(),
+                       finalize = Defaults._finalize)
     N = length(ket1)
     x = copy(x0)
     envs = HadamardCache(x, ket1, ket2, alg_environments)
@@ -409,6 +411,8 @@ function _vomps_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIM
         alg_envs = updatetol(alg_environments, iter - 1, ϵ)
         envs = HadamardCache(x, ket1, ket2, alg_envs;
                              GL0 = envs.lefts[1], GR0 = envs.rights[N])
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        x, envs = finalize(iter, x, ket2, envs)
         ϵ = _galerkin_err(ket2, ket1, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
@@ -429,7 +433,9 @@ function _idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIM
                        tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                        verbosity::Int = Defaults.verbosity,
                        iters::Union{Nothing,Base.RefValue{Int}} = nothing,
-                       alg_gauge = Defaults.alg_gauge())
+                       alg_gauge = Defaults.alg_gauge(),
+                       alg_orth = Defaults.alg_orth(),
+                       finalize = Defaults._finalize)
     N = length(ket1)
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
@@ -446,7 +452,7 @@ function _idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIM
             x.AC[ℓ] = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
                                  ket2.AC[ℓ], ket1.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ])
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg_orth)
             transfer_leftenv!(envs, x, ket2, ket1, ℓ + 1)
         end
         # right to left sweep
@@ -454,7 +460,7 @@ function _idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIM
             x.AC[ℓ] = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
                                  ket2.AC[ℓ], ket1.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ])
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg_orth)
             transfer_rightenv!(envs, x, ket2, ket1, ℓ - 1)
         end
         # 环境重标定
@@ -462,6 +468,8 @@ function _idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIM
         # 收敛判据：bond 0 中心矩阵漂移
         ϵ = norm(x.C[0] - C_old)
         verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        x, envs = finalize(iter, x, ket2, envs)
         ϵ < tol && break
     end
     iters === nothing || (iters[] = iter)

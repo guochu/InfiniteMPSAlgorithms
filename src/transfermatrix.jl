@@ -172,28 +172,6 @@ end
 
 TransferMatrix(ψ::CanonicalIMPS) = TransferMatrix(ψ.AL, ψ.AL)
 
-# ---------------- eigen fixed points ----------------
-
-"""
-    fixedpoint(operator, x₀, which, alg) -> (λ, v)
-
-Dominant eigenpair of the transfer map (mirrors MPSKit's `fixedpoint`;
-internally KrylovKit.eigsolve). `alg` is a KrylovKit `Lanczos`/`Arnoldi`
-algorithm object.
-"""
-function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.KrylovAlgorithm)
-    isherm = alg isa KrylovKit.Lanczos
-    vals, vecs, _ = _eigsolve(operator, x₀, 1, which;
-                              ishermitian = isherm, tol = alg.tol,
-                              krylovdim = alg.krylovdim, maxiter = alg.maxiter,
-                              eager = true)
-    return vals[1], vecs[1]
-end
-
-"DynamicTol wrapper: uses the inner Krylov algorithm's initial tolerance."
-fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
-    fixedpoint(operator, x₀, which, alg.alg)
-
 """
     linsolve(operator, b, x₀, [alg]; a₀ = 1, a₁ = 1) -> (x, info)
 

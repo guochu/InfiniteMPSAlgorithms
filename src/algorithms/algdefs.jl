@@ -35,7 +35,8 @@ Each iteration (MPSKit template):
 end
 
 """
-    IDMRG(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_eigsolve)
+    IDMRG(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_eigsolve,
+          alg_orth, finalize)
 
 Single-site infinite DMRG (mirrors MPSKit's `IDMRG`). `D` (Int, default
 `Defaults.D`) is the bond dimension: `find_groundstate(operator, alg)`
@@ -56,18 +57,25 @@ Each iteration (MPSKit template):
 
 Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 `InfiniteMPS(mps.AR)`) and the environments are recomputed.
+
+`alg_orth`（正交分解 `leftorth`/`rightorth` 的因式化算法）随 `alg` 传入各
+IDMRG 引擎；`finalize(iter, ψ, operator, envs) -> (ψ, envs)` 为逐迭代回调
+（默认恒等，`Defaults._finalize`，同 `VUMPS`/`TDVP`）。
 """
-@kwdef struct IDMRG{A,G} <: Algorithm
+@kwdef struct IDMRG{A,G,O,F} <: Algorithm
     D::Int = Defaults.D
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
     alg_gauge::G = Defaults.alg_gauge()
     alg_eigsolve::A = Defaults.alg_eigsolve()
+    alg_orth::O = Defaults.alg_orth()
+    finalize::F = Defaults._finalize
 end
 
 """
-    VOMPS(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_environments, alg_orth)
+    VOMPS(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_environments,
+          alg_orth, finalize)
 
 Overlap-maximization algorithm parameters for the iterative
 MPO·MPS / MPO·MPO multiplication (named after MPSKit's `VOMPS` family).
@@ -84,9 +92,10 @@ the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
 
 `alg_gauge`/`alg_environments`（动态容差规范固定 / 环境重解，MPSKit
 `adapt_solver` 语义）与 `alg_orth`（候选 `AL` 的 `regauge!` 正交化算法）随
-`alg` 传入各变分引擎。
+`alg` 传入各变分引擎；`finalize(iter, x, operator, envs) -> (x, envs)` 为
+逐迭代回调（默认恒等，`Defaults._finalize`）。
 """
-@kwdef struct VOMPS{G,N,O} <: Algorithm
+@kwdef struct VOMPS{G,N,O,F} <: Algorithm
     D::Int = Defaults.D
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
@@ -94,6 +103,7 @@ the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
     alg_gauge::G = Defaults.alg_gauge()
     alg_environments::N = Defaults.alg_environments()
     alg_orth::O = Defaults.alg_orth()
+    finalize::F = Defaults._finalize
 end
 
 """

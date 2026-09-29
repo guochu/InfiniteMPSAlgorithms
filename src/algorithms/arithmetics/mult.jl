@@ -159,19 +159,39 @@ _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
 
 # ---------------- 正交分解 / 重建的 3、4 维重载（MPS 视图语义统一） ----------------
 
-"`_leftsplit(AC) -> (AL, C)`：MPS 视图 `(wl, u·d, wr)` 的左正交分解
-（rank-3 中心 / rank-4 CanonicalIMPO 中心重载）。"
-_leftsplit(AC::AbstractArray{<:Any,3}) = leftorth(AC, (1, 2), (3,))
-function _leftsplit(AC::AbstractArray{<:Any,4})
-    AL4, C = leftorth(AC, (1, 2, 4), (3,))
-    return permutedims(AL4, (1, 2, 4, 3)), C       # (wl, u, d, wr) → (wl, u, wr, d)
+"`_leftsplit(AC, [alg]) -> (AL, C)`：MPS 视图 `(wl, u·d, wr)` 的左正交分解
+（rank-3 中心 / rank-4 CanonicalIMPO 中心重载；`alg` 为因式化算法，矩阵形态
+调用 `leftorth`——分腿形式仅接受 LQ 族，与 `regauge!` 同款）。
+`_rightsplit` 用 `alg'`（对偶因式化）。"
+_leftsplit(AC::AbstractArray{<:Any,3}, alg = Defaults.alg_orth()) =
+    _leftsplit(_as_mps_view(AC), alg)
+function _leftsplit(AC::AbstractArray{<:Any,3}, alg::FiniteMPSAlgorithms.OrthogonalFactorizationAlgorithm)
+    wl, u, wr = size(AC)
+    Q, C = leftorth(reshape(AC, wl * u, wr); alg = alg)
+    return reshape(Q, wl, u, :), C
+end
+function _leftsplit(AC::AbstractArray{<:Any,4}, alg = Defaults.alg_orth())
+    wl, u, wr, d = size(AC)
+    ALv = _as_mps_view(AC)                                   # (wl, u·d, wr)
+    Q, C = leftorth(reshape(ALv, wl * u * d, wr); alg = alg)
+    AL4 = permutedims(reshape(Q, wl, u, d, :), (1, 2, 4, 3))   # (wl, u, d, r) → (wl, u, r, d)
+    return AL4, C
 end
 
-"`_rightsplit(AC) -> (C, AR)`：MPS 视图 `(wl, u·d, wr)` 的右正交分解。"
-_rightsplit(AC::AbstractArray{<:Any,3}) = rightorth(AC, (1,), (2, 3))
-function _rightsplit(AC::AbstractArray{<:Any,4})
-    C, AR4 = rightorth(AC, (1,), (2, 4, 3))
-    return C, permutedims(AR4, (1, 2, 4, 3))       # (wl, u, d, wr) → (wl, u, wr, d)
+"`_rightsplit(AC, [alg]) -> (C, AR)`：MPS 视图 `(wl, u·d, wr)` 的右正交分解。"
+_rightsplit(AC::AbstractArray{<:Any,3}, alg = Defaults.alg_orth()) =
+    _rightsplit(_as_mps_view(AC), alg)
+function _rightsplit(AC::AbstractArray{<:Any,3}, alg::FiniteMPSAlgorithms.OrthogonalFactorizationAlgorithm)
+    wl, u, wr = size(AC)
+    C, Q = rightorth(reshape(AC, wl, u * wr); alg = alg')
+    return C, reshape(Q, :, u, wr)
+end
+function _rightsplit(AC::AbstractArray{<:Any,4}, alg = Defaults.alg_orth())
+    wl, u, wr, d = size(AC)
+    ACv = _as_mps_view(AC)                                   # (wl, u·d, wr)
+    C, Q = rightorth(reshape(ACv, wl, u * d * wr); alg = alg')
+    AR4 = permutedims(reshape(Q, :, u, d, wr), (1, 2, 4, 3))   # (r, u, d, wr) → (r, u, wr, d)
+    return C, AR4
 end
 
 "`_rebuild(ARs; kwargs)`: 从 AR 串重建混合规范链（rank-3 → CanonicalIMPS、
@@ -262,7 +282,8 @@ function _vomps_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
                        iters::Union{Nothing,Base.RefValue{Int}} = nothing,
                        alg_gauge = Defaults.alg_gauge(),
                        alg_environments = Defaults.alg_environments(),
-                       alg_orth = Defaults.alg_orth())
+                       alg_orth = Defaults.alg_orth(),
+                       finalize = Defaults._finalize)
     N = length(ket)
     x = copy(x0)
     envs = MultCache(x, operator, ket, alg_environments)
@@ -291,6 +312,8 @@ function _vomps_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
         alg_envs = updatetol(alg_environments, iter - 1, ϵ)
         envs = MultCache(x, operator, ket, alg_envs;
                          GL0 = envs.lefts[1], GR0 = envs.rights[N])
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        x, envs = finalize(iter, x, operator, envs)
         ϵ = _galerkin_err(operator, ket, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
@@ -379,7 +402,9 @@ function _idmrg_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
                        tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                        verbosity::Int = Defaults.verbosity,
                        iters::Union{Nothing,Base.RefValue{Int}} = nothing,
-                       alg_gauge = Defaults.alg_gauge())
+                       alg_gauge = Defaults.alg_gauge(),
+                       alg_orth = Defaults.alg_orth(),
+                       finalize = Defaults._finalize)
     N = length(ket)
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点（MPSKit environments(ψ, toapprox...)），
@@ -396,14 +421,14 @@ function _idmrg_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
         for ℓ in 1:N
             x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket.AC[ℓ], ℓ)
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ])
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg_orth)
             transfer_leftenv!(envs, x, operator, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
             x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket.AC[ℓ], ℓ)
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ])
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg_orth)
             transfer_rightenv!(envs, x, operator, ket, ℓ - 1)
         end
         # 环境重标定（MPSKit normalize!(envs, below, operator, above)）
@@ -411,6 +436,8 @@ function _idmrg_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
         # 收敛判据：bond 0 中心矩阵漂移
         ϵ = norm(x.C[0] - C_old)
         verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
+        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        x, envs = finalize(iter, x, operator, envs)
         ϵ < tol && break
     end
     iters === nothing || (iters[] = iter)
@@ -731,11 +758,12 @@ function _mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
                       verbosity = alg.verbosity, iters = iters,
                       alg_gauge = alg.alg_gauge,
                       alg_environments = alg.alg_environments,
-                      alg_orth = alg.alg_orth)
+                      alg_orth = alg.alg_orth, finalize = alg.finalize)
     else
         _idmrg_sweeps(Wm, ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
                       verbosity = alg.verbosity, iters = iters,
-                      alg_gauge = alg.alg_gauge)
+                      alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
+                      finalize = alg.finalize)
     end
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
     # (preserving the ray), then normalize to the package norm convention
@@ -779,11 +807,12 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
                       verbosity = alg.verbosity, iters = iters,
                       alg_gauge = alg.alg_gauge,
                       alg_environments = alg.alg_environments,
-                      alg_orth = alg.alg_orth)
+                      alg_orth = alg.alg_orth, finalize = alg.finalize)
     else
         _idmrg_sweeps(W1c, W2c, x0; tol = alg.tol, maxiter = alg.maxiter,
                       verbosity = alg.verbosity, iters = iters,
-                      alg_gauge = alg.alg_gauge)
+                      alg_gauge = alg.alg_gauge, alg_orth = alg.alg_orth,
+                      finalize = alg.finalize)
     end
     return x, iters[]
 end
