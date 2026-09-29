@@ -34,6 +34,35 @@
         @test collect(W2.AC) == collect(Wc.AC)
     end
 
+    @testset "vectorize ⇄ devectorize 逐站异构物理维" begin
+        # 局域方算符（du == dd）但 r 逐站不同：d=2 与 d=3 混排（unit cell = 3）
+        Ws = [randn(T, 3, 2, 3, 2), randn(T, 3, 3, 3, 3), randn(T, 3, 2, 3, 2)]
+        Wc = CanonicalIMPO(Ws)
+        ψ = vectorize(Wc)
+        @test phydims(ψ) == [4, 9, 4]
+        W2 = devectorize(ψ)
+        @test W2 isa CanonicalIMPO
+        @test collect(W2.AL) == collect(Wc.AL)          # 纯 reshape + C 复用
+        @test collect(W2.AR) == collect(Wc.AR)
+        @test collect(W2.C) == collect(Wc.C)
+        @test collect(W2.AC) == collect(Wc.AC)
+        # 融合维非完全平方（违反局域方算符假定）报错
+        @test_throws ArgumentError devectorize(CanonicalIMPS([randn(T, 3, 6, 3)]))
+    end
+
+    @testset "vectorize ⇄ devectorize（Dense 路径：纯融合、不规范化）" begin
+        # 局域方算符但 r 逐站不同；Dense 路径不做任何规范化
+        Ws = [randn(T, 3, 2, 3, 2), randn(T, 3, 3, 3, 3)]
+        W = DenseIMPO(Ws)
+        ψ = vectorize(W)
+        @test ψ isa DenseIMPS
+        @test phydims(ψ) == [4, 9]
+        @test collect(ψ.As) == asmps_view(Ws)       # 纯融合视图（逐位）
+        W2 = devectorize(ψ)
+        @test W2 isa DenseIMPO
+        @test collect(W2.Ws) == Ws                  # 精确往返
+    end
+
     @testset "superoperator 约定（单点矩阵级）" begin
         d = 2
         W4 = randn(T, 1, d, 1, d)

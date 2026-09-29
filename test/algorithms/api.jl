@@ -182,12 +182,12 @@ end
     envs = DMRGCache(ψ, H)
     @test envs isa DMRGCache
 
-    # 无算符环境：恒等固定点 = I（纯重叠通道）
+    # 无算符环境：恒等固定点 = I（纯重叠通道，rank-2 矩阵环境）
     envs0 = OverlapCache(ψ)
     @test envs0 isa OverlapCache
     I4 = Matrix{T}(I, 4, 4)
-    @test leftenv(envs0, 1)[:, 1, :] ≈ I4
-    @test rightenv(envs0, 1)[:, 1, :] ≈ I4
+    @test leftenv(envs0, 1) ≈ I4
+    @test rightenv(envs0, 1) ≈ I4
 
     # 二元稠密 MPO：哈密顿量通道（DenseIMPO 可直接作基态哈密顿量）
     @test DMRGCache(ψ, identityimpo(T, [2])) isa DMRGCache
@@ -196,7 +196,7 @@ end
     # （主本征向量只确定到任意复相位，比较时先消去复数比例因子）
     envs3 = OverlapCache(ψ, ψ)
     @test envs3 isa OverlapCache
-    L3 = leftenv(envs3, 1)[:, 1, :]
+    L3 = leftenv(envs3, 1)
     @test size(L3) == (4, 4)
     κ = dot(I4, L3) / dot(I4, I4)
     @test norm(L3 - κ * I4) / norm(I4) < 1e-9
@@ -446,13 +446,13 @@ end
     @test max_bonddim(M) <= 3 && bonddim(M, 1) == size(M.C[1], 1)
     @test phydims(M) == [2, 2]
     @test scalartype(M) == T
-    # 左/右正交性（MPS 视图）与 AC = AL·C
-    ALv = asmps_view(collect(M.AL))
+    # 左/右正交性（vectorize 视图）与 AC = AL·C
+    Mv = vectorize(M)
+    ALv = Mv.AL
     @tensor gL[a, b] := conj(ALv[1][x, p, a]) * ALv[1][x, p, b]
     @test gL ≈ I atol = 1e-10
-    ACv = asmps_view(collect(M.AC))
     @tensor rec[a, p, c] := ALv[1][a, p, b] * M.C[1][b, c]
-    @test rec ≈ ACv[1] atol = 1e-9
+    @test rec ≈ Mv.AC[1] atol = 1e-9
     # 构造经 MPS 规范化：DenseIMPO(M) 收集 AL，与输入 W 平行即可——
     # 整体相位/比例是规范自由度（λ 被 normalize!(C) 吸收），不作要求
     dM = _dense_mpo_repr(DenseIMPO(M))

@@ -144,8 +144,8 @@ states, same parameters).
 
 - **Iterative MPO algebra** (compute-on-the-fly, naive family never stored):
   `mult` / `mult!` (variational MPO·MPO composition and MPO·MPS application),
-  `compress` / `compress!` (standalone bond reduction), `hadamard` /
-  `hadamard!` (elementwise product), and `mpo_compress`.
+  `compress` / `compress!` (standalone bond reduction, MPO included), `hadamard` /
+  `hadamard!` (elementwise product).
 - **Strict algebra operators** (compression-free, mirroring MPSKit's naive
   `*`): `DenseIMPO * DenseIMPO`, `DenseIMPO * DenseIMPS`,
   `hadamard(::DenseIMPS, ::DenseIMPS)` on the raw `DenseIMPS`/`DenseIMPO`

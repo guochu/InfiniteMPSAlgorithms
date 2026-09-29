@@ -33,3 +33,83 @@ function Base.:*(W::DenseIMPO, ψ::DenseIMPS)
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     return DenseIMPS([fuse(W[_mod1(ℓ, length(W))], ψ[ℓ]) for ℓ in 1:length(ψ)])
 end
+
+# ---------------- 标量代数 ----------------
+
+# MPSKit convention (scale!(first(mpo), α)): scalar multiplication scales only
+# the first tensor; scaling every tensor would change the operator value to
+# α^N·W (N = unit-cell length) and would break the minus sign for even N.
+function Base.:*(α::Number, W::DenseIMPO)
+    out = [copy(w) for w in W.Ws]
+    out[1] = α .* out[1]
+    return DenseIMPO(out)
+end
+Base.:*(W::DenseIMPO, α::Number) = α * W
+Base.:/(W::DenseIMPO, α::Number) = (1 / α) * W
+Base.:-(W::DenseIMPO) = (-one(scalartype(W))) * W
+
+# ---------------- Dense ↔ Canonical 转换与 Dense 视图（vectorize/devectorize/superoperator） ----------------
+
+"""
+    CanonicalIMPO(W::DenseIMPO; kwargs...) -> CanonicalIMPO
+
+Mixed-canonicalize a plain MPO（等价于 `CanonicalIMPO(W.Ws; kwargs...)`）。
+"""
+CanonicalIMPO(W::DenseIMPO; kwargs...) = CanonicalIMPO(W.Ws; kwargs...)
+
+"`DenseIMPO(W)`: convert back to a plain MPO using the left-canonical tensor
+string `W.AL`. `tr(∏AL)` is the operator amplitude invariant under gauge
+transformations (including phases) (= the construction input amplitude / a
+positive real λ), whereas `tr(∏AC)` is C-matrix weighted and gauge dependent;
+`AL` is used here to keep the conversion unique."
+DenseIMPO(W::CanonicalIMPO) = DenseIMPO(collect(W.AL))
+
+"`vectorize(W::DenseIMPO) -> DenseIMPS`：[`vectorize`](@ref) 的未规范化副本
+（纯融合视图，与 `CanonicalIMPO` 输入的规范携带版共用同一融合约定）。"
+vectorize(W::DenseIMPO) = DenseIMPS(asmps_view(W.Ws))
+vectorize(W::SparseIMPO) = vectorize(DenseIMPO(W))
+
+"`devectorize(ψ::DenseIMPS) -> DenseIMPO`：[`devectorize`](@ref) 的未规范化
+副本（纯拆分，各站融合物理维须为完全平方数，`r` 可逐站不同）。"
+function devectorize(ψ::DenseIMPS)
+    rs = _local_square_rdims(phydims(ψ))
+    return DenseIMPO(mps_view_to_mpo(collect(ψ.As); dus = rs, dds = rs))
+end
+
+"""
+    superoperator(W; side = :left) -> DenseIMPO
+
+The left/right multiplication superoperator of an MPO, as an MPO on the
+doubled (bra ⊗ ket) space with the fused index convention of
+[`vectorize`](@ref) (`f = u + du·(d - 1)`, `u` the bra / row leg fast):
+
+- `side = :left` (`= superoperator(W, identityimpo(dus))`): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
+  so that `𝓦 · vec(X)` is `vec(W·X)` (W multiplies from the left);
+- `side = :right` (`= superoperator(identityimpo(dus), transpose(W))`): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
+  so that `𝓦 · vec(X)` is `vec(X·W)` (W multiplies from the right).
+
+The bond dimensions are unchanged (the spectator channel carries trivial
+δ-bonds) and the physical dimension becomes `du·dd` (square operators only).
+The output is a plain `DenseIMPO` (not canonical). Combined with
+[`vectorize`](@ref) this turns operator–operator products into operator–state
+problems, e.g. for `mult`:
+
+    mult(superoperator(W1; side = :left),  vectorize(W2)) == vectorize(W1 * W2)
+    mult(superoperator(W2; side = :right), vectorize(W1)) == vectorize(W1 * W2)
+
+A typical finite-T purification generator is the sum of the two channel
+superoperators, `𝓦_L(H) + 𝓦_R(H)` (= `H ⊗ I + I ⊗ Hᵀ`).
+"""
+function superoperator(W::DenseIMPO; side::Symbol = :left)
+    dus = phydims(W)
+    for ℓ in 1:length(W)
+        size(W[ℓ], 4) == dus[ℓ] ||
+            throw(ArgumentError("superoperator requires square operators (u == d) at site $ℓ"))
+    end
+    I = identityimpo(scalartype(W), dus)
+    side === :left && return superoperator(W, I)
+    side === :right && return superoperator(I, transpose(W))
+    throw(ArgumentError("side must be :left or :right, got $side"))
+end
+superoperator(W::SparseIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
+superoperator(W::CanonicalIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)

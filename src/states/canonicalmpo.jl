@@ -68,8 +68,9 @@ end
 """
     CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...)
 
-Construct from plain MPO tensors (mirrors `CanonicalIMPS(As)`): convert
-to an MPS via `asmps_view`, then mixed-canonicalize with `gaugefix!`
+Construct from plain MPO tensors (mirrors `CanonicalIMPS(As)`): fuse the
+physical legs into the vectorized MPS view (the [`vectorize`](@ref)
+convention), then mixed-canonicalize with `gaugefix!`
 (the operator ray is preserved exactly; see the type docstring for the
 normalization-scale caveat).
 """
@@ -78,8 +79,6 @@ function CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...) where {T}
     ψ = CanonicalIMPS(asmps_view(Ws); kwargs...)
     return _mpo_from_mps(ψ, [size(Ws[ℓ], 2) for ℓ in 1:N], [size(Ws[ℓ], 4) for ℓ in 1:N])
 end
-
-CanonicalIMPO(W::DenseIMPO; kwargs...) = CanonicalIMPO(W.Ws; kwargs...)
 
 # ---------------- interface (mirrors CanonicalIMPS) ----------------
 
@@ -134,17 +133,11 @@ function LinearAlgebra.normalize!(W::CanonicalIMPO)
     return W
 end
 
-"`DenseIMPO(W)`: convert back to a plain MPO using the left-canonical tensor
-string `W.AL`. `tr(∏AL)` is the operator amplitude invariant under gauge
-transformations (including phases) (= the construction input amplitude / a
-positive real λ), whereas `tr(∏AC)` is C-matrix weighted and gauge dependent;
-`AL` is used here to keep the conversion unique."
-DenseIMPO(W::CanonicalIMPO) = DenseIMPO(collect(W.AL))
-
 """
     asmps_view(Ws::Vector{<:Array{T,4}}) -> Vector{Array{T,3}}
 
-MPS view of an MPO tensor string: `(wl, u, wr, d)` → `(wl, u*d, wr)`.
+Internal reshape kernel of [`vectorize`](@ref): MPS view of an MPO tensor
+string, `(wl, u, wr, d)` → `(wl, u*d, wr)`.
 """
 function asmps_view(Ws::Vector{<:Array{T,4}}) where {T}
     out = Vector{Array{T,3}}(undef, length(Ws))
@@ -154,13 +147,12 @@ function asmps_view(Ws::Vector{<:Array{T,4}}) where {T}
     end
     return out
 end
-asmps_view(W::DenseIMPO) = asmps_view(W.Ws)
-asmps_view(W::CanonicalIMPO) = asmps_view(collect(W.AC))
 
 """
     mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus, dds) -> Vector{Array{T,4}}
 
-Inverse of [`asmps_view`](@ref): `(wl, u*d, wr)` → `(wl, u, wr, d)`.
+Internal reshape kernel of [`devectorize`](@ref), inverse of [`asmps_view`](@ref):
+`(wl, u*d, wr)` → `(wl, u, wr, d)`.
 `dus`/`dds` give the u/d physical dimensions per site.
 """
 function mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus::AbstractVector{Int}, dds::AbstractVector{Int}) where {T}
@@ -176,23 +168,33 @@ end
 
 # ---------------- operator-algebra transforms (vectorize / devectorize / superoperator) ----------------
 
+# 融合物理维 → 逐站局域方算符边长 r（包假定：局域 du == dd，各站 r 可不同）
+function _local_square_rdims(ps)
+    return [begin
+                r = isqrt(p)
+                r^2 == p || throw(ArgumentError(
+                    "fused physical dimension $p is not a perfect square (local du == dd required)"))
+                r
+            end for p in ps]
+end
+
 """
     vectorize(W::CanonicalIMPO) -> CanonicalIMPS
-    vectorize(W::Union{DenseIMPO,SparseIMPO}) -> CanonicalIMPS
+    vectorize(W::Union{DenseIMPO,SparseIMPO}) -> DenseIMPS
 
 Vectorize an MPO into an MPS on the doubled (bra ⊗ ket) space: the two
 physical legs of every tensor are fused into one composite index
 
     f = u + du·(d - 1)
 
-(`u` the bra / operator-row leg is the fast index — the same MPS view as
-[`asmps_view`](@ref), i.e. the row-major vectorization of the operator
-matrix). The bond dimensions and the mixed-canonical gauges are carried over
-verbatim, so the `CanonicalIMPO` conversion is exact (a pure reshape), and
-`dot(vectorize(A), vectorize(B))` is the Hilbert–Schmidt inner product of the
-operators. A `DenseIMPO`/`SparseIMPO` input is mixed-canonicalized first
-(the operator value is preserved exactly in the periodic trace
-representation).
+(`u` the bra / operator-row leg is the fast index — i.e. the row-major
+vectorization of the operator matrix). The `CanonicalIMPO` method carries the
+mixed-canonical gauge families (including `C`) over verbatim — a pure
+reshape, so the conversion is exact and `dot(vectorize(A), vectorize(B))` is
+the Hilbert–Schmidt inner product of the operators. The
+`DenseIMPO`/`SparseIMPO` method is the uncanonicalized counterpart: a pure
+fused view of the raw tensors with no canonicalization (mirror of the
+`DenseIMPS`/`CanonicalIMPS` split).
 """
 function vectorize(W::CanonicalIMPO)
     return CanonicalIMPS(PeriodicVector(asmps_view(collect(W.AL))),
@@ -200,65 +202,24 @@ function vectorize(W::CanonicalIMPO)
                          copy(W.C),
                          PeriodicVector(asmps_view(collect(W.AC))))
 end
-vectorize(W::DenseIMPO) = vectorize(CanonicalIMPO(W))
-vectorize(W::SparseIMPO) = vectorize(CanonicalIMPO(DenseIMPO(W)))
+# DenseIMPO/SparseIMPO/DenseIMPS 方法（纯融合视图、互逆转换）见 operators/linalg.jl
 
 """
     devectorize(ψ::CanonicalIMPS) -> CanonicalIMPO
+    devectorize(ψ::DenseIMPS) -> DenseIMPO
 
 Inverse of [`vectorize`](@ref): split the fused physical index `f` of every
-site tensor back into the bra/ket pair `(u, d)`. All physical dimensions must
-be equal perfect squares (square operators); the conversion is exact.
+site tensor back into the bra/ket pair `(u, d)`. By the package convention the
+local input/output dimensions agree (`du == dd` at every site), so each site's
+fused dimension must be a perfect square `r[ℓ]²` — with `r` allowed to differ
+from site to site (inhomogeneous unit cells). The conversion is exact: the
+families are split by a pure reshape and the canonical gauge data (including
+`C`) is carried over verbatim, without any re-canonicalization.
 """
 function devectorize(ψ::CanonicalIMPS)
-    N = length(ψ)
-    p = size(ψ.AL[1], 2)
-    r = isqrt(p)
-    r^2 == p || throw(ArgumentError("physical dimension $p is not a perfect square"))
-    for ℓ in 2:N
-        size(ψ.AL[ℓ], 2) == p ||
-            throw(ArgumentError("inhomogeneous physical dimensions at site $ℓ"))
-    end
-    return _mpo_from_mps(ψ, fill(r, N), fill(r, N))
+    rs = _local_square_rdims(phydims(ψ))
+    return _mpo_from_mps(ψ, rs, rs)
 end
-
-"""
-    superoperator(W; side = :left) -> DenseIMPO
-
-The left/right multiplication superoperator of an MPO, as an MPO on the
-doubled (bra ⊗ ket) space with the fused index convention of
-[`vectorize`](@ref) (`f = u + du·(d - 1)`, `u` the bra / row leg fast):
-
-- `side = :left` (`= superoperator(W, identityimpo(dus))`): `𝓦[bl, f', br, f] = W[bl, u', br, u]·δ[d', d]`,
-  so that `𝓦 · vec(X)` is `vec(W·X)` (W multiplies from the left);
-- `side = :right` (`= superoperator(identityimpo(dus), transpose(W))`): `𝓦[bl, f', br, f] = δ[u', u]·W[bl, d, br, d']`,
-  so that `𝓦 · vec(X)` is `vec(X·W)` (W multiplies from the right).
-
-The bond dimensions are unchanged (the spectator channel carries trivial
-δ-bonds) and the physical dimension becomes `du·dd` (square operators only).
-The output is a plain `DenseIMPO` (not canonical). Combined with
-[`vectorize`](@ref) this turns operator–operator products into operator–state
-problems, e.g. for `mult`:
-
-    mult(superoperator(W1; side = :left),  vectorize(W2)) == vectorize(W1 * W2)
-    mult(superoperator(W2; side = :right), vectorize(W1)) == vectorize(W1 * W2)
-
-A typical finite-T purification generator is the sum of the two channel
-superoperators, `𝓦_L(H) + 𝓦_R(H)` (= `H ⊗ I + I ⊗ Hᵀ`).
-"""
-function superoperator(W::DenseIMPO; side::Symbol = :left)
-    dus = phydims(W)
-    for ℓ in 1:length(W)
-        size(W[ℓ], 4) == dus[ℓ] ||
-            throw(ArgumentError("superoperator requires square operators (u == d) at site $ℓ"))
-    end
-    I = identityimpo(scalartype(W), dus)
-    side === :left && return superoperator(W, I)
-    side === :right && return superoperator(I, transpose(W))
-    throw(ArgumentError("side must be :left or :right, got $side"))
-end
-superoperator(W::SparseIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
-superoperator(W::CanonicalIMPO; side::Symbol = :left) = superoperator(DenseIMPO(W); side)
 
 """
     fidelity(W₁, W₂) -> Real
@@ -274,43 +235,15 @@ fidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = fidelity(vectorize(W₁), v
 infidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = 1 - fidelity(W₁, W₂)
 
 """
-    mpo_compress(W::DenseIMPO, D; tol=1e-10, maxiter=100, verbosity=0) -> DenseIMPO
-
-Variationally compress an MPO to bond dimension `D`: view the MPO as an MPS
-(`asmps_view`) and run VOMPS overlap-maximization sweeps on the identity
-channel (equivalent to the bond-`D` variational approximation of the dominant
-eigenvector of the double-layer transfer `W⊗W̄`). The output is the
-**normalized** compressed state mapped back to left-canonical MPO tensors
-(`norm = ‖AC[1]‖ = 1`, the package-wide norm convention; the absolute operator
-amplitude is deliberately not restored — accuracy is measured with
-[`fidelity`](@ref)/[`infidelity`](@ref), which are invariant under scale and
-phase). No overlap is computed (same contract as the other iterative engines).
-"""
-function mpo_compress(W::DenseIMPO, D::Int;
-                      tol::Real = 1.0e-10, maxiter::Int = 100, verbosity::Int = 0)
-    N = length(W)
-    dus = [size(W[ℓ], 2) for ℓ in 1:N]
-    dds = [size(W[ℓ], 4) for ℓ in 1:N]
-    K = asmps_view(W.Ws)
-    ket = CanonicalIMPS(K)       # canonicalize the MPS view of the MPO as the ket
-    x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N]; D = D)
-    x, _ = _vomps_sweeps(nothing, ket, x0, K;
-                           tol = tol, maxiter = maxiter, verbosity = verbosity)
-    _global_normalize!(x)
-    ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
-    return DenseIMPO(ALs4)
-end
-
-"""
     mixedcanonical_error(W) -> (ϵ_left, ϵ_right, ϵ_mixed)
     ismixedcanonical(W; tol = 1e-8, verbosity = 0) -> Bool
 
 Mixed-canonical diagnostics for [`CanonicalIMPO`](@ref): checked in the
-MPS view `(wl, u·d, wr)` (kernel and conventions follow the
+vectorized MPS view `(wl, u·d, wr)` (kernel and conventions follow the
 `CanonicalIMPS` methods).
 """
 mixedcanonical_error(W::CanonicalIMPO) =
-    _mixedcanonical_error(asmps_view(collect(W.AL)), asmps_view(collect(W.AR)), collect(W.C))
+    (vψ = vectorize(W); _mixedcanonical_error(vψ.AL, vψ.AR, vψ.C))
 
 function ismixedcanonical(W::CanonicalIMPO; tol::Real = 1.0e-8, verbosity::Int = 0)
     ϵ_left, ϵ_right, ϵ_mixed = mixedcanonical_error(W)
@@ -325,29 +258,19 @@ end
 # ---------------- gauge interface (delegation to the states/ortho.jl kernels in the MPO view) ----------------
 
 function gaugefix!(W::CanonicalIMPO, A, C₀ = W.C[end]; order = :LR, kwargs...)
-    N = length(W)
-    dus = [size(W.AL[ℓ], 2) for ℓ in 1:N]
-    dds = [size(W.AL[ℓ], 4) for ℓ in 1:N]
-    # A: rank-4 MPO tensors → MPS view; rank-3 views are used directly
-    Av = A isa AbstractVector{<:AbstractArray{<:Number,4}} ? asmps_view(collect(A)) : collect(A)
-    # temporary MPS state over the view families (the gauge process only
-    # reads/writes these families)
-    ALv = asmps_view(collect(W.AL))
-    ARv = asmps_view(collect(W.AR))
-    Cv = collect(W.C)
-    ACv = asmps_view(collect(W.AC))
-    ψ = CanonicalIMPS(PeriodicVector(ALv), PeriodicVector(ARv), PeriodicVector(Cv),
-                             PeriodicVector(ACv))
+    # 规范族逐位携带的 MPS 视图（gaugefix 只读写这些家族）
+    ψ = vectorize(W)
+    # A: rank-4 MPO 张量 → 融合视图；rank-3 视图直接使用
+    Av = A isa AbstractVector{<:AbstractArray{<:Number,4}} ?
+         vectorize(DenseIMPO(collect(A))).As : collect(A)
     gaugefix!(ψ, Av, C₀; order = order, kwargs...)
-    # write back the rank-4 families
-    AL4 = mps_view_to_mpo(collect(ψ.AL); dus = dus, dds = dds)
-    AR4 = mps_view_to_mpo(collect(ψ.AR); dus = dus, dds = dds)
-    AC4 = mps_view_to_mpo(collect(ψ.AC); dus = dus, dds = dds)
-    for ℓ in 1:N
-        W.AL[ℓ] = AL4[ℓ]
-        W.AR[ℓ] = AR4[ℓ]
+    # 写回 rank-4 家族
+    W4 = devectorize(ψ)
+    for ℓ in 1:length(W)
+        W.AL[ℓ] = W4.AL[ℓ]
+        W.AR[ℓ] = W4.AR[ℓ]
         W.C[ℓ] = ψ.C[ℓ]
-        W.AC[ℓ] = AC4[ℓ]
+        W.AC[ℓ] = W4.AC[ℓ]
     end
     return W
 end

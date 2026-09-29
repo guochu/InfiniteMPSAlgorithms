@@ -37,8 +37,6 @@ randomimpo
 vectorize
 devectorize
 superoperator
-asmps_view
-mps_view_to_mpo
 fuse
 ```
 
@@ -105,7 +103,6 @@ svdguess_mult
 svdguess_hadamard
 svdguess_compress
 changebond!
-mpo_compress
 DenseIMPS
 copyphyims
 ```

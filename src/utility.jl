@@ -1,9 +1,7 @@
 const TO = TensorOperations
 
-# scalartype reuses the existing TensorOperations (VectorInterface) function:
-# methods for `Number` and `AbstractArray` already exist; we import it here and
-# only extend it for the package's custom types.
-import TensorOperations: scalartype
+# scalartype 复用 TensorOperations（VectorInterface）的既有函数：`Number` 与
+# `AbstractArray` 的方法已存在，本包只为其自定义类型扩展；`import` 集中在主文件。
 
 _mod1(ℓ::Integer, N::Integer) = mod1(Int(ℓ), Int(N))
 

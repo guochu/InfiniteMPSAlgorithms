@@ -7,7 +7,7 @@
 # - `MultCache`: MPO-application channel ⟨bra|W|ket⟩ (iterative MPO
 #   multiplication mult), see algorithms/mult.jl;
 # - `OverlapCache`: pure overlap channel ⟨bra|ket⟩ (variational compression of
-#   the algebra operations), see algorithms/arithmetics.jl.
+#   the algebra operations), see algorithms/arithmetics/overlap.jl.
 #
 # This file only keeps the shared machinery: the abstract supertype
 # `Environments`, environment access and incremental pushes, and the fixed-point

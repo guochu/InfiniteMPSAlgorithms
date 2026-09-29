@@ -26,26 +26,28 @@ using KrylovKit
 # tensorops 层由 FiniteMPSAlgorithms 提供（本包仅调用、无方法扩展）；
 # 下方 export 将其再导出，对外 API 不变
 using FiniteMPSAlgorithms
+# 方法扩展：distance/distance2 扩展 FiniteMPSAlgorithms 的同名函数（保持其
+# 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
+# TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。
+import FiniteMPSAlgorithms: distance, distance2
+import TensorOperations: scalartype
 
 include("utility.jl")
 
 # ---- data structures (states) ----
 include("states/canonicalmps.jl")
 include("states/infinitemps.jl")
+include("states/canonicalmpo.jl")
 include("states/linalg.jl")
 include("states/ortho.jl")
 include("states/constructors.jl")
 
 # ---- operators ----
 include("operators/infinitempo.jl")
-include("operators/linalg.jl")
 include("operators/sparsempotensor.jl")
 include("operators/mpohamiltonian.jl")
+include("operators/linalg.jl")
 include("operators/longrangeop.jl")
-# CanonicalIMPO (a "states" data structure; contains the MPS view
-# transforms and mpo_compress; depends on DenseIMPO, hence included after
-# infinitempo.jl)
-include("states/canonicalmpo.jl")
 include("operators/w1w2.jl")
 
 # ---- transfer matrices ----
@@ -68,6 +70,7 @@ include("algorithms/groundstates/vumps.jl")
 include("algorithms/groundstates/idmrg.jl")
 include("algorithms/timeevo/tdvp.jl")
 include("algorithms/arithmetics/mult.jl")
+include("algorithms/arithmetics/overlap.jl")
 include("algorithms/arithmetics/hadamard.jl")
 include("algorithms/arithmetics/compress.jl")
 include("algorithms/timeevo/tebd.jl")
@@ -111,7 +114,7 @@ export
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS,
     find_groundstate, timestep, time_evolve, integrate,
     mult, hadamard,
-    fuse, mpo_compress, copyphyims,
+    fuse, copyphyims,
     compress, mult!, hadamard!, compress!,
     changebond!, svdguess_mult, svdguess_hadamard, svdguess_compress,
     vectorize, devectorize, superoperator,

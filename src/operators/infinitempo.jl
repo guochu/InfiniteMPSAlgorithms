@@ -96,15 +96,3 @@ function superoperator(a::DenseIMPO, b::DenseIMPO)
     end
     return DenseIMPO(data)
 end
-
-# MPSKit convention (scale!(first(mpo), α)): scalar multiplication scales only
-# the first tensor; scaling every tensor would change the operator value to
-# α^N·W (N = unit-cell length) and would break the minus sign for even N.
-function Base.:*(α::Number, W::DenseIMPO)
-    out = [copy(w) for w in W.Ws]
-    out[1] = α .* out[1]
-    return DenseIMPO(out)
-end
-Base.:*(W::DenseIMPO, α::Number) = α * W
-Base.:/(W::DenseIMPO, α::Number) = (1 / α) * W
-Base.:-(W::DenseIMPO) = (-one(scalartype(W))) * W

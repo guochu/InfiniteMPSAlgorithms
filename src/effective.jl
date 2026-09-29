@@ -36,7 +36,8 @@ C′[α, β] = Σ GL[α, w, α′] · C[α′, β′] · GR[β′, w, β]
 ```
 """
 function C_hamiltonian(site::Int, below, operator, above, envs::Environments)
-    return MPO_C_Hamiltonian(leftenv(envs, site + 1), rightenv(envs, site))
+    # OverlapCache 的环境为 rank-2 矩阵，经 _to3 升为 (b, 1, b') 后进统一 kernel
+    return MPO_C_Hamiltonian(_to3(leftenv(envs, site + 1)), _to3(rightenv(envs, site)))
 end
 
 """
@@ -57,7 +58,7 @@ function AC_hamiltonian(site::Int, below, operator, above, envs::Environments)
     else
         operator[site]
     end
-    return MPO_AC_Hamiltonian(leftenv(envs, site), O, rightenv(envs, site))
+    return MPO_AC_Hamiltonian(_to3(leftenv(envs, site)), O, _to3(rightenv(envs, site)))
 end
 
 # ---- action (MPSKit form, linear operators) ----

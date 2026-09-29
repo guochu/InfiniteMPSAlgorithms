@@ -62,56 +62,7 @@ function MultCache(below::CanonicalIMPS, operator::DenseIMPO,
     return MultCache(operator, below, above, GLs, GRs)
 end
 
-# ---------------- pure overlap-channel environment cache (OverlapCache) ----------------
-
-"""
-    OverlapCache(bra, ket, lefts, rights)
-    OverlapCache(ψ) -> OverlapCache
-    OverlapCache(below, above; tol, krylovdim, maxiter) -> OverlapCache
-
-Environments of the pure overlap channel: the left/right fixed points of
-`⟨bra|ket⟩` (identity channel, w dimension 1), used by the IDMRG compression
-path of `mult` and the iterative compressions of `add`/`hadamard`.
-
-- `OverlapCache(ψ)`: the identity channel uses the AL/AR gauges directly
-  (fixed points = identity matrices);
-- `OverlapCache(below, above)`: below and above may be different states; the
-  fixed points are obtained from the :LM eigenpairs of the fused transfer
-  matrix `T(above.AL, below.AL)` (eigsolve); normalization identical to
-  [`MultCache`](@ref) (MPSKit convention).
-- `lefts[ℓ]`: the left environment of site ℓ, `(bra bond, 1, ket bond)`;
-- `rights[ℓ]`: the right environment of site ℓ, `(ket bond, 1, bra bond)`.
-"""
-struct OverlapCache{B<:CanonicalIMPS,K<:CanonicalIMPS,T} <: Environments
-    bra::B
-    ket::K
-    lefts::Vector{Array{T,3}}
-    rights::Vector{Array{T,3}}
-end
-
-"Identity channel: in the AL/AR gauges the fixed points are identity matrices."
-function OverlapCache(ψ::CanonicalIMPS; kwargs...)
-    N = length(ψ)
-    T = scalartype(ψ)
-    lefts = Vector{Array{T,3}}(undef, N)
-    rights = Vector{Array{T,3}}(undef, N)
-    for ℓ in 1:N
-        Dl, Dr = size(ψ.AL[ℓ], 1), size(ψ.AL[ℓ], 3)
-        lefts[ℓ] = _to3(Matrix{T}(I, Dl, Dl))
-        rights[ℓ] = _to3(Matrix{T}(I, Dr, Dr))
-    end
-    return OverlapCache(ψ, ψ, lefts, rights)
-end
-
-"Ternary overlap channel: left/right fixed points of ⟨below|above⟩."
-function OverlapCache(below::CanonicalIMPS, above::CanonicalIMPS;
-                      tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
-                      maxiter::Int = Defaults.maxiter,
-                      GL0::Union{Nothing,AbstractArray} = nothing,
-                      GR0::Union{Nothing,AbstractArray} = nothing)
-    GLs, GRs = _ternary_fixedpoints(below, nothing, above; tol, krylovdim, maxiter, GL0, GR0)
-    return OverlapCache(below, above, GLs, GRs)
-end
+# 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 overlap.jl
 
 """
     fuse(W, AL) -> Array{T,3}
@@ -202,29 +153,28 @@ end
 
 "Maximum per-site Galerkin residual (mirrors MPSKit's
 `calc_galerkin(below, operator, above, envs)`, projecting the local-map output
-in the current environments with the current state `x.AL`)."
-function _galerkin_err(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
+in the current environments with the current state `x.AL`); the operator-free
+overlap-channel version lives in overlap.jl."
+function _galerkin_err(operator::DenseIMPO, ket::CanonicalIMPS,
                        x::CanonicalIMPS, envs)
     N = length(ket)
     ϵ = 0.0
     for ℓ in 1:N
-        O = isnothing(operator) ? nothing : operator[_mod1(ℓ, length(operator))]
-        ACmap = _mapAC(leftenv(envs, ℓ), O, rightenv(envs, ℓ), ket.AC[ℓ])
+        ACmap = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
+                       rightenv(envs, ℓ), ket.AC[ℓ])
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], ACmap))
     end
     return ϵ
 end
 
 """
-    _vomps_sweeps(operator, ket, x0, K; tol, maxiter, verbosity, iters) -> (x, envs)
+    _vomps_sweeps(operator, ket, x0; tol, maxiter, verbosity, iters) -> (x, envs)
 
-Overlap-maximizing variational sweeps (strictly mirroring MPSKit's
-`approximate(ψ₀, (O, ϕ), VOMPS())`, `src/algorithms/approximate/vomps.jl`):
-find `x` approximating `operator|ket⟩` (with `operator = nothing`, approximating
-the ket itself — variational compression). `K` is only kept in the interface
-for backward compatibility; no overlap is computed anywhere in the sweep
-(mirroring MPSKit's `approximate`, whose convergence measure is the Galerkin
-residual alone). Each round (MPSKit `IterativeSolver` pipeline):
+Overlap-maximizing variational sweeps of the MPO-application channel (strictly
+mirroring MPSKit's `approximate(ψ₀, (O, ϕ), VOMPS())`,
+`src/algorithms/approximate/vomps.jl`): find `x` approximating `operator|ket⟩`.
+（compress 的无算符版本见 overlap.jl 的 `_overlap_vomps_sweeps`。）Each round
+(MPSKit `IterativeSolver` pipeline):
 
 1. `localupdate`: per-site local maps `AC_new = (GL·O·GR)·ket.AC`,
    `C_new = GL₊·ket.C·GR` → `regauge!` yields candidate `AL`s (all sites
@@ -241,14 +191,14 @@ the optimized state and its final environments (MPSKit `approximate`
 convention: `(ψ, envs, ϵ)`); callers that want a fidelity diagnostic can
 compute it once from `envs` afterwards.
 """
-function _vomps_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
-                         x0::CanonicalIMPS, K::Union{Nothing,<:Vector{<:Array}};
-                         tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                         verbosity::Int = Defaults.verbosity,
-                         iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+function _vomps_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
+                       x0::CanonicalIMPS;
+                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
+                       verbosity::Int = Defaults.verbosity,
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
     N = length(ket)
     x = copy(x0)
-    envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+    envs = MultCache(x, operator, ket)
     # 通道标量类型（MPSKit 对齐）：环境按 eigsolve 的实际 eltype 存放（实输入下
     # 融合转移的 leading vector 可为复），演动态随之提升，扫掠在提升后算术上进行
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
@@ -260,8 +210,8 @@ function _vomps_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
         # localupdate: per-site local maps + regauge（全部站点对同一批环境）
         ALs = Vector{Array{T,3}}(undef, N)
         for ℓ in 1:N
-            O = isnothing(operator) ? nothing : operator[_mod1(ℓ, length(operator))]
-            AC_new = _mapAC(leftenv(envs, ℓ), O, rightenv(envs, ℓ), ket.AC[ℓ])
+            AC_new = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
+                            rightenv(envs, ℓ), ket.AC[ℓ])
             C_new = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ), ket.C[ℓ])
             ALs[ℓ] = regauge!(AC_new, C_new; alg = Defaults.alg_orth())
         end
@@ -271,10 +221,7 @@ function _vomps_sweeps(operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS,
         gauge_step!(x, ALs, x.C[N]; tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
         # envs_step!（热启动：上一轮的不动点作为 eigsolve 初值 + 动态环境容差）
         alg_envs = updatetol(Defaults.alg_environments(), iter - 1, ϵ)
-        envs = isnothing(operator) ?
-               OverlapCache(x, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
-                            tol = alg_envs.tol) :
-               MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
+        envs = MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
                          tol = alg_envs.tol)
         ϵ = _galerkin_err(operator, ket, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
@@ -289,31 +236,26 @@ end
 
 # Ternary-channel incremental environment pushes for the IDMRG sweep (mirroring
 # MPSKit's `transfer_leftenv!`/`transfer_rightenv!` for the
-# `⟨below|operator|above⟩` channel with distinct below/above: the below side is
-# the state being optimized, the above side the target chain).
-function transfer_leftenv!(envs::Union{MultCache,OverlapCache}, x::CanonicalIMPS,
-                           operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS, site::Int)
+# `⟨below|operator|above⟩` channel: the below side is the state being optimized,
+# the above side the target chain; the operator-free overlap-channel versions
+# live in overlap.jl).
+function transfer_leftenv!(envs::MultCache, x::CanonicalIMPS,
+                           operator::DenseIMPO, ket::CanonicalIMPS, site::Int)
     N = length(ket)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
-    envs.lefts[ℓ] = if isnothing(operator)
-        push_env_left(envs.lefts[ℓm], x.AL[ℓm], ket.AL[ℓm])
-    else
-        push_env_left(envs.lefts[ℓm], x.AL[ℓm], operator[ℓm], ket.AL[ℓm])
-    end
+    envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], x.AL[ℓm],
+                                  operator[_mod1(ℓm, length(operator))], ket.AL[ℓm])
     return envs
 end
 
-function transfer_rightenv!(envs::Union{MultCache,OverlapCache}, x::CanonicalIMPS,
-                            operator::Union{Nothing,DenseIMPO}, ket::CanonicalIMPS, site::Int)
+function transfer_rightenv!(envs::MultCache, x::CanonicalIMPS,
+                            operator::DenseIMPO, ket::CanonicalIMPS, site::Int)
     N = length(ket)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
-    envs.rights[ℓ] = if isnothing(operator)
-        push_env_right(envs.rights[ℓp], ket.AR[ℓp], x.AR[ℓp])
-    else
-        push_env_right(envs.rights[ℓp], ket.AR[ℓp], operator[ℓp], x.AR[ℓp])
-    end
+    envs.rights[ℓ] = push_env_right(envs.rights[ℓp], ket.AR[ℓp],
+                                    operator[_mod1(ℓp, length(operator))], x.AR[ℓp])
     return envs
 end
 
@@ -321,7 +263,7 @@ end
 `normalize!(envs, below, operator, above)`): unit-Frobenius `GR`s; `GL[ℓ+1]`
 scaled by `inv(λ)` with the local C-channel overlap
 `λ = ⟨x.C[ℓ], _mapC(GL₊, GR, ket.C[ℓ])⟩`."
-function _normalize_ternary_envs!(envs::Environments, x::CanonicalIMPS,
+function _normalize_ternary_envs!(envs::MultCache, x::CanonicalIMPS,
                                   ket::CanonicalIMPS)
     N = length(ket)
     for ℓ in 1:N
@@ -337,9 +279,9 @@ function _normalize_ternary_envs!(envs::Environments, x::CanonicalIMPS,
 end
 
 """
-    _idmrg_sweeps(ket, x0, K, [operator]; tol, maxiter, verbosity, iters) -> (x, envs)
+    _idmrg_sweeps(operator, ket, x0; tol, maxiter, verbosity, iters) -> (x, envs)
 
-Compression sweeps of the IDMRG template, strictly mirroring MPSKit's
+IDMRG sweeps of the MPO-application channel, strictly mirroring MPSKit's
 `approximate(ψ₀, (O, ϕ), IDMRG())` (`src/algorithms/approximate/idmrg.jl`):
 a sequential Gauss–Seidel double sweep over the unit cell with on-the-fly
 environment transfer, converged on the boundary center-matrix drift
@@ -359,13 +301,12 @@ environment transfer, converged on the boundary center-matrix drift
 
 Afterwards the mixed-canonical state is rebuilt from the `AR` string (MPSKit
 `MultilineMPS(ψ.AR)` at the dynamically adapted gauge tolerance) and the
-environments are recomputed for the final state. `K`/`alg_eigsolve` are kept
-for interface compatibility. `iters::Ref{Int}` optionally receives the sweep
-count.
+environments are recomputed for the final state. （compress 的无算符版本见
+overlap.jl 的 `_overlap_idmrg_sweeps`。）`iters::Ref{Int}` optionally receives
+the sweep count.
 """
-function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
-                       K::Union{Nothing,<:Vector{<:Array}},
-                       operator::Union{Nothing,DenseIMPO} = nothing;
+function _idmrg_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
+                       x0::CanonicalIMPS;
                        tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                        verbosity::Int = Defaults.verbosity,
                        alg_eigsolve = Defaults.alg_eigsolve(),
@@ -374,7 +315,7 @@ function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点（MPSKit environments(ψ, toapprox...)），
     # 扫掠中只做增量 transfer 与重标定，不再整体重解（MPSKit IDMRG 语义）
-    envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+    envs = MultCache(x, operator, ket)
     # 通道标量类型（MPSKit 对齐，见 _vomps_sweeps 注释）
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
@@ -384,16 +325,16 @@ function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
         C_old = copy(x.C[0])
         # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
         for ℓ in 1:N
-            O = isnothing(operator) ? nothing : operator[_mod1(ℓ, length(operator))]
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), O, rightenv(envs, ℓ), ket.AC[ℓ])
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
+                             rightenv(envs, ℓ), ket.AC[ℓ])
             normalize!(x.AC[ℓ])
             x.AL[ℓ], x.C[ℓ] = leftorth(x.AC[ℓ], (1, 2), (3,))
             transfer_leftenv!(envs, x, operator, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
-            O = isnothing(operator) ? nothing : operator[_mod1(ℓ, length(operator))]
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), O, rightenv(envs, ℓ), ket.AC[ℓ])
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
+                             rightenv(envs, ℓ), ket.AC[ℓ])
             normalize!(x.AC[ℓ])
             x.C[ℓ - 1], x.AR[ℓ] = rightorth(x.AC[ℓ], (1,), (2, 3))
             transfer_rightenv!(envs, x, operator, ket, ℓ - 1)
@@ -411,7 +352,7 @@ function _idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS,
     alg_gauge = updatetol(Defaults.alg_gauge(), iter, ϵ)
     x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
                       maxiter = alg_gauge.maxiter)
-    envs = isnothing(operator) ? OverlapCache(x, ket) : MultCache(x, operator, ket)
+    envs = MultCache(x, operator, ket)
     _global_normalize!(x)
     return x, envs
 end
@@ -792,10 +733,10 @@ function _mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
     x0 = ψ₀ !== nothing ? ψ₀ : svdguess_mult(Wm, ψ, D)
     iters = Ref(0)
     y, _ = if alg isa VOMPS
-        _vomps_sweeps(Wm, ψ, x0, nothing; tol = alg.tol, maxiter = alg.maxiter,
+        _vomps_sweeps(Wm, ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
                       verbosity = alg.verbosity, iters = iters)
     else
-        _idmrg_sweeps(ψ, x0, nothing, Wm; tol = alg.tol, maxiter = alg.maxiter,
+        _idmrg_sweeps(Wm, ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
                       verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve,
                       iters = iters)
     end
@@ -815,12 +756,9 @@ function mult(W, W2::Union{DenseIMPO,CanonicalIMPO})
     # exact composition: naive fuse family → canonical storage (the output is
     # the target ray itself, normalized)
     K4 = [_naive_mul_tensor(Wm[_mod1(ℓ, NW)], W2m[ℓ]) for ℓ in 1:N]
-    dus = [size(K4[ℓ], 2) for ℓ in 1:N]
-    dds = [size(K4[ℓ], 4) for ℓ in 1:N]
-    K3 = asmps_view(K4)
-    x = CanonicalIMPS(collect(K3))
+    x = CanonicalIMPS(vectorize(DenseIMPO(K4)).As)
     _global_normalize!(x)
-    return _mpo_from_mps(x, dus, dds)
+    return devectorize(x)
 end
 
 mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG}) =
@@ -839,8 +777,6 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
     # 规范 ⇒ 无需 gauge twist）。
     W1c = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
     W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
-    dus = [size(W1c.AL[_mod1(ℓ, NW)], 2) for ℓ in 1:N]
-    dds = [size(W2c.AL[ℓ], 4) for ℓ in 1:N]
     x0 = ψ₀ !== nothing ? ψ₀ : svdguess_mult(Wm, W2m, D)
     ket = FactorizedKet(
         ℓ -> W1c.AL[_mod1(ℓ, NW)], ℓ -> W2c.AL[ℓ],
@@ -856,7 +792,7 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
                           verbosity = alg.verbosity, iters = iters)
     end
     _global_normalize!(x)
-    return _mpo_from_mps(x, dus, dds), iters[]
+    return devectorize(x), iters[]
 end
 
 # ---------------- svdguess_mult (deterministic initial guess) & mult! (in-place) ----------------
@@ -976,7 +912,7 @@ function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO},
                alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    ψ0 = CanonicalIMPS(asmps_view(collect(out.AC)))
+    ψ0 = vectorize(out)
     y, _ = _mult(W, W2, alg, ψ0; D = D)
     return _copyinto!(out, y)
 end

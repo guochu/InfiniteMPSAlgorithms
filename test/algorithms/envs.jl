@@ -2,10 +2,11 @@
     T = ComplexF64
     ψ = randomimps(T, [2, 3]; D = 5)
 
-    # 恒等通道环境 = 恒等矩阵（AL 严格规范，对应 MPSKit 的 l_LL/r_RR）
+    # 恒等通道环境 = 恒等矩阵（AL 严格规范，对应 MPSKit 的 l_LL/r_RR；
+    # OverlapCache 环境为 rank-2 矩阵 (below bond, above bond)）
     envs = OverlapCache(ψ)
-    @test leftenv(envs, 1) == reshape(Matrix{T}(I, 5, 5), 5, 1, 5)
-    @test rightenv(envs, 1) == reshape(Matrix{T}(I, 5, 5), 5, 1, 5)
+    @test leftenv(envs, 1) == Matrix{T}(I, 5, 5)
+    @test rightenv(envs, 1) == Matrix{T}(I, 5, 5)
 
     # 恒等 MPO（作为 Σᵢ I 的和式哈密顿量）期望 = N
     I2 = identityimpo(T, [2, 3])

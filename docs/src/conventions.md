@@ -84,7 +84,7 @@ The same method is defined for `CanonicalIMPO` on the MPS view
 ### 3. `norm`-preserving global normalization of algebra results
 
 The variational algebra engines (`mult`, `hadamard`, `compress`,
-`mpo_compress`, ...) converge to a **ray**: the result is only defined up to a
+...) converge to a **ray**: the result is only defined up to a
 global phase and scale. Internally every engine terminates with
 `_global_normalize!(x)` ([`mult.jl`](../../src/algorithms/mult.jl)):
 

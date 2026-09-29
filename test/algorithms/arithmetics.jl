@@ -226,14 +226,14 @@ end
         # mpo·mpo
         m1 = CanonicalIMPO(collect(randomimpo(T, [2, 2]; D = D0).Ws))
         m2 = copy(m1)
-        p0 = CanonicalIMPS(asmps_view(collect(m1.AC)))
+        p0 = vectorize(m1)
         z1, j1 = InfiniteMPSAlgorithms._mult(W, W2, alg, p0; D = D0)
         z2, j2 = InfiniteMPSAlgorithms._compress(CanonicalIMPO(collect(Wraw.Ws)),
-                                                 alg, CanonicalIMPS(asmps_view(collect(m2.AC)));
+                                                 alg, vectorize(m2);
                                                  D = D0)
         @test j1 == j2
-        w1 = CanonicalIMPS(asmps_view(collect(z1.AC)))
-        w2 = CanonicalIMPS(asmps_view(collect(z2.AC)))
+        w1 = vectorize(z1)
+        w2 = vectorize(z2)
         # 同迭代数 + fidelity → 1（两路径环境重解的 round-off ~1e-10）
         @test fidelity(w1, w2) > 1 - 1e-8
     end

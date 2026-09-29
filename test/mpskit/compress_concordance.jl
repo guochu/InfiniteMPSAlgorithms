@@ -2,13 +2,13 @@
 # compress ↔ MPSKit.approximate 严格对齐测试
 #
 # MPSKit 0.13 的 approximate（VOMPS / IDMRG，src/algorithms/approximate/）
-# 与本包 compress（经 _vomps_sweeps / _idmrg_sweeps）的逐步对齐：
+# 与本包 compress（经 _overlap_vomps_sweeps / _overlap_idmrg_sweeps）的逐步对齐：
 # - 相同的随机目标态与随机初态（同一组张量，两包各持独立副本）；
 # - 完全相同的算法参数（tol / maxiter）；
 # - VOMPS / IDMRG：逐迭代对比（maxiter = k、tol = 0 强制两包都恰好跑 k 轮）；
 # - 收敛迭代数一致（iters Ref ↔ MPSKit 的最小收敛轮数扫描）；
 # - 收敛终态在数值精度下一致（dense 周期 trace 表示的射线残差）。
-# MPSKit 的 approximate 无 MPO 目标版本 ⇒ MPO 压缩按 `asmps_view` 转成 MPS
+# MPSKit 的 approximate 无 MPO 目标版本 ⇒ MPO 压缩按 `vectorize` 转成 MPS
 # 视图（恒等 MPO 通道）对比。
 #
 # 对齐语义备注（MPSKit 源码，2025 主线）：
@@ -71,11 +71,11 @@ function _mpskit_converged_iter(algmk, tol)
     return hi, ϕ
 end
 
-"本包 `_vomps_sweeps` 恰好跑 k 轮的压缩结果。"
+"本包 `_overlap_vomps_sweeps` 恰好跑 k 轮的压缩结果。"
 _ours_vomps(ψ, x0, k) = first(InfiniteMPSAlgorithms._compress(
     ψ, VOMPS(D = D0, tol = 0.0, maxiter = k), x0; D = D0))
 
-"本包 `_idmrg_sweeps` 恰好跑 k 轮的压缩结果。"
+"本包 `_overlap_idmrg_sweeps` 恰好跑 k 轮的压缩结果。"
 _ours_idmrg(ψ, x0, k) = first(InfiniteMPSAlgorithms._compress(
     ψ, IDMRG(D = D0, tol = 0.0, maxiter = k), x0; D = D0))
 
@@ -103,8 +103,8 @@ end
 @testset "compress VOMPS 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
     iters = Ref(0)
-    y = InfiniteMPSAlgorithms._vomps_sweeps(nothing, ψ, x0, collect(ψ.AC);
-                                              tol = tol, maxiter = 500, iters = iters)[1]
+    y = InfiniteMPSAlgorithms._overlap_vomps_sweeps(ψ, x0;
+                                                    tol = tol, maxiter = 500, iters = iters)[1]
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.VOMPS, tol)
     @test iters[] == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
@@ -113,18 +113,18 @@ end
 @testset "compress IDMRG 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
     iters = Ref(0)
-    y = InfiniteMPSAlgorithms._idmrg_sweeps(ψ, x0, collect(ψ.AC);
-                                            tol = tol, maxiter = 500, iters = iters)[1]
+    y = InfiniteMPSAlgorithms._overlap_idmrg_sweeps(ψ, x0;
+                                                    tol = tol, maxiter = 500, iters = iters)[1]
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
     @test iters[] == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
 end
 
-# ---- MPO 压缩（MPSKit 无 MPO 目标 approximate ⇒ 走 asmps_view 的 MPS 视图）----
+# ---- MPO 压缩（MPSKit 无 MPO 目标 approximate ⇒ 走 vectorize 的 MPS 视图）----
 
 @testset "compress(MPO) ≡ MPSKit approximate（MPS 视图，VOMPS/IDMRG）" begin
     W = randomimpo(T, fill(d, N); D = 4)
-    Wview = asmps_view(collect(W.Ws))
+    Wview = vectorize(W).As
     x0w = randomimps(T, fill(size(Wview[1], 2), N); D = D0)
     Wmk = MPSKit.InfiniteMPS([mkmpstensor(a) for a in Wview])
     # 恒等 MPO 的物理维必须与 MPS 视图的融合物理维 (u·d) 一致
@@ -136,7 +136,7 @@ end
         ϕ = MPSKit.approximate(mkinfinitemps(x0w), (Imkw, Wmk),
                                algmk(; tol = 1.0e-12, maxiter = 300,
                                      verbosity = 0))[1]
-        yview = CanonicalIMPS(asmps_view(collect(y.AL)))
+        yview = vectorize(y)
         @test _compress_ray_residual(yview, from_mpskit(ϕ)) < 1e-8
     end
 end

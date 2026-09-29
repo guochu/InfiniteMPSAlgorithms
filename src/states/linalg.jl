@@ -8,6 +8,10 @@
 # ---- scalar multiplication (MPSKit convention: scale only the first tensor;
 #      scaling every tensor would change the state to αᴺ·ψ) ----
 
+"`DenseIMPS(ψ)`: plain（未规范化）副本，取左正则串 `ψ.AL`——`tr(∏AL)` 是规范
+不变的态幅（`DenseIMPO(W::CanonicalIMPO) = DenseIMPO(W.AL)` 的 MPS 对应）。"
+DenseIMPS(ψ::CanonicalIMPS) = DenseIMPS(ψ.AL)
+
 function Base.:*(α::Number, ψ::DenseIMPS)
     out = [copy(a) for a in ψ.As]
     out[1] = α .* out[1]
@@ -129,10 +133,6 @@ fidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) =
     abs(dot(ψ1, ψ2)) / (norm(ψ1) * norm(ψ2))
 infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) = 1 - fidelity(ψ1, ψ2)
 
-# 扩展 FiniteMPSAlgorithms 的 distance/distance2（保持其 plain-array 方法
-# 与本模块 DenseIMPS 方法在同一个函数对象上，`using` 再导出行为不变）。
-import FiniteMPSAlgorithms: distance, distance2
-
 """
     distance2(ψ1::DenseIMPS, ψ2::DenseIMPS) -> Real
     distance(ψ1::DenseIMPS, ψ2::DenseIMPS) -> Real
@@ -140,6 +140,9 @@ import FiniteMPSAlgorithms: distance, distance2
 `‖ψ1 − ψ2‖² = ‖ψ1‖² + ‖ψ2‖² − 2·Re⟨ψ1|ψ2⟩` (the absolute value guards against
 negative rounding; semantics aligned with FiniteMPSAlgorithms'
 `distance(::CanonicalMPS, ::CanonicalMPS)`). `distance = sqrt(distance2)`.
+
+Extends the `distance`/`distance2` imported from FiniteMPSAlgorithms（`import`
+集中在主文件）——其 plain-array 方法必须与本包 DenseIMPS 方法在同一函数对象上。
 """
 function distance2(ψ1::DenseIMPS, ψ2::DenseIMPS)
     sA = real(dot(ψ1, ψ1))
