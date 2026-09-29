@@ -226,7 +226,7 @@ end
         # mpo·mpo
         m1 = CanonicalIMPO(collect(randomimpo(T, [2, 2]; D = D0).Ws))
         m2 = copy(m1)
-        p0 = vectorize(m1)
+        p0 = m1
         z1, j1 = InfiniteMPSAlgorithms._mult(W, W2, alg, p0; D = D0)
         z2, j2 = InfiniteMPSAlgorithms._compress(CanonicalIMPO(collect(Wraw.Ws)),
                                                  alg, vectorize(m2);

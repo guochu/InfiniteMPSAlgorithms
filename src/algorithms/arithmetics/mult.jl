@@ -29,22 +29,30 @@
 """
     MultCache(operator, bra, ket, lefts, rights)
     MultCache(below, operator::DenseIMPO, above; tol, krylovdim, maxiter) -> MultCache
+    MultCache(below, W1::CanonicalIMPO, W2::CanonicalIMPO; ...) -> MultCache
 
 Environments of the MPO-application channel: the left/right fixed points of
-`⟨below|operator|above⟩` (`operator::DenseIMPO`), used by `mult` (iterative
-MPO multiplication); below (bra) and above (ket) may be different states.
+`⟨below|operator|above⟩`, used by `mult` (iterative MPO multiplication).
+Two channels share the same cache format (rank-3 environment tensors):
 
-- `lefts[ℓ]`: the left environment of site ℓ, `(below bond, w, above bond)`;
-- `rights[ℓ]`: the right environment of site ℓ, `(above bond, w, below bond)`
-  (MPSKit convention);
-- the fixed points are obtained from the :LM eigenpairs of the fused transfer
-  matrix `T(above.AL, operator, below.AL)` (eigsolve);
-- normalization mirrors MPSKit's `normalize!(::InfiniteEnvironments)`: each GR
-  is Frobenius-normalized first, then per site `λℓ = ⟨below.C[ℓ], C_map(ℓ)⟩`
-  scales `GLs[ℓ+1]`, so that the local contraction of every site is exactly 1
-  (identity-MPO expectation = N).
+- MPO application (`operator::DenseIMPO`, `above::CanonicalIMPS`): the
+  `⟨below|W|ψ⟩` channel; `lefts[ℓ]` = `(below bond, w, above bond)`,
+  `rights[ℓ]` = `(above bond, w, below bond)` (MPSKit convention);
+- MPO composition (`W1::CanonicalIMPO`, `W2::CanonicalIMPO`; the operator slot
+  holds W1 and the ket slot holds W2): the `⟨below|W1·W2⟩` channel with the
+  product's fused tensors never materialized; `lefts[ℓ]` =
+  `(below bond, wl1, wl2)`, `rights[ℓ]` = `(wr1, wr2, below bond)` (the two
+  factor bond legs kept separate).
+
+Both channels obtain the fixed points from the :LM eigenpairs of the fused
+transfer matrix (eigsolve); normalization mirrors MPSKit's
+`normalize!(::InfiniteEnvironments)`: each GR is Frobenius-normalized first,
+then per site `λℓ = ⟨below.C[ℓ], C_map(ℓ)⟩` scales `GLs[ℓ+1]`, so that the
+local contraction of every site is exactly 1 (identity-MPO expectation = N).
 """
-struct MultCache{O<:DenseIMPO,B<:CanonicalIMPS,K<:CanonicalIMPS,T} <: Environments
+struct MultCache{O<:Union{DenseIMPO,CanonicalIMPO},
+                 B<:Union{CanonicalIMPS,CanonicalIMPO},
+                 K<:Union{CanonicalIMPS,CanonicalIMPO},T} <: Environments
     operator::O
     bra::B
     ket::K
@@ -60,6 +68,18 @@ function MultCache(below::CanonicalIMPS, operator::DenseIMPO,
                    GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = _ternary_fixedpoints(below, operator, above; tol, krylovdim, maxiter, GL0, GR0)
     return MultCache(operator, below, above, GLs, GRs)
+end
+
+"双 MPO 组合通道（mpo·mpo）：bra 槽 = 变分链（CanonicalIMPO，原生 MPO 形态）、
+operator 槽 = W1、ket 槽 = W2，环境 rank-3
+`(below, wl1, wl2)`/`(wr1, wr2, below)`（两个因子的键腿分开存放）。"
+function MultCache(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO;
+                   tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
+                   maxiter::Int = Defaults.maxiter,
+                   GL0::Union{Nothing,AbstractArray} = nothing,
+                   GR0::Union{Nothing,AbstractArray} = nothing)
+    GLs, GRs = _ternary_fixedpoints(below, W1, W2; tol, krylovdim, maxiter, GL0, GR0)
+    return MultCache(W1, below, W2, GLs, GRs)
 end
 
 # 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 overlap.jl
@@ -357,300 +377,352 @@ function _idmrg_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
     return x, envs
 end
 
-# ---------------- factorized double-MPO lazy engine (bond-first contractions) ----------------
+# ---------------- MPO·MPO composition channel (lazy fused-pair kernels) ----------------
 #
-# mult(W, W2, alg) 的惰性 target：乘积算符 (W1·W2) 的 MPS 视图张量
+# mult(W1, W2, alg) 的惰性 target：乘积算符 (W1·W2) 的 MPS 视图张量
 # Ket[(wl2·wl1), (u·d), (wr2·wr1)] = Σ_m W1[wl1,u,wr1,m]·W2[wl2,m,wr2,d]。
-# 经由 LazyKet + `_naive_mul_tensor` 闭包的做法在每次 ALf(ℓ) 时物化
-# (D₁·D₂)²·(u·d) 的融合张量——lazy 只推迟了物化，构造路径本身仍是
-# 「先缩物理桥指标 m、铺开全部辅助键」的最差顺序（融合键 D₁·D₂ 通常远大于
-# 物理维度，(D₁·D₂)²·d² 很快不可行）。因子化引擎把 (W1, W2) 对一路保留到
-# 环境收缩里，按「键指标优先、物理指标最后」显式分步 GEMM：最大中间张量
-# 只有 O(D·D₁·D₂·d²)，融合张量从不落地。
+# 乘积张量从不物化：环境收缩与局部投影直接消费 (W1, W2) 张量对（MultCache 的
+# operator/ket 槽各存一个 CanonicalIMPO 因子），按「键指标优先、物理指标最后」
+# 显式分步 GEMM，最大中间张量只有 O(D·D₁·D₂·d²)。
 #
-# 乘积因子天然保持规范一致性（W1、W2 各自混合规范 ⇒ 乘积 AL 左正交、AR
-# 右正交、AC·C 一致，C 的外积 kron 布局逐位对齐融合键序），因此 identity
-# 通道固定点机制无需 gauge twist 直接适用。
+# 乘积因子天然保持规范一致性（W1、W2 各自混合规范 ⇒ 乘积 AL 左正交、AR 右正
+# 交、AC·C 一致，C 的外积 kron 布局逐位对齐融合键序：wl1/wr1 为快指标），因此
+# identity 通道固定点机制无需 gauge twist 直接适用。
+#
+# 与 mpo·mps 通道的分工：环境同为 rank-3 `Array{T,3}`——本通道的两个因子键腿
+# 分开存放 `(below, wl1, wl2)`/`(wr1, wr2, below)`；局部投影 `_mapAC` 的 pair
+# 方法返回 rank-4 `(below, u, d, above)`（物理腿 (u, d) 不融合，调用方需要 MPS
+# 视图时自行 reshape 成 (below, u·d, above)，u 快）。
 
-"""
-    _push_env_left(L, below, W1, W2) -> Matrix
-
-Factorized identity-channel left push:
-`L′[bl′, (wr2·wr1)] = Σ conj(below[bl, (u·d), bl′])·L[bl, (wl1·wl2)]·W1·W2`.
-显式三步、每步一个二元收缩（TensorOperations 自动做多腿 GEMM），键指标
-优先（bl → wl1 → (wl2, m, d)）、物理 (u, d, m) 最后——不物化 (D₁·D₂)²
-的融合张量。
-"""
-function _push_env_left(L::AbstractMatrix, below::AbstractArray{Tb,3},
-                        W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {Tb,Tw1,Tw2}
-    wl1, u1, wr1, m = size(W1)
-    wl2, _, wr2, d2 = size(W2)
-    bl, bl′ = size(below, 1), size(below, 3)
-    L4 = permutedims(reshape(L, bl, wl1, wl2), (2, 3, 1))  # L[bl, (wl1·wl2)] → [wl1, wl2, bl]
-    Cb = reshape(below, bl, u1, d2, bl′)           # 融合物理 (u·d)：u 快
-    # 步1（键 bl）：Y[(wl1, wl2), (u, d), bl′]
-    Y = @tensor Y[w1, w2, u, dd, j] := L4[w1, w2, bl] * conj(Cb[bl, u, dd, j])
-    # 步2（键 wl1；物理 u 与 W1 一并收缩）：Z[(wl2, m, wr1, d), bl′]
-    Z = @tensor Z[w2, mm, r1, dd, j] := Y[w1, w2, u, dd, j] * W1[w1, u, r1, mm]
-    # 步3（键 wl2；桥 m 与物理 d 与 W2 一并收缩）
-    Out = @tensor Out[j, r2, r1] := Z[w2, mm, r1, dd, j] * W2[w2, mm, r2, dd]
-    return reshape(permutedims(Out, (1, 3, 2)), bl′, wr2 * wr1)
+"Pair-channel left push（rank-3 环境，bra 为 CanonicalIMPO rank-4 张量）：
+`L′[bl′, wr1, wr2] = Σ L[bl, wl1, wl2]·conj(below[bl, u, bl′, d])·W1[wl1, u, wr1, m]·W2[wl2, m, wr2, d]`。
+显式三步二元收缩（键优先：wl1 → (wl2, m)，bra 物理 u/d 各随 W1/W2 收缩），
+融合张量不落地。"
+function _push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,4},
+                        W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {TL,Tb,Tw1,Tw2}
+    wl1, _, _, _ = size(W1)
+    wl2, _, _, _ = size(W2)
+    # 步1（键 wl1；bra 物理 u 一并收缩）：Y[(wr1, m), wl2, u, bl]
+    Y = @tensor Y[c1, mm, a2, u, jL] := L[jL, a1, a2] * W1[a1, u, c1, mm]
+    # 步2（键 wl2 与桥 m、bra 物理 d 一并收缩）：T[(wr1, u, bl), (wr2, d)]
+    T = @tensor T[c1, u, jL, c2, dd] := Y[c1, mm, a2, u, jL] * W2[a2, mm, c2, dd]
+    # 步3（bra 剩余腿 (u, bl, d) 收缩）：输出 (bl′, wr1, wr2)
+    @tensor L′[jR, c1, c2] := T[c1, u, jL, c2, dd] * conj(below[jL, u, jR, dd])
 end
 
-"Factorized identity-channel right push:
-`R′[(wl1·wl2), bl′] = Σ R[(wr1·wr2), bl]·W1·W2·conj(below[bl′, (u·d), bl])`
-（below = x.AR：第一维为新键、第三维为旧键，同 `push_env_right`）。
-显式三步二元收缩（键优先：bl → wr2 → (wl1, m, u)；物理 (u, d, m) 最后）。"
-function _push_env_right(R::AbstractMatrix, W1::AbstractArray{Tw1,4},
-                         W2::AbstractArray{Tw2,4}, below::AbstractArray{Tb,3}) where {Tb,Tw1,Tw2}
-    wl1, u1, wr1, m = size(W1)
-    wl2, _, wr2, d2 = size(W2)
-    bl′ = size(below, 1)                           # 新 below 键（输出列）
-    bl = size(below, 3)                            # 旧 below 键（R 的列）
-    R4 = reshape(R, wr1, wr2, bl)                  # 融合行 (wr1·wr2)：wr1 快；列 = below 右键
-    Cb = reshape(below, bl′, u1, d2, bl)           # 融合物理 (u·d)：u 快
-    # 步1（键 bl）：Y[(wr1, wr2), (u, d), bl′]
-    Y = @tensor Y[r1, r2, u, dd, j] := R4[r1, r2, bl] * conj(Cb[j, u, dd, bl])
-    # 步2（键 wr2；物理 d 与 W2 一并收缩）：Z[(wr1, u, bl′), (wl2, m)]
-    Z = @tensor Z[r1, j, u, w2, mm] := Y[r1, r2, u, dd, j] * W2[w2, mm, r2, dd]
-    # 步3（键 wr1；桥 m 与物理 u 与 W1 一并收缩）
-    Out = @tensor Out[j, w2, w1] := Z[r1, j, u, w2, mm] * W1[w1, u, r1, mm]
-    return reshape(permutedims(Out, (3, 2, 1)), wl1 * wl2, bl′)    # ((wl1·wl2), bl′)
+"Pair-channel right push（rank-3 环境，bra 为 CanonicalIMPO rank-4 张量）：
+`R′[wl1, wl2, bl′] = Σ R[wr1, wr2, bl]·W1[wl1, u, wr1, m]·W2[wl2, m, wr2, d]·conj(below[bl′, u, bl, d])`。
+显式三步二元收缩（键优先：wr2 → (wl2, m)，bra 物理 u/d 各随 W1/W2 收缩），
+融合张量不落地。"
+function _push_env_right(R::AbstractArray{TR,3}, W1::AbstractArray{Tw1,4},
+                         W2::AbstractArray{Tw2,4}, below::AbstractArray{Tb,4}) where {TR,Tb,Tw1,Tw2}
+    # 步1（键 wr2；bra 物理 d 一并收缩）：Y[(wr1, m, wl2, d, br)]
+    Y = @tensor Y[c1, a2, mm, dd, jR] := R[c1, c2, jR] * W2[a2, mm, c2, dd]
+    # 步2（bra 物理 d、键 jR 收缩）：Z[(wr1, m, wl2, u, bl)]
+    Z = @tensor Z[c1, a2, mm, jL, u] := Y[c1, a2, mm, dd, jR] * conj(below[jL, u, jR, dd])
+    # 步3（键 wr1 与桥 m、bra 物理 u 一并收缩）
+    @tensor R′[a1, a2, jL] := Z[c1, a2, mm, jL, u] * W1[a1, u, c1, mm]
 end
 
-"Factorized local AC map (identity channel):
-`ACnew[aL, (u·d), aR] = Σ GL[aL, (wl1·wl2)]·W1AC·W2AC·GR[(wr2·wr1), aR]`.
-显式三步二元收缩（键优先：wl1 → wl2 → (wr1, wr2)；物理 (u, d) 最后）。"
-function _mapAC_fused(GL::AbstractMatrix, GR::AbstractMatrix,
-                      W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {Tw1,Tw2}
-    wl1, u1, wr1, m = size(W1)
-    wl2, _, wr2, d2 = size(W2)
-    aL = size(GL, 1)
-    aR = size(GR, 2)
-    GL4 = reshape(GL, aL, wl1, wl2)                # 融合列 (wl1·wl2)：wl1 快
-    # 步1（键 wl1；物理 u、桥 m 一并收缩）：Y[(aL, wl2, d? 自由), (wr1)]…
-    Y = @tensor Y[jL, w2, u, mm, r1] := GL4[jL, w1, w2] * W1[w1, u, r1, mm]
-    # 步2（键 wl2；桥 m 与物理 d 与 W2 一并收缩）：Z[(aL, u, d), (wr1·wr2)]
+"Pair-channel local AC projection (identity channel, rank-3 环境)：
+`AC4[bl, u, br, d] = Σ GL[bl, wl1, wl2]·W1[wl1, u, wr1, m]·W2[wl2, m, wr2, d]·GR[wr1, wr2, br]`。
+显式三步键优先 GEMM；**直接返回 rank-4**（CanonicalIMPO 张量约定 `(wl, u, wr, d)`，
+物理腿 (u, d) 不融合），调用方需要 MPS 视图时自行 permute+reshape。"
+function _mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+                W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {Tg,Tgr,Tw1,Tw2}
+    Y = @tensor Y[jL, w2, u, mm, r1] := GL[jL, w1, w2] * W1[w1, u, r1, mm]
     Z = @tensor Z[jL, u, dd, r1, r2] := Y[jL, w2, u, mm, r1] * W2[w2, mm, r2, dd]
-    # 步3（键 wr1、wr2 与 GR 融合行 (wr2·wr1) 收缩）
-    Zp = reshape(Z, aL * u1 * d2, wr1 * wr2)
-    ACn = Zp * GR                                  # (aL·u·d), aR
-    return reshape(ACn, aL, u1 * d2, aR)
+    @tensor AC4[jL, u, jR, dd] := Z[jL, u, dd, r1, r2] * GR[r1, r2, jR]
 end
 
-"Factorized local C map (identity channel):
-`Cnew[aL, aR] = Σ GL[aL, (wl1·wl2)]·C2[wl2, wr2]·C1[wl1, wr1]·GR[(wr2·wr1), aR]`.
-显式两步二元收缩（全辅助指标）。"
-function _mapC_fused(GL::AbstractMatrix, GR::AbstractMatrix,
-                     C2::AbstractMatrix, C1::AbstractMatrix)
-    aL = size(GL, 1)
-    wl2, wr2 = size(C2)
-    wl1, wr1 = size(C1)
-    GL3 = reshape(GL, aL, wl1, wl2)                # 融合列 (wl1·wl2)：wl1 快
-    # 步1（键 wl2）：Y[(aL, wl1), wr2]
-    Y = @tensor Y[jL, w1, r2] := GL3[jL, w1, w2] * C2[w2, r2]
-    # 步2（键 wl1）：Z[(aL, wr1, wr2)]
+"Pair-channel local C projection：融合 C（外积 kron 布局，wl1/wr1 快）——
+`Cnew[bl, br] = Σ GL[bl, wl1, wl2]·C1[wl1, wr1]·C2[wl2, wr2]·GR[wr1, wr2, br]`。"
+function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+               C2::AbstractMatrix, C1::AbstractMatrix) where {Tg,Tgr}
+    Y = @tensor Y[jL, w1, r2] := GL[jL, w1, w2] * C2[w2, r2]
     Z = @tensor Z[jL, r1, r2] := Y[jL, w1, r2] * C1[w1, r1]
-    return reshape(Z, aL, wr1 * wr2) * GR          # (aL, (wr1·wr2) 列序 = GR 融合行) → (aL, aR)
+    @tensor Cnew[jL, jR] := Z[jL, r1, r2] * GR[r1, r2, jR]
+end
+
+# ---------------- CanonicalIMPO-bra variants of the shared sweep helpers ----------------
+
+"`_mpo_view(A)`: CanonicalIMPO 张量 `(wl, u, wr, d)` 的 MPS 视图 `(wl, u·d, wr)`。"
+_as_mps_view(A::AbstractArray{T,4}) where {T} =
+    reshape(permutedims(A, (1, 2, 4, 3)), size(A, 1), size(A, 2) * size(A, 4), size(A, 3))
+
+function _galerkin(AL::AbstractArray{Ta,4}, ACnew::AbstractArray{Tb,4}) where {Ta,Tb}
+    return _galerkin(_as_mps_view(AL), _as_mps_view(ACnew))
+end
+
+function _promote_scalar(::Type{T}, W::CanonicalIMPO) where {T}
+    scalartype(W) == T && return W
+    cast = As -> PeriodicVector([T.(a) for a in As])
+    return CanonicalIMPO{T}(cast(W.AL), cast(W.AR), cast(W.C), cast(W.AC))
+end
+
+"Uniform norm normalization（CanonicalIMPO：AC 与 C 同除，保持 `AC = AL·C` 一致）。"
+function _global_normalize!(W::CanonicalIMPO)
+    n = norm(W)
+    n == 0 && error("mult: zero-norm state")
+    for ℓ in 1:length(W)
+        W.AC[ℓ] .= W.AC[ℓ] ./ n
+        W.C[ℓ] .= W.C[ℓ] ./ n
+    end
+    return W
+end
+
+"gauge_step! 的 CanonicalIMPO 版：候选 `AL` 串写入 `W.AL` 后
+`gaugefix!(; order = :R)` 恢复全局右规范（`gaugefix!` 内部同步全部家族）。"
+function gauge_step!(W::CanonicalIMPO, ALs::Vector, C₀; tol::Real, maxiter::Int)
+    for ℓ in eachindex(ALs)
+        W.AL[ℓ] = ALs[ℓ]
+    end
+    return gaugefix!(W, W.AL, C₀; order = :R, tol = tol, maxiter = maxiter)
 end
 
 """
-    FactorizedKet(ALf1, ALf2, ARf1, ARf2, ACf1, ACf2, Cf1, Cf2)
+    _ternary_fixedpoints(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO;
+                         tol, krylovdim, maxiter, GL0, GR0) -> (GLs, GRs)
 
-因子化双 MPO 惰性 target：乘积算符的融合张量 `Ket[(wl1·wl2), (u·d), (wr1·wr2)]
-= W1 ⊗_m W2` **从不物化**，环境收缩直接消费 `(W1, W2)` 张量对（键优先的显式
-分步 GEMM，见 [`_push_env_left`](@ref)）。`(AL·C = C·AR = AC)` 逐点成立。
+双 MPO 组合通道（mpo·mpo，bra 为 CanonicalIMPO）的 identity 通道固定点：环境
+推直接消费 `(W1, W2)` 因子对（[`_push_env_left`](@ref)/[`_push_env_right`](@ref)，
+rank-3 环境 `(below, wl1, wl2)`/`(wr1, wr2, below)`）。乘积因子各自保持规范
+（W1、W2 各自混合规范 ⇒ 乘积 AL 左正交、AR 右正交、AC·C 一致），无需 gauge
+twist。
 """
-struct FactorizedKet{A1,A2,B1,B2,C1,C2,D1,D2}
-    ALf1::A1; ALf2::A2
-    ARf1::B1; ARf2::B2
-    ACf1::C1; ACf2::C2
-    Cf1::D1;  Cf2::D2
-end
-
-"""
-    _lazy_ternary_fixedpoints(x, ket::FactorizedKet; kwargs...) -> (GLs, GRs)
-
-因子化双 MPO target 的 identity 通道固定点：环境推直接消费 `(W1, W2)` 对
-（[`_push_env_left`](@ref)/[`_push_env_right`](@ref)）。乘积因子各自保持
-规范（W1、W2 各自混合规范 ⇒ 乘积 AL 左正交、AR 右正交、AC·C 一致），无需
-gauge twist。`GL`/`GR` 为 rank-2 `(x 键, 融合键)` 矩阵。
-"""
-function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::FactorizedKet;
-                                   tol::Real = Defaults.tol,
-                                   krylovdim::Int = Defaults.krylovdim,
-                                   maxiter::Int = Defaults.maxiter,
-                                   GL0::Union{Nothing,AbstractArray} = nothing,
-                                   GR0::Union{Nothing,AbstractArray} = nothing)
-    N = length(x)
-    T = scalartype(x)
-    Dl = size(x.AL[1], 1)
-    Dr = size(x.AR[1], 3)
-    Da1 = size(ket.ALf1(1), 1) * size(ket.ALf2(1), 1)
+function _ternary_fixedpoints(below::CanonicalIMPO, W1::CanonicalIMPO,
+                              W2::CanonicalIMPO;
+                              tol::Real = Defaults.tol,
+                              krylovdim::Int = Defaults.krylovdim,
+                              maxiter::Int = Defaults.maxiter,
+                              GL0::Union{Nothing,AbstractArray} = nothing,
+                              GR0::Union{Nothing,AbstractArray} = nothing)
+    N = length(below)
+    NW = length(W1)
+    (N % NW == 0 && length(W2) == N) ||
+        throw(DimensionMismatch("incompatible unit-cell lengths"))
+    T = promote_type(scalartype(below), scalartype(W1), scalartype(W2))
+    Dl = size(below.AL[1], 1)
+    D1 = size(W1.AL[1], 1)
+    D2 = size(W2.AL[1], 1)
 
     Tleft = function (v::AbstractVector)
-        GL = reshape(v, Dl, Da1)
+        GL = reshape(v, Dl, D1, D2)
         for ℓ in 1:N
-            GL = _push_env_left(GL, x.AL[ℓ], ket.ALf1(ℓ), ket.ALf2(ℓ))
+            GL = _push_env_left(GL, below.AL[ℓ], W1.AL[_mod1(ℓ, NW)], W2.AL[ℓ])
         end
         return vec(GL)
     end
-    v0L = GL0 === nothing ? ones(T, Dl * Da1) : vec(copy(GL0))
+    v0L = GL0 === nothing ? ones(T, Dl * D1 * D2) : vec(copy(GL0))
     _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
                        krylovdim = krylovdim, maxiter = maxiter)
+    # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, eltype(GL1[1]))
-    GLs = Vector{Matrix{TCL}}(undef, N)
-    GLs[1] = GL = reshape(GL1[1], Dl, Da1)
+    GLs = Vector{Array{TCL,3}}(undef, N)
+    GLs[1] = GL = reshape(GL1[1], Dl, D1, D2)
     for ℓ in 2:N
-        GL = _push_env_left(GL, x.AL[ℓ-1], ket.ALf1(ℓ-1), ket.ALf2(ℓ-1))
-        GLs[ℓ] = GL
+        GLs[ℓ] = GL = _push_env_left(GL, below.AL[ℓ-1],
+                                     W1.AL[_mod1(ℓ - 1, NW)], W2.AL[ℓ-1])
     end
 
     Tright = function (v::AbstractVector)
-        GR = reshape(v, Da1, Dr)
+        GR = reshape(v, D1, D2, Dl)
         for ℓ in N:-1:1
-            GR = _push_env_right(GR, ket.ARf1(ℓ), ket.ARf2(ℓ), x.AR[ℓ])
+            GR = _push_env_right(GR, W1.AR[_mod1(ℓ, NW)], W2.AR[ℓ], below.AR[ℓ])
         end
         return vec(GR)
     end
-    v0R = GR0 === nothing ? ones(T, Da1 * Dr) : vec(copy(GR0))
+    v0R = GR0 === nothing ? ones(T, D1 * D2 * Dl) : vec(copy(GR0))
     _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
                        krylovdim = krylovdim, maxiter = maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
-    GRs = Vector{Matrix{TCR}}(undef, N)
-    GRs[N] = GR = reshape(GRN[1], Da1, Dr)
+    GRs = Vector{Array{TCR,3}}(undef, N)
+    GRs[N] = GR = reshape(GRN[1], D1, D2, Dl)
     for ℓ in N-1:-1:1
-        GR = _push_env_right(GR, ket.ARf1(ℓ+1), ket.ARf2(ℓ+1), x.AR[ℓ+1])
-        GRs[ℓ] = GR
+        GRs[ℓ] = GR = _push_env_right(GR, W1.AR[_mod1(ℓ + 1, NW)], W2.AR[ℓ+1],
+                                      below.AR[ℓ+1])
     end
 
     # 归一化（MPSKit 约定：GR Frobenius、GL 乘局部 overlap λ）
     for ℓ in 1:N
-        GRs[ℓ] = GRs[ℓ] ./ norm(GRs[ℓ])
+        GRs[ℓ] ./= norm(GRs[ℓ])
     end
     for ℓ in 1:N
         inext = _mod1(ℓ + 1, N)
-        Cnew = _mapC_fused(GLs[inext], GRs[ℓ], ket.Cf2(ℓ), ket.Cf1(ℓ))
-        λ = dot(x.C[ℓ], Cnew)
-        λ == 0 && error("factorized lazy environment: local overlap λ = 0 at site $ℓ")
-        GLs[inext] = GLs[inext] ./ λ
+        Cnew = _mapC(GLs[inext], GRs[ℓ], W2.C[ℓ], W1.C[_mod1(ℓ, NW)])
+        λ = dot(below.C[ℓ], Cnew)
+        λ == 0 && error("ternary environment: local overlap λ = 0 at site $ℓ")
+        GLs[inext] ./= λ
     end
     return GLs, GRs
 end
 
-"因子化 target 的 per-site Galerkin 残差（语义同 `_galerkin_err`）。"
-function _lazy_galerkin_err(x::CanonicalIMPS, ket::FactorizedKet, GLs, GRs, N)
+"双 MPO 组合通道的最大逐站 Galerkin 残差（bra 为 CanonicalIMPO；语义同
+`_galerkin_err(operator::DenseIMPO, ...)`）。"
+function _galerkin_err(operator::CanonicalIMPO, ket::CanonicalIMPO,
+                       x::CanonicalIMPO, envs)
+    N = length(ket)
+    NW = length(operator)
     ϵ = 0.0
     for ℓ in 1:N
-        k = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
-        ϵ = max(ϵ, _galerkin(x.AL[ℓ], k))
+        W1t = operator.AC[_mod1(ℓ, NW)]
+        k4 = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), W1t, ket.AC[ℓ])
+        ϵ = max(ϵ, _galerkin(x.AL[ℓ], k4))
     end
     return ϵ
 end
 
-"因子化双 MPO 通道的环境重标定（MPSKit `normalize!(envs, below, operator, above)`
+"双 MPO 组合通道的环境重标定（MPSKit `normalize!(envs, below, operator, above)`
 语义：GR Frobenius 归一、GL[ℓ+1] 按局部 C 通道 overlap λ 缩放）。"
-function _normalize_lazy_mpo_envs!(GLs, GRs, x::CanonicalIMPS, ket::FactorizedKet)
-    N = length(x)
+function _normalize_ternary_envs!(envs::MultCache{<:CanonicalIMPO,
+                                                  <:Union{CanonicalIMPS,CanonicalIMPO},
+                                                  <:CanonicalIMPO},
+                                  x::CanonicalIMPO, ket::CanonicalIMPO)
+    N = length(ket)
+    NW = length(envs.operator)
     for ℓ in 1:N
-        GRs[ℓ] = GRs[ℓ] ./ norm(GRs[ℓ])
-        Cnew = _mapC_fused(GLs[_mod1(ℓ + 1, N)], GRs[ℓ], ket.Cf2(ℓ), ket.Cf1(ℓ))
+        GR = envs.rights[ℓ]
+        nr = norm(GR)
+        nr > 0 && (GR ./= nr)
+        Cnew = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ),
+                     ket.C[ℓ], envs.operator.C[_mod1(ℓ, NW)])
         λ = dot(x.C[ℓ], Cnew)
-        λ == 0 && error("factorized idmrg sweep: local overlap λ = 0 at site $ℓ")
-        GLs[_mod1(ℓ + 1, N)] = GLs[_mod1(ℓ + 1, N)] ./ λ
+        λ == 0 && error("idmrg sweep: local overlap λ = 0 at site $ℓ")
+        envs.lefts[_mod1(ℓ + 1, N)] ./= λ
     end
-    return GLs, GRs
+    return envs
+end
+
+# 双 MPO 组合通道的增量环境推进（bra 为 CanonicalIMPO；rank-3 环境）
+function transfer_leftenv!(envs::MultCache{<:CanonicalIMPO,
+                                            <:Union{CanonicalIMPS,CanonicalIMPO},
+                                            <:CanonicalIMPO},
+                           x::CanonicalIMPO, ket::CanonicalIMPO, site::Int)
+    N = length(ket)
+    NW = length(envs.operator)
+    ℓ = _mod1(site, N)
+    ℓm = _mod1(site - 1, N)
+    envs.lefts[ℓ] = _push_env_left(envs.lefts[ℓm], x.AL[ℓm],
+                                   envs.operator.AL[_mod1(ℓm, NW)], ket.AL[ℓm])
+    return envs
+end
+
+function transfer_rightenv!(envs::MultCache{<:CanonicalIMPO,
+                                             <:Union{CanonicalIMPS,CanonicalIMPO},
+                                             <:CanonicalIMPO},
+                            x::CanonicalIMPO, ket::CanonicalIMPO, site::Int)
+    N = length(ket)
+    NW = length(envs.operator)
+    ℓ = _mod1(site, N)
+    ℓp = _mod1(site + 1, N)
+    envs.rights[ℓ] = _push_env_right(envs.rights[ℓp],
+                                     envs.operator.AR[_mod1(ℓp, NW)], ket.AR[ℓp],
+                                     x.AR[ℓp])
+    return envs
 end
 
 """
-    _vomps_mpo_sweeps(ket::FactorizedKet, x0, N; tol, maxiter, verbosity, iters) -> x
+    _vomps_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO, x0::CanonicalIMPO;
+                  tol, maxiter, verbosity, iters) -> (x, envs)
 
-VOMPS template on the factorized double-MPO channel (mirroring
-[`_vomps_sweeps`](@ref)): Jacobi-style rounds — all sites updated against the
-same environments via the local maps `k = _mapAC_fused(...)` /
-`ĉ = _mapC_fused(...)` → `regauge!` → `gauge_step!` (dynamically adapted gauge
-tolerance) → environments re-solved warm-started (`_lazy_ternary_fixedpoints`,
-dynamically adapted tolerance) → Galerkin residual `_lazy_galerkin_err`
-checked **after** the sweep. The product factors preserve gauges, so no gauge
-twist is needed and the fused tensors are never materialized.
-`iters::Ref{Int}` optionally receives the sweep count.
+双 MPO 组合通道（mpo·mpo）的 VOMPS 模板：bra 为 CanonicalIMPO——变分链原生在
+MPO 形态上演化（物理腿 (u, d) 不融合），`operator`/`ket` 槽各持一个
+CanonicalIMPO 因子，乘积张量从不物化。Jacobi 轮管道与 mpo·mps 版
+（[`_vomps_sweeps`](@ref)）完全一致：localupdate（rank-4 `regauge!`）→
+`gauge_step!` → 热启动环境重解 → 扫掠后检查 Galerkin 残差。
+`iters::Ref{Int}` 可选接收扫掠轮数；返回 `(x, envs)`。
 """
-function _vomps_mpo_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
-                           tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                           verbosity::Int = Defaults.verbosity,
-                           iters::Union{Nothing,Base.RefValue{Int}} = nothing)
-    T0 = promote_type(scalartype(x0), eltype(ket.ACf1(1)))
+function _vomps_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO,
+                       x0::CanonicalIMPO;
+                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
+                       verbosity::Int = Defaults.verbosity,
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+    N = length(ket)
+    NW = length(operator)
     x = copy(x0)
-    GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
-    x = _promote_scalar(promote_type(T0, eltype(GLs[1])), x)
-    T = eltype(x.AL[1])
+    envs = MultCache(x, operator, ket)
+    # 通道标量类型提升（见 mpo·mps 版 `_vomps_sweeps` 注释）
+    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
+    x = _promote_scalar(T, x)
     # 初始残差（收敛判定在扫掠之后，MPSKit IterativeSolver 语义）
-    ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+    ϵ = _galerkin_err(operator, ket, x, envs)
     iter = 0
     for outer iter in 1:maxiter
-        ALs = Vector{Array{T,3}}(undef, N)
+        # localupdate: per-site local maps + regauge（全部站点对同一批环境）
+        ALs = Vector{Array{T,4}}(undef, N)
         for ℓ in 1:N
-            k = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
-            ĉ = _mapC_fused(GLs[_mod1(ℓ + 1, N)], GRs[ℓ], ket.Cf2(ℓ), ket.Cf1(ℓ))
-            ALs[ℓ] = regauge!(k, ĉ; alg = Defaults.alg_orth())
+            W1t = operator.AC[_mod1(ℓ, NW)]
+            AC4 = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), W1t, ket.AC[ℓ])
+            ĉ = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ),
+                      ket.C[ℓ], operator.C[_mod1(ℓ, NW)])
+            ALs[ℓ] = regauge!(AC4, ĉ; alg = Defaults.alg_orth())
         end
+        # gauge: restore the global right gauge（动态容差；内部同步全部家族）
         alg_gauge = updatetol(Defaults.alg_gauge(), iter - 1, ϵ)
         gauge_step!(x, ALs, x.C[N]; tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
+        # envs_step!（热启动 + 动态环境容差）
         alg_envs = updatetol(Defaults.alg_environments(), iter - 1, ϵ)
-        GLs, GRs = _lazy_ternary_fixedpoints(x, ket; GL0 = GLs[1], GR0 = GRs[N],
-                                             tol = alg_envs.tol)
-        ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+        envs = MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
+                         tol = alg_envs.tol)
+        ϵ = _galerkin_err(operator, ket, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
     end
     iters === nothing || (iters[] = iter)
     _global_normalize!(x)
-    return x
+    return x, envs
 end
 
 """
-    _idmrg_mpo_sweeps(ket::FactorizedKet, x0, N; tol, maxiter, verbosity, iters) -> x
+    _idmrg_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO, x0::CanonicalIMPO;
+                  tol, maxiter, verbosity, iters) -> (x, envs)
 
-IDMRG template on the factorized double-MPO channel (mirroring
-[`_idmrg_sweeps`](@ref)): sequential Gauss–Seidel double sweep with on-the-fly
-environment transfer (`_push_env_left`/`_push_env_right` through the fresh
-`AL`/`AR` and the `(W1, W2)` factor pairs), `leftorth`/`rightorth` splits of
-the normalized local projections, per-double-sweep environment rescaling
-([`_normalize_lazy_mpo_envs!`](@ref)), and center-matrix-drift convergence
-`ϵ = ‖C₀_new − C₀_old‖`; afterwards the mixed-canonical state is rebuilt from
-the `AR` string (MPSKit `MultilineMPS(ψ.AR)`). `iters::Ref{Int}` optionally
-receives the sweep count.
+双 MPO 组合通道（mpo·mpo）的 IDMRG 模板：bra 为 CanonicalIMPO。Gauss–Seidel
+双扫掠 + 即时环境推进 + 重标定 + C 漂移收敛，管道与 mpo·mps 版
+（[`_idmrg_sweeps`](@ref)）完全一致；注意 rank-4 中心的正交分解按 MPS 视图
+`(wl, u·d, wr)` 分腿（leftorth 的 `(1, 2, 4)|(3)`、rightorth 的 `(1)|(2, 4, 3)`），
+分解结果 permute 回 `(wl, u, wr, d)`。 afterwards the mixed-canonical state is
+rebuilt from the `AR` string and the environments are re-solved for the final
+state. `iters::Ref{Int}` optionally receives the sweep count.
 """
-function _idmrg_mpo_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
-                           tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                           verbosity::Int = Defaults.verbosity,
-                           iters::Union{Nothing,Base.RefValue{Int}} = nothing)
-    T0 = promote_type(scalartype(x0), eltype(ket.ACf1(1)))
+function _idmrg_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO,
+                       x0::CanonicalIMPO;
+                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
+                       verbosity::Int = Defaults.verbosity,
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+    N = length(ket)
+    NW = length(operator)
     x = copy(x0)
-    GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
-    x = _promote_scalar(promote_type(T0, eltype(GLs[1])), x)
+    envs = MultCache(x, operator, ket)
+    # 通道标量类型提升（见 mpo·mps 版 `_vomps_sweeps` 注释）
+    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
+    x = _promote_scalar(T, x)
     ϵ = 2 * tol
     iter = 0
     for outer iter in 1:maxiter
         C_old = copy(x.C[0])
         # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
         for ℓ in 1:N
-            x.AC[ℓ] = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                             operator.AC[_mod1(ℓ, NW)], ket.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = leftorth(x.AC[ℓ], (1, 2), (3,))
-            GLs[_mod1(ℓ + 1, N)] = _push_env_left(GLs[ℓ], x.AL[ℓ],
-                                                  ket.ALf1(ℓ), ket.ALf2(ℓ))
+            AL4, C = leftorth(x.AC[ℓ], (1, 2, 4), (3,))
+            x.AL[ℓ] = permutedims(AL4, (1, 2, 4, 3))   # (wl, u, d, wr) → (wl, u, wr, d)
+            x.C[ℓ] = C
+            transfer_leftenv!(envs, x, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
-            x.AC[ℓ] = _mapAC_fused(GLs[ℓ], GRs[ℓ], ket.ACf1(ℓ), ket.ACf2(ℓ))
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                             operator.AC[_mod1(ℓ, NW)], ket.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = rightorth(x.AC[ℓ], (1,), (2, 3))
-            GRs[_mod1(ℓ - 1, N)] = _push_env_right(GRs[ℓ], ket.ARf1(ℓ),
-                                                   ket.ARf2(ℓ), x.AR[ℓ])
+            C, AR4 = rightorth(x.AC[ℓ], (1,), (2, 4, 3))
+            x.C[ℓ - 1] = C
+            x.AR[ℓ] = permutedims(AR4, (1, 2, 4, 3))   # (wl, u, d, wr) → (wl, u, wr, d)
+            transfer_rightenv!(envs, x, ket, ℓ - 1)
         end
         # 环境重标定（MPSKit normalize!(envs, below, operator, above) 语义）
-        _normalize_lazy_mpo_envs!(GLs, GRs, x, ket)
+        _normalize_ternary_envs!(envs, x, ket)
         # 收敛判据：bond 0 中心矩阵漂移
         ϵ = norm(x.C[0] - C_old)
         verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
@@ -659,19 +731,12 @@ function _idmrg_mpo_sweeps(ket::FactorizedKet, x0::CanonicalIMPS, N::Int;
     iters === nothing || (iters[] = iter)
     # 规范恢复：从 AR 重建混合规范，环境对终态重解
     alg_gauge = updatetol(Defaults.alg_gauge(), iter, ϵ)
-    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
+    x = CanonicalIMPO([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
                       maxiter = alg_gauge.maxiter)
+    envs = MultCache(x, operator, ket)
     _global_normalize!(x)
-    return x
+    return x, envs
 end
-
-
-# The strict (compression-free) constructions live in operators/linalg.jl as
-# the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
-# `Base.:*(::DenseIMPO, ::DenseIMPS)`; this file provides the iterative
-# (variational) versions:
-# - `VOMPS`: overlap-maximizing ALS sweeps (strictly mirrors MPSKit VOMPS,
-#   src/algorithms/approximate/vomps.jl);
 
 """
     mult(W, ψ) -> y::CanonicalIMPS
@@ -765,34 +830,26 @@ mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG}) =
     first(_mult(W, W2, alg, nothing; D = alg.D))
 
 function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
-               ψ₀::Union{Nothing,CanonicalIMPS}; D::Int)
+               ψ₀::Union{Nothing,CanonicalIMPO}; D::Int)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
     (length(W2m) % length(Wm) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
-    N = length(W2m)
-    NW = length(Wm)
-    # 因子化惰性引擎（compute-on-the-fly）：乘积算符的融合张量从不物化，
-    # 环境收缩直接消费 (W1, W2) 对（键优先显式分步 GEMM；乘积因子各自保持
-    # 规范 ⇒ 无需 gauge twist）。
+    # 双 MPO 组合通道：bra = 变分链（CanonicalIMPO，原生 MPO 形态）、
+    # operator/ket 槽 = (W1c, W2c)——乘积张量从不物化（键优先分步 GEMM），
+    # 因子各自保持规范 ⇒ 无需 gauge twist。
     W1c = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
     W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
-    x0 = ψ₀ !== nothing ? ψ₀ : svdguess_mult(Wm, W2m, D)
-    ket = FactorizedKet(
-        ℓ -> W1c.AL[_mod1(ℓ, NW)], ℓ -> W2c.AL[ℓ],
-        ℓ -> W1c.AR[_mod1(ℓ, NW)], ℓ -> W2c.AR[ℓ],
-        ℓ -> W1c.AC[_mod1(ℓ, NW)], ℓ -> W2c.AC[ℓ],
-        ℓ -> W1c.C[_mod1(ℓ, NW)], ℓ -> W2c.C[ℓ])
+    x0 = ψ₀ !== nothing ? ψ₀ : devectorize(svdguess_mult(Wm, W2m, D))
     iters = Ref(0)
-    x = if alg isa VOMPS
-        _vomps_mpo_sweeps(ket, x0, N; tol = alg.tol, maxiter = alg.maxiter,
-                          verbosity = alg.verbosity, iters = iters)
+    x, _ = if alg isa VOMPS
+        _vomps_sweeps(W1c, W2c, x0; tol = alg.tol, maxiter = alg.maxiter,
+                      verbosity = alg.verbosity, iters = iters)
     else
-        _idmrg_mpo_sweeps(ket, x0, N; tol = alg.tol, maxiter = alg.maxiter,
-                          verbosity = alg.verbosity, iters = iters)
+        _idmrg_sweeps(W1c, W2c, x0; tol = alg.tol, maxiter = alg.maxiter,
+                      verbosity = alg.verbosity, iters = iters)
     end
-    _global_normalize!(x)
-    return devectorize(x), iters[]
+    return x, iters[]
 end
 
 # ---------------- svdguess_mult (deterministic initial guess) & mult! (in-place) ----------------
@@ -912,7 +969,6 @@ function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO},
                alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    ψ0 = vectorize(out)
-    y, _ = _mult(W, W2, alg, ψ0; D = D)
+    y, _ = _mult(W, W2, alg, out; D = D)
     return _copyinto!(out, y)
 end

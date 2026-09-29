@@ -346,8 +346,9 @@ function _lazy_galerkin_err(x::CanonicalIMPS, ket::ZipKet, GLs, GRs, N)
     return ϵ
 end
 
-"因子化 zip 通道的环境重标定（MPSKit `normalize!` 语义，同
-[`_normalize_lazy_mpo_envs!`](@ref)）。"
+"因子化 zip 通道的环境重标定（MPSKit `normalize!` 语义：GR Frobenius 归一、
+GL[ℓ+1] 按局部 C 通道 overlap λ 缩放，同 mult 组合通道的
+`_normalize_ternary_envs!`）。"
 function _normalize_lazy_zip_envs!(GLs, GRs, x::CanonicalIMPS, ket::ZipKet)
     N = length(x)
     for ℓ in 1:N
