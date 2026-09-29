@@ -63,12 +63,6 @@ end
 
 # ---- 三元通道固定点核（MultCache 构造器专用；mpo·mps / mpo·mpo 统一） ----
 
-"统一通道的算符张量取法：`DenseIMPO` 单家族（规范无关，getindex 已含周期
-取模，`fam` 忽略）；`CanonicalIMPO` 按规范家族取（`:AL`/`:AR`）。"
-function _optensor(W::CanonicalIMPO, ℓ::Integer, fam::Symbol = :AL)
-    return fam === :AL ? W.AL[_mod1(ℓ, length(W))] : W.AR[_mod1(ℓ, length(W))]
-end
-
 "Shared fixed-point solver of the ternary environments——mpo·mps 施加通道
 `⟨below|operator|above⟩ = ⟨ψ|W|ψ⟩` 与 mpo·mpo 组合通道 `⟨below|W1·W2⟩`（operator
 槽 = W1、above 槽 = W2，below 为 CanonicalIMPO）共用，环境 rank-3 且布局统一：
@@ -92,15 +86,15 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
     (N % L == 0 && length(above) == N) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     T = promote_type(scalartype(below), scalartype(operator), scalartype(above))
-    Dw = size(_optensor(operator, 1), 1)
+    Dw = size(operator.AL[1], 1)
     # 键 profile 逐站可变：环境张量一律定义在键 N 上（周期闭合处），
     # Dl/Da = below/above 链在键 N 上的键维，Dr = 同一键上 below 的键维。
     # 非均匀键下 size(below.AR[1],3) 是键 1 的键维，不能混用。
     Dl = size(below.AL[1], 1)
     Da = size(above.AL[1], 1)
     Dr = Dl
-    Wopl = ℓ -> _optensor(operator, ℓ, :AL)   # 左推用 AL 家族（与 below/above.AL 一致）
-    Wopr = ℓ -> _optensor(operator, ℓ, :AR)   # 右推用 AR 家族（与 below/above.AR 一致）
+    Wopl = ℓ -> operator.AL[_mod1(ℓ, L)]   # 左推用 AL 家族（与 below/above.AL 一致）
+    Wopr = ℓ -> operator.AR[_mod1(ℓ, L)]   # 右推用 AR 家族（与 below/above.AR 一致）
 
     # ---- left fixed point: dominant eigenvector of T_L(above.AL, operator, below.AL) ----
     Tleft = function (v::AbstractVector)
@@ -147,7 +141,7 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
         inext = _mod1(ℓ + 1, N)
         GLn = GLs[inext]
         GR = GRs[ℓ]
-        Cnew = _mapC(GLn, GR, operator, above, ℓ)
+        Cnew = _mapC(GLn, GR, above.C[ℓ], operator.C[_mod1(ℓ, L)])
         λ = dot(below.C[ℓ], Cnew)
         λ == 0 && error("ternary environment: local overlap λ = 0 at site $ℓ")
         GLs[inext] .= GLn ./ λ
@@ -180,66 +174,24 @@ end
 # 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 overlap.jl
 # 严格乘法的 kernel（fuse / _naive_mul_tensor）见 operators/linalg.jl
 
-"VOMPS local AC map (mirrors MPSKit `AC_hamiltonian·ket.AC`):
-AC_new = (GL·O·GR)·ket.AC (各参量允许不同标量类型，自动提升)."
-function _mapAC(GL::AbstractArray{Tg,3}, O::Union{Nothing,AbstractArray{To,4}},
-                GR::AbstractArray{Tgr,3}, ketAC::AbstractArray{Tk,3}) where {Tg,To,Tgr,Tk}
-    if O === nothing
-        @tensor ACnew[aL, p, aR] := GL[aL, 1, bL] * ketAC[bL, p, bR] * GR[bR, 1, aR]
-    else
-        @tensor ACnew[aL, u, aR] := GL[aL, w, bL] * ketAC[bL, s, bR] * O[w, u, w′, s] * GR[bR, w′, aR]
-    end
+"VOMPS local AC map（mpo·mps 施加通道；**统一 4 参约定 (GL, GR, O, ketAC)**，
+两通道靠 `ketAC` 的秩分派——rank-3 = mpo·mps、rank-4 = mpo·mpo 的 W2 中心张量）：
+`AC_new = GL·O·ketAC·GR`（O 为 operator 的原始张量 `.AC`，各参量允许不同标量
+类型，自动提升）。"
+function _mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+                O::AbstractArray{To,4}, ketAC::AbstractArray{Tk,3}) where {Tg,To,Tgr,Tk}
+    @tensor ACnew[aL, u, aR] := GL[aL, w, bL] * ketAC[bL, s, bR] * O[w, u, w′, s] * GR[bR, w′, aR]
     return ACnew
 end
 
-"VOMPS local C map (mirrors MPSKit `C_hamiltonian·ket.C`): the channel
-passes through with no W contraction."
-function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-               ketC::AbstractMatrix{Tk}) where {Tg,Tgr,Tk}
-    @tensor Cnew[a, a′] := GL[a, w, b] * ketC[b, b′] * GR[b′, w, a′]
-    return Cnew
-end
-
-"单 w 线 C 通道的算符 C 权重恢复核（mpo·mps 通道规范化算符约定）：C 问题在
-operator 的 w 线上插入其 C 权重——
-`Cnew[a, a′] = Σ GL[a, w, b]·Cw[w, w′]·ketC[b, b′]·GR[b′, w′, a′]`。"
-function _mapC_wline(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-                     ketC::AbstractMatrix{Tk}, Cw::AbstractMatrix{Tw}) where {Tg,Tgr,Tk,Tw}
-    @tensor Cnew[a, a′] := GL[a, w, b] * Cw[w, w′] * ketC[b, b′] * GR[b′, w′, a′]
-    return Cnew
-end
-
-# ---------------- 统一局部映射入口（按 ket 链类型分派 mpo·mps / mpo·mpo 核） ----------------
-
-"`_mapAC(GL, GR, operator, ket, ℓ)`：统一局部 AC 投影入口——两通道原理相同
-（operator 的原始张量 `.AC` + ket 的中心张量），仅 ket 链的秩不同：
-`CanonicalIMPS`（mpo·mps 施加通道，中心张量 rank-3）与 `CanonicalIMPO`
-（mpo·mpo 组合通道，ket = W2，中心张量 rank-4）。"
-_mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-       operator::CanonicalIMPO, ket::CanonicalIMPS, ℓ::Integer) where {Tg,Tgr} =
-    _mapAC(GL, operator.AC[_mod1(ℓ, length(operator))], GR, ket.AC[ℓ])
-_mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-       operator::CanonicalIMPO, ket::CanonicalIMPO, ℓ::Integer) where {Tg,Tgr} =
-    _mapAC(GL, GR, operator.AC[_mod1(ℓ, length(operator))], ket.AC[ℓ])
-
-"`_mapC(GL, GR, operator, ket, ℓ)`：统一局部 C 投影入口——两通道原理相同：C
-问题恢复融合键上的算符 C 权重（mpo·mps：operator 的 Cw 在单 w 线上；mpo·mpo：
-两因子的 C 外积 `C2 ⊗ C1`），与 envs 的规范家族约定配套。"
-_mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-      operator::CanonicalIMPO, ket::CanonicalIMPS, ℓ::Integer) where {Tg,Tgr} =
-    _mapC_wline(GL, GR, ket.C[ℓ], operator.C[_mod1(ℓ, length(operator))])
-_mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-      operator::CanonicalIMPO, ket::CanonicalIMPO, ℓ::Integer) where {Tg,Tgr} =
-    _mapC(GL, GR, ket.C[ℓ], operator.C[_mod1(ℓ, length(operator))])
+# 局部 C map 见下方 pair 通道的统一 4 参 `_mapC`（两通道同一收缩）
 
 # ---------------- 正交分解 / 重建的 3、4 维重载（MPS 视图语义统一） ----------------
 
-"`_leftsplit(AC, [alg]) -> (AL, C)`：MPS 视图 `(wl, u·d, wr)` 的左正交分解
-（rank-3 中心 / rank-4 CanonicalIMPO 中心重载；`alg` 为因式化算法，矩阵形态
-调用 `leftorth`——分腿形式仅接受 LQ 族，与 `regauge!` 同款）。
-`_rightsplit` 用 `alg'`（对偶因式化）。"
-_leftsplit(AC::AbstractArray{<:Any,3}, alg = Defaults.alg_orth()) =
-    _leftsplit(_as_mps_view(AC), alg)
+"`_leftsplit(AC, alg) -> (AL, C)`：MPS 视图 `(wl, u·d, wr)` 的左正交分解
+（rank-3 MPS 中心张量 / rank-4 CanonicalIMPO 中心张量，按秩分派；`alg` 为
+因式化算法，矩阵形态调用 `leftorth`——分腿形式仅接受 LQ 族，与 `regauge!`
+同款）。`_rightsplit` 用 `alg'`（对偶因式化）。"
 function _leftsplit(AC::AbstractArray{<:Any,3}, alg::FiniteMPSAlgorithms.OrthogonalFactorizationAlgorithm)
     wl, u, wr = size(AC)
     Q, C = leftorth(reshape(AC, wl * u, wr); alg = alg)
@@ -253,9 +205,7 @@ function _leftsplit(AC::AbstractArray{<:Any,4}, alg = Defaults.alg_orth())
     return AL4, C
 end
 
-"`_rightsplit(AC, [alg]) -> (C, AR)`：MPS 视图 `(wl, u·d, wr)` 的右正交分解。"
-_rightsplit(AC::AbstractArray{<:Any,3}, alg = Defaults.alg_orth()) =
-    _rightsplit(_as_mps_view(AC), alg)
+"`_rightsplit(AC, alg) -> (C, AR)`：MPS 视图 `(wl, u·d, wr)` 的右正交分解。"
 function _rightsplit(AC::AbstractArray{<:Any,3}, alg::FiniteMPSAlgorithms.OrthogonalFactorizationAlgorithm)
     wl, u, wr = size(AC)
     C, Q = rightorth(reshape(AC, wl, u * wr); alg = alg')
@@ -315,8 +265,8 @@ function _galerkin_err(operator::CanonicalIMPO, ket::CanonicalIMPS,
     N = length(ket)
     ϵ = 0.0
     for ℓ in 1:N
-        ACmap = _mapAC(leftenv(envs, ℓ), operator.AC[_mod1(ℓ, length(operator))],
-                       rightenv(envs, ℓ), ket.AC[ℓ])
+        ACmap = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                       operator.AC[_mod1(ℓ, length(operator))], ket.AC[ℓ])
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], ACmap))
     end
     return ϵ
@@ -374,9 +324,10 @@ function _vomps_sweeps(operator::CanonicalIMPO,
         # 候选 AL 与 ket.AC 同形，eltype 提升到通道标量类型 T）
         ALs = [similar(ket.AC[ℓ], T) for ℓ in 1:N]
         for ℓ in 1:N
-            AC_new = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket, ℓ)
+            AC_new = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                            operator.AC[_mod1(ℓ, length(operator))], ket.AC[ℓ])
             C_new = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ),
-                          operator, ket, ℓ)
+                          ket.C[ℓ], operator.C[_mod1(ℓ, length(operator))])
             ALs[ℓ] = regauge!(AC_new, C_new; alg = alg_orth)
         end
         # gauge: restore the global right gauge (mirrors MPSKit gauge_step!:
@@ -438,7 +389,7 @@ function _normalize_ternary_envs!(envs::MultCache, x::CanonicalIMPS,
         nr = norm(GR)
         nr > 0 && (GR ./= nr)
         Cnew = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ),
-                     envs.operator, ket, ℓ)
+                     ket.C[ℓ], envs.operator.C[_mod1(ℓ, length(envs.operator))])
         λ = dot(x.C[ℓ], Cnew)
         λ == 0 && error("idmrg sweep: local overlap λ = 0 at site $ℓ")
         envs.lefts[_mod1(ℓ + 1, N)] ./= λ
@@ -496,14 +447,16 @@ function _idmrg_sweeps(operator::CanonicalIMPO,
         C_old = copy(x.C[0])
         # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
         for ℓ in 1:N
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket, ℓ)
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                             operator.AC[_mod1(ℓ, length(operator))], ket.AC[ℓ])
             normalize!(x.AC[ℓ])
             x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg_orth)
             transfer_leftenv!(envs, x, operator, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket, ℓ)
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                             operator.AC[_mod1(ℓ, length(operator))], ket.AC[ℓ])
             normalize!(x.AC[ℓ])
             x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg_orth)
             transfer_rightenv!(envs, x, operator, ket, ℓ - 1)
@@ -592,13 +545,15 @@ function _mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
     @tensor AC4[jL, u, jR, dd] := Z[jL, u, dd, r1, r2] * GR[r2, r1, jR]
 end
 
-"Pair-channel local C projection：融合 C（外积 kron 布局，wl1/wr1 快；GR 布局
-`(wl2, wr1, br)`）——
-`Cnew[bl, br] = Σ GL[bl, wl1, wl2]·C1[wl1, wr1]·C2[wl2, wr2]·GR[wr2, wr1, br]`。"
+"VOMPS local C projection——**两通道统一的 4 参约定 (GL, GR, C_ab, C_op)**：C
+问题恢复融合键上的权重 = above 链的 C（`C_ab`：mpo·mps 为 ψ.C、mpo·mpo 为
+W2.C）× operator 的 C（`C_op`：mpo·mps 为 W.C、mpo·mpo 为 W1.C）——
+`Cnew[bl, br] = Σ GL[bl, w_op, w_ab]·C_ab[w_ab, r_ab]·C_op[w_op, r_op]·GR[r_ab, r_op, br]`
+（GL 腿序 `(below, w_op, above)`、GR `(above, w_op, below)`，两通道一致）。"
 function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
-               C2::AbstractMatrix, C1::AbstractMatrix) where {Tg,Tgr}
-    Y = @tensor Y[jL, w1, r2] := GL[jL, w1, w2] * C2[w2, r2]
-    Z = @tensor Z[jL, r1, r2] := Y[jL, w1, r2] * C1[w1, r1]
+               C_ab::AbstractMatrix, C_op::AbstractMatrix) where {Tg,Tgr}
+    Y = @tensor Y[jL, w1, r2] := GL[jL, w1, w2] * C_ab[w2, r2]
+    Z = @tensor Z[jL, r1, r2] := Y[jL, w1, r2] * C_op[w1, r1]
     @tensor Cnew[jL, jR] := Z[jL, r1, r2] * GR[r2, r1, jR]
 end
 
