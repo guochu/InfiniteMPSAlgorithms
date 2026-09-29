@@ -138,6 +138,17 @@ end
 fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
     fixedpoint(operator, x₀, which, alg.alg)
 
+"NamedTuple algorithm（环境通道的 `alg_environments` 形态，DynamicTol 解包后
+落到这里）：非厄米迁移矩阵的 `which` 主本征对；`krylovdim` 取
+`Defaults.krylovdim`。"
+function fixedpoint(operator, x₀, which::Symbol, alg::NamedTuple;
+                    krylovdim::Int = Defaults.krylovdim)
+    vals, vecs, _ = _eigsolve(operator, x₀, 1, which; ishermitian = false,
+                              tol = alg.tol, krylovdim = krylovdim,
+                              maxiter = alg.maxiter, eager = true)
+    return vals[1], vecs[1]
+end
+
 """
     module Defaults
 

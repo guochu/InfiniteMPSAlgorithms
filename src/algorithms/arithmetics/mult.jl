@@ -60,6 +60,95 @@ struct MultCache{O<:Union{DenseIMPO,CanonicalIMPO},
     rights::Vector{Array{T,3}}
 end
 
+# ---- 三元通道固定点核（MultCache 构造器专用） ----
+
+"Shared fixed-point solver of the ternary environments (left/right dominant
+eigenvectors + MPSKit-style normalization). `alg`（如 `Defaults.alg_environments()`
+或动态容差适配后的副本，DynamicTol/NamedTuple 皆可——`fixedpoint` 直接分派）
+提供环境的 `tol`/`maxiter`；`krylovdim` 取 `Defaults.krylovdim`。
+`GL0`/`GR0` optionally warm start
+the eigsolves with the previous environments: for block-degenerate targets the
+fixed-point space is multi-dimensional and a continuous initial guess keeps the
+ALS iteration stable."
+function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIMPS,
+                              alg = Defaults.alg_environments();
+                              GL0::Union{Nothing,AbstractArray} = nothing,
+                              GR0::Union{Nothing,AbstractArray} = nothing)
+    N = length(below)
+    L = isnothing(operator) ? N : length(operator)
+    (N % L == 0 && length(above) == N) ||
+        throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
+    T = promote_type(scalartype(below), scalartype(above))
+    Dw = isnothing(operator) ? 1 : size(operator[1], 1)
+    # 键 profile 逐站可变：环境张量一律定义在键 N 上（周期闭合处），
+    # Dl/Da = below/above 链在键 N 上的键维，Dr = 同一键上 below 的键维。
+    # 非均匀键下 size(below.AR[1],3) 是键 1 的键维，不能混用。
+    Dl = size(below.AL[1], 1)
+    Da = size(above.AL[1], 1)
+    Dr = Dl
+    Wop = isnothing(operator) ? (ℓ -> nothing) : (ℓ -> operator[_mod1(ℓ, L)])
+
+    # ---- left fixed point: dominant eigenvector of T_L(above.AL, operator, below.AL) ----
+    Tleft = function (v::AbstractVector)
+        GL = reshape(v, Dl, Dw, Da)
+        for ℓ in 1:N
+            W = Wop(ℓ)
+            GL = isnothing(W) ? push_env_left(GL, below.AL[ℓ], above.AL[ℓ]) :
+                 push_env_left(GL, below.AL[ℓ], W, above.AL[ℓ])
+        end
+        return vec(GL)
+    end
+    v0L = GL0 === nothing ? ones(T, Dl * Dw * Da) : vec(copy(GL0))
+    _, vL = fixedpoint(Tleft, v0L, :LM, alg)
+    # 复环境提升（MPSKit 对齐：环境张量按 eigsolve 返回的实际 eltype 存放；
+    # 实输入下融合转移的 leading vector 可为复，通道随后整体升为复算术）
+    TCL = promote_type(T, eltype(vL))
+    GLs = Vector{Array{TCL,3}}(undef, N)
+    GLs[1] = reshape(vL, Dl, Dw, Da)
+    for ℓ in 2:N
+        W = Wop(ℓ - 1)
+        GLs[ℓ] = isnothing(W) ? push_env_left(GLs[ℓ-1], below.AL[ℓ-1], above.AL[ℓ-1]) :
+                 push_env_left(GLs[ℓ-1], below.AL[ℓ-1], W, above.AL[ℓ-1])
+    end
+
+    # ---- right fixed point: dominant eigenvector of T_R(above.AR, operator, below.AR) ----
+    Tright = function (v::AbstractVector)
+        GR = reshape(v, Da, Dw, Dr)
+        for ℓ in N:-1:1
+            W = Wop(ℓ)
+            GR = isnothing(W) ? push_env_right(GR, above.AR[ℓ], below.AR[ℓ]) :
+                 push_env_right(GR, above.AR[ℓ], W, below.AR[ℓ])
+        end
+        return vec(GR)
+    end
+    v0R = GR0 === nothing ? ones(T, Da * Dw * Dr) : vec(copy(GR0))
+    _, vR = fixedpoint(Tright, v0R, :LM, alg)
+    TCR = promote_type(T, eltype(vR))
+    GRs = Vector{Array{TCR,3}}(undef, N)
+    GRs[N] = reshape(vR, Da, Dw, Dr)
+    for ℓ in N-1:-1:1
+        W = Wop(ℓ + 1)
+        GRs[ℓ] = isnothing(W) ? push_env_right(GRs[ℓ+1], above.AR[ℓ+1], below.AR[ℓ+1]) :
+                 push_env_right(GRs[ℓ+1], above.AR[ℓ+1], W, below.AR[ℓ+1])
+    end
+
+    # ---- normalization (mirroring MPSKit: GR Frobenius-normalized, GL scaled
+    #      by the local overlap λ) ----
+    for ℓ in 1:N
+        GRs[ℓ] .= GRs[ℓ] ./ norm(GRs[ℓ])
+    end
+    for ℓ in 1:N
+        inext = _mod1(ℓ + 1, N)
+        GLn = GLs[inext]
+        GR = GRs[ℓ]
+        Cnew = _mapC(GLn, GR, above.C[ℓ])
+        λ = dot(below.C[ℓ], Cnew)
+        λ == 0 && error("ternary environment: local overlap λ = 0 at site $ℓ")
+        GLs[inext] .= GLn ./ λ
+    end
+    return GLs, GRs
+end
+
 function MultCache(below::CanonicalIMPS, operator::DenseIMPO,
                    above::CanonicalIMPS, alg = Defaults.alg_environments();
                    GL0::Union{Nothing,AbstractArray} = nothing,
