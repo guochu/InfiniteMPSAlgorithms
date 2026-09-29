@@ -83,11 +83,14 @@ function _compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
     iters = Ref(0)
     x, _ = if alg isa VOMPS
         _overlap_vomps_sweeps(ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters)
+                              verbosity = alg.verbosity, iters = iters,
+                              alg_gauge = alg.alg_gauge,
+                              alg_environments = alg.alg_environments,
+                              alg_orth = alg.alg_orth)
     else
         _overlap_idmrg_sweeps(ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve,
-                              iters = iters)
+                              verbosity = alg.verbosity, iters = iters,
+                              alg_gauge = alg.alg_gauge)
     end
     return _global_normalize!(x), iters[]
 end
@@ -105,11 +108,14 @@ function _compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG},
     iters = Ref(0)
     x, _ = if alg isa VOMPS
         _overlap_vomps_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters)
+                              verbosity = alg.verbosity, iters = iters,
+                              alg_gauge = alg.alg_gauge,
+                              alg_environments = alg.alg_environments,
+                              alg_orth = alg.alg_orth)
     else
         _overlap_idmrg_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve,
-                              iters = iters)
+                              verbosity = alg.verbosity, iters = iters,
+                              alg_gauge = alg.alg_gauge)
     end
     x = _global_normalize!(x)
     return devectorize(x), iters[]
@@ -123,11 +129,14 @@ function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG},
     iters = Ref(0)
     x, _ = if alg isa VOMPS
         _overlap_vomps_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, iters = iters)
+                              verbosity = alg.verbosity, iters = iters,
+                              alg_gauge = alg.alg_gauge,
+                              alg_environments = alg.alg_environments,
+                              alg_orth = alg.alg_orth)
     else
         _overlap_idmrg_sweeps(ket, x0; tol = alg.tol, maxiter = alg.maxiter,
-                              verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve,
-                              iters = iters)
+                              verbosity = alg.verbosity, iters = iters,
+                              alg_gauge = alg.alg_gauge)
     end
     x = _global_normalize!(x)
     return devectorize(x), iters[]

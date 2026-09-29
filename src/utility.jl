@@ -92,6 +92,12 @@ DynamicTol(alg; tol_min::Real = 1.0e-6, tol_max::Real = 1.0e-2, tol_factor::Real
 "Unwrapped algorithm: dynamic tolerance is a no-op (mirrors MPSKit)."
 updatetol(alg, iter::Integer, ϵ::Real) = alg
 
+"`_envalg(alg)`: 解出动态容差包装的内层算法参数（NamedTuple 等）——环境固定点
+求解器从 `alg_environments`（DynamicTol 或 NamedTuple）取 `tol`/`maxiter` 的
+统一入口。"
+_envalg(alg::DynamicTol) = alg.alg
+_envalg(alg) = alg
+
 function updatetol(alg::DynamicTol, iter::Integer, ϵ::Real)
     iter = max(iter, one(iter))
     new_tol = clamp(ϵ * alg.tol_factor / sqrt(iter), alg.tol_min, alg.tol_max)

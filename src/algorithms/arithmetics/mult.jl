@@ -61,24 +61,21 @@ struct MultCache{O<:Union{DenseIMPO,CanonicalIMPO},
 end
 
 function MultCache(below::CanonicalIMPS, operator::DenseIMPO,
-                   above::CanonicalIMPS;
-                   tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
-                   maxiter::Int = Defaults.maxiter,
+                   above::CanonicalIMPS, alg = Defaults.alg_environments();
                    GL0::Union{Nothing,AbstractArray} = nothing,
                    GR0::Union{Nothing,AbstractArray} = nothing)
-    GLs, GRs = _ternary_fixedpoints(below, operator, above; tol, krylovdim, maxiter, GL0, GR0)
+    GLs, GRs = _ternary_fixedpoints(below, operator, above, alg; GL0, GR0)
     return MultCache(operator, below, above, GLs, GRs)
 end
 
 "双 MPO 组合通道（mpo·mpo）：bra 槽 = 变分链（CanonicalIMPO，原生 MPO 形态）、
 operator 槽 = W1、ket 槽 = W2，环境 rank-3
 `(below, wl1, wl2)`/`(wr1, wr2, below)`（两个因子的键腿分开存放）。"
-function MultCache(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO;
-                   tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
-                   maxiter::Int = Defaults.maxiter,
+function MultCache(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO,
+                   alg = Defaults.alg_environments();
                    GL0::Union{Nothing,AbstractArray} = nothing,
                    GR0::Union{Nothing,AbstractArray} = nothing)
-    GLs, GRs = _ternary_fixedpoints(below, W1, W2; tol, krylovdim, maxiter, GL0, GR0)
+    GLs, GRs = _ternary_fixedpoints(below, W1, W2, alg; GL0, GR0)
     return MultCache(W1, below, W2, GLs, GRs)
 end
 
@@ -139,6 +136,49 @@ function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
     return Cnew
 end
 
+# ---------------- 统一局部映射入口（按 operator 槽类型分派 mpo·mps / mpo·mpo 核） ----------------
+
+"`_mapAC(GL, GR, operator, ketAC, ℓ)`：统一局部 AC 投影入口——`operator::DenseIMPO`
+（mpo·mps：单算符插入）与 `operator::CanonicalIMPO`（mpo·mpo：W1 因子，`ketAC`
+为 W2 因子的 rank-4 中心张量）分派到各自 kernel。"
+_mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+       operator::DenseIMPO, ketAC::AbstractArray{Tk,3}, ℓ::Integer) where {Tg,Tgr,Tk} =
+    _mapAC(GL, operator[_mod1(ℓ, length(operator))], GR, ketAC)
+_mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+       operator::CanonicalIMPO, ketAC::AbstractArray{Tk,4}, ℓ::Integer) where {Tg,Tgr,Tk} =
+    _mapAC(GL, GR, operator.AC[_mod1(ℓ, length(operator))], ketAC)
+
+"`_mapC(GL, GR, operator, ketC, ℓ)`：统一局部 C 投影入口（mpo·mps 的 C 通道无
+算符收缩；mpo·mpo 需要两个因子的 C 外积）。"
+_mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+      operator::DenseIMPO, ketC::AbstractMatrix{Tk}, ℓ::Integer) where {Tg,Tgr,Tk} =
+    _mapC(GL, GR, ketC)
+_mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+      operator::CanonicalIMPO, ketC::AbstractMatrix{Tk}, ℓ::Integer) where {Tg,Tgr,Tk} =
+    _mapC(GL, GR, ketC, operator.C[_mod1(ℓ, length(operator))])
+
+# ---------------- 正交分解 / 重建的 3、4 维重载（MPS 视图语义统一） ----------------
+
+"`_leftsplit(AC) -> (AL, C)`：MPS 视图 `(wl, u·d, wr)` 的左正交分解
+（rank-3 中心 / rank-4 CanonicalIMPO 中心重载）。"
+_leftsplit(AC::AbstractArray{<:Any,3}) = leftorth(AC, (1, 2), (3,))
+function _leftsplit(AC::AbstractArray{<:Any,4})
+    AL4, C = leftorth(AC, (1, 2, 4), (3,))
+    return permutedims(AL4, (1, 2, 4, 3)), C       # (wl, u, d, wr) → (wl, u, wr, d)
+end
+
+"`_rightsplit(AC) -> (C, AR)`：MPS 视图 `(wl, u·d, wr)` 的右正交分解。"
+_rightsplit(AC::AbstractArray{<:Any,3}) = rightorth(AC, (1,), (2, 3))
+function _rightsplit(AC::AbstractArray{<:Any,4})
+    C, AR4 = rightorth(AC, (1,), (2, 4, 3))
+    return C, permutedims(AR4, (1, 2, 4, 3))       # (wl, u, d, wr) → (wl, u, wr, d)
+end
+
+"`_rebuild(ARs; kwargs)`: 从 AR 串重建混合规范链（rank-3 → CanonicalIMPS、
+rank-4 → CanonicalIMPO）。"
+_rebuild(ARs::Vector{<:AbstractArray{<:Any,3}}; kwargs...) = CanonicalIMPS(ARs; kwargs...)
+_rebuild(ARs::Vector{<:AbstractArray{<:Any,4}}; kwargs...) = CanonicalIMPO(ARs; kwargs...)
+
 "Uniform norm normalization (AC and C are scaled together, preserving the
 consistency of `AC = AL·C` and `AR = C[ℓ-1]⁻¹·AC`)."
 function _global_normalize!(x::CanonicalIMPS)
@@ -188,13 +228,16 @@ function _galerkin_err(operator::DenseIMPO, ket::CanonicalIMPS,
 end
 
 """
-    _vomps_sweeps(operator, ket, x0; tol, maxiter, verbosity, iters) -> (x, envs)
+    _vomps_sweeps(operator, ket, x0; tol, maxiter, verbosity, iters,
+                  alg_gauge, alg_environments, alg_orth) -> (x, envs)
 
-Overlap-maximizing variational sweeps of the MPO-application channel (strictly
-mirroring MPSKit's `approximate(ψ₀, (O, ϕ), VOMPS())`,
+Overlap-maximizing variational sweeps of the MPO-application / MPO-composition
+channels (strictly mirroring MPSKit's `approximate(ψ₀, (O, ϕ), VOMPS())`,
 `src/algorithms/approximate/vomps.jl`): find `x` approximating `operator|ket⟩`.
-（compress 的无算符版本见 overlap.jl 的 `_overlap_vomps_sweeps`。）Each round
-(MPSKit `IterativeSolver` pipeline):
+按 `operator` 槽类型分派：`DenseIMPO` + `CanonicalIMPS` ket = mpo·mps 施加通道；
+`CanonicalIMPO` + `CanonicalIMPO` = mpo·mpo 组合通道（bra 槽为 CanonicalIMPO，
+原生 MPO 形态演化，乘积张量从不物化）。Each round (MPSKit `IterativeSolver`
+pipeline):
 
 1. `localupdate`: per-site local maps `AC_new = (GL·O·GR)·ket.AC`,
    `C_new = GL₊·ket.C·GR` → `regauge!` yields candidate `AL`s (all sites
@@ -202,7 +245,7 @@ mirroring MPSKit's `approximate(ψ₀, (O, ϕ), VOMPS())`,
 2. `gauge_step!`: `gaugefix!(; order = :R)` restores the global right gauge,
    at the dynamically adapted gauge tolerance (`adapt_solver(alg_gauge)`);
 3. `envs_step!`: environments recomputed (warm-started from the previous
-   round's fixed points, dynamically adapted tolerance);
+   round's fixed points, dynamically adapted tolerance `alg_environments`);
 4. convergence `ϵ = _galerkin_err ≤ tol` checked **after** the sweep (MPSKit
    `IterativeSolver` semantics: at least one sweep always runs).
 
@@ -211,14 +254,18 @@ the optimized state and its final environments (MPSKit `approximate`
 convention: `(ψ, envs, ϵ)`); callers that want a fidelity diagnostic can
 compute it once from `envs` afterwards.
 """
-function _vomps_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
-                       x0::CanonicalIMPS;
+function _vomps_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
+                       ket::Union{CanonicalIMPS,CanonicalIMPO},
+                       x0::Union{CanonicalIMPS,CanonicalIMPO};
                        tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                        verbosity::Int = Defaults.verbosity,
-                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing,
+                       alg_gauge = Defaults.alg_gauge(),
+                       alg_environments = Defaults.alg_environments(),
+                       alg_orth = Defaults.alg_orth())
     N = length(ket)
     x = copy(x0)
-    envs = MultCache(x, operator, ket)
+    envs = MultCache(x, operator, ket, alg_environments)
     # 通道标量类型（MPSKit 对齐）：环境按 eigsolve 的实际 eltype 存放（实输入下
     # 融合转移的 leading vector 可为复），演动态随之提升，扫掠在提升后算术上进行
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
@@ -227,22 +274,23 @@ function _vomps_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
     ϵ = _galerkin_err(operator, ket, x, envs)
     iter = 0
     for outer iter in 1:maxiter
-        # localupdate: per-site local maps + regauge（全部站点对同一批环境）
-        ALs = Vector{Array{T,3}}(undef, N)
+        # localupdate: per-site local maps + regauge（全部站点对同一批环境；
+        # 候选 AL 与 ket.AC 同形，eltype 提升到通道标量类型 T）
+        ALs = [similar(ket.AC[ℓ], T) for ℓ in 1:N]
         for ℓ in 1:N
-            AC_new = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
-                            rightenv(envs, ℓ), ket.AC[ℓ])
-            C_new = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ), ket.C[ℓ])
-            ALs[ℓ] = regauge!(AC_new, C_new; alg = Defaults.alg_orth())
+            AC_new = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket.AC[ℓ], ℓ)
+            C_new = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ),
+                          operator, ket.C[ℓ], ℓ)
+            ALs[ℓ] = regauge!(AC_new, C_new; alg = alg_orth)
         end
         # gauge: restore the global right gauge (mirrors MPSKit gauge_step!:
         # seeded with state.C[end], dynamically adapted gauge tolerance)
-        alg_gauge = updatetol(Defaults.alg_gauge(), iter - 1, ϵ)
-        gauge_step!(x, ALs, x.C[N]; tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
+        alg_g = updatetol(alg_gauge, iter - 1, ϵ)
+        gauge_step!(x, ALs, x.C[N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
         # envs_step!（热启动：上一轮的不动点作为 eigsolve 初值 + 动态环境容差）
-        alg_envs = updatetol(Defaults.alg_environments(), iter - 1, ϵ)
-        envs = MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
-                         tol = alg_envs.tol)
+        alg_envs = updatetol(alg_environments, iter - 1, ϵ)
+        envs = MultCache(x, operator, ket, alg_envs;
+                         GL0 = envs.lefts[1], GR0 = envs.rights[N])
         ϵ = _galerkin_err(operator, ket, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
@@ -299,14 +347,14 @@ function _normalize_ternary_envs!(envs::MultCache, x::CanonicalIMPS,
 end
 
 """
-    _idmrg_sweeps(operator, ket, x0; tol, maxiter, verbosity, iters) -> (x, envs)
+    _idmrg_sweeps(operator, ket, x0; tol, maxiter, verbosity, iters, alg_gauge) -> (x, envs)
 
-IDMRG sweeps of the MPO-application channel, strictly mirroring MPSKit's
-`approximate(ψ₀, (O, ϕ), IDMRG())` (`src/algorithms/approximate/idmrg.jl`):
-a sequential Gauss–Seidel double sweep over the unit cell with on-the-fly
-environment transfer, converged on the boundary center-matrix drift
-(converging to the same fixed point as the VOMPS template of
-[`_vomps_sweeps`](@ref)):
+IDMRG sweeps of the MPO-application / MPO-composition channels, strictly
+mirroring MPSKit's `approximate(ψ₀, (O, ϕ), IDMRG())`
+(`src/algorithms/approximate/idmrg.jl`): a sequential Gauss–Seidel double sweep
+over the unit cell with on-the-fly environment transfer, converged on the
+boundary center-matrix drift (converging to the same fixed point as the VOMPS
+template of [`_vomps_sweeps`](@ref)):
 
 1. left-to-right sweep: per site, the local projection
    `k = (GL·O·GR)·ket.AC`, normalized, split by `leftorth` into
@@ -320,22 +368,23 @@ environment transfer, converged on the boundary center-matrix drift
 4. convergence: `ϵ = ‖C[0]_new − C[0]_old‖` (boundary center-matrix drift).
 
 Afterwards the mixed-canonical state is rebuilt from the `AR` string (MPSKit
-`MultilineMPS(ψ.AR)` at the dynamically adapted gauge tolerance) and the
+`MultilineMPS(ψ.AR)` at the dynamically adapted `alg_gauge` tolerance) and the
 environments are recomputed for the final state. （compress 的无算符版本见
 overlap.jl 的 `_overlap_idmrg_sweeps`。）`iters::Ref{Int}` optionally receives
 the sweep count.
 """
-function _idmrg_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
-                       x0::CanonicalIMPS;
+function _idmrg_sweeps(operator::Union{DenseIMPO,CanonicalIMPO},
+                       ket::Union{CanonicalIMPS,CanonicalIMPO},
+                       x0::Union{CanonicalIMPS,CanonicalIMPO};
                        tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                        verbosity::Int = Defaults.verbosity,
-                       alg_eigsolve = Defaults.alg_eigsolve(),
-                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing,
+                       alg_gauge = Defaults.alg_gauge())
     N = length(ket)
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点（MPSKit environments(ψ, toapprox...)），
     # 扫掠中只做增量 transfer 与重标定，不再整体重解（MPSKit IDMRG 语义）
-    envs = MultCache(x, operator, ket)
+    envs = MultCache(x, operator, ket, Defaults.alg_environments())
     # 通道标量类型（MPSKit 对齐，见 _vomps_sweeps 注释）
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
@@ -345,18 +394,16 @@ function _idmrg_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
         C_old = copy(x.C[0])
         # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
         for ℓ in 1:N
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
-                             rightenv(envs, ℓ), ket.AC[ℓ])
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket.AC[ℓ], ℓ)
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = leftorth(x.AC[ℓ], (1, 2), (3,))
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ])
             transfer_leftenv!(envs, x, operator, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), operator[_mod1(ℓ, length(operator))],
-                             rightenv(envs, ℓ), ket.AC[ℓ])
+            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), operator, ket.AC[ℓ], ℓ)
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = rightorth(x.AC[ℓ], (1,), (2, 3))
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ])
             transfer_rightenv!(envs, x, operator, ket, ℓ - 1)
         end
         # 环境重标定（MPSKit normalize!(envs, below, operator, above)）
@@ -369,10 +416,9 @@ function _idmrg_sweeps(operator::DenseIMPO, ket::CanonicalIMPS,
     iters === nothing || (iters[] = iter)
     # 规范恢复：从 AR 重建混合规范（MPSKit MultilineMPS(ψ.AR; alg_gauge...)），
     # 环境对终态重解（MPSKit recalculate!(envs, ψ, toapprox)）
-    alg_gauge = updatetol(Defaults.alg_gauge(), iter, ϵ)
-    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
-                      maxiter = alg_gauge.maxiter)
-    envs = MultCache(x, operator, ket)
+    alg_g = updatetol(alg_gauge, iter, ϵ)
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
+    envs = MultCache(x, operator, ket, Defaults.alg_environments())
     _global_normalize!(x)
     return x, envs
 end
@@ -491,12 +537,10 @@ rank-3 环境 `(below, wl1, wl2)`/`(wr1, wr2, below)`）。乘积因子各自保
 twist。
 """
 function _ternary_fixedpoints(below::CanonicalIMPO, W1::CanonicalIMPO,
-                              W2::CanonicalIMPO;
-                              tol::Real = Defaults.tol,
-                              krylovdim::Int = Defaults.krylovdim,
-                              maxiter::Int = Defaults.maxiter,
+                              W2::CanonicalIMPO, alg = Defaults.alg_environments();
                               GL0::Union{Nothing,AbstractArray} = nothing,
                               GR0::Union{Nothing,AbstractArray} = nothing)
+    alg = _envalg(alg)                       # 解开 DynamicTol 包装（.tol/.maxiter）
     N = length(below)
     NW = length(W1)
     (N % NW == 0 && length(W2) == N) ||
@@ -514,8 +558,8 @@ function _ternary_fixedpoints(below::CanonicalIMPO, W1::CanonicalIMPO,
         return vec(GL)
     end
     v0L = GL0 === nothing ? ones(T, Dl * D1 * D2) : vec(copy(GL0))
-    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
-                       krylovdim = krylovdim, maxiter = maxiter)
+    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = alg.tol,
+                       krylovdim = Defaults.krylovdim, maxiter = alg.maxiter)
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, eltype(GL1[1]))
     GLs = Vector{Array{TCL,3}}(undef, N)
@@ -533,8 +577,8 @@ function _ternary_fixedpoints(below::CanonicalIMPO, W1::CanonicalIMPO,
         return vec(GR)
     end
     v0R = GR0 === nothing ? ones(T, D1 * D2 * Dl) : vec(copy(GR0))
-    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
-                       krylovdim = krylovdim, maxiter = maxiter)
+    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = alg.tol,
+                       krylovdim = Defaults.krylovdim, maxiter = alg.maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = GR = reshape(GRN[1], D1, D2, Dl)
@@ -597,145 +641,30 @@ end
 function transfer_leftenv!(envs::MultCache{<:CanonicalIMPO,
                                             <:Union{CanonicalIMPS,CanonicalIMPO},
                                             <:CanonicalIMPO},
-                           x::CanonicalIMPO, ket::CanonicalIMPO, site::Int)
+                           x::CanonicalIMPO, operator::CanonicalIMPO,
+                           ket::CanonicalIMPO, site::Int)
     N = length(ket)
-    NW = length(envs.operator)
+    NW = length(operator)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
     envs.lefts[ℓ] = _push_env_left(envs.lefts[ℓm], x.AL[ℓm],
-                                   envs.operator.AL[_mod1(ℓm, NW)], ket.AL[ℓm])
+                                   operator.AL[_mod1(ℓm, NW)], ket.AL[ℓm])
     return envs
 end
 
 function transfer_rightenv!(envs::MultCache{<:CanonicalIMPO,
                                              <:Union{CanonicalIMPS,CanonicalIMPO},
                                              <:CanonicalIMPO},
-                            x::CanonicalIMPO, ket::CanonicalIMPO, site::Int)
+                            x::CanonicalIMPO, operator::CanonicalIMPO,
+                            ket::CanonicalIMPO, site::Int)
     N = length(ket)
-    NW = length(envs.operator)
+    NW = length(operator)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
     envs.rights[ℓ] = _push_env_right(envs.rights[ℓp],
-                                     envs.operator.AR[_mod1(ℓp, NW)], ket.AR[ℓp],
+                                     operator.AR[_mod1(ℓp, NW)], ket.AR[ℓp],
                                      x.AR[ℓp])
     return envs
-end
-
-"""
-    _vomps_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO, x0::CanonicalIMPO;
-                  tol, maxiter, verbosity, iters) -> (x, envs)
-
-双 MPO 组合通道（mpo·mpo）的 VOMPS 模板：bra 为 CanonicalIMPO——变分链原生在
-MPO 形态上演化（物理腿 (u, d) 不融合），`operator`/`ket` 槽各持一个
-CanonicalIMPO 因子，乘积张量从不物化。Jacobi 轮管道与 mpo·mps 版
-（[`_vomps_sweeps`](@ref)）完全一致：localupdate（rank-4 `regauge!`）→
-`gauge_step!` → 热启动环境重解 → 扫掠后检查 Galerkin 残差。
-`iters::Ref{Int}` 可选接收扫掠轮数；返回 `(x, envs)`。
-"""
-function _vomps_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO,
-                       x0::CanonicalIMPO;
-                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                       verbosity::Int = Defaults.verbosity,
-                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
-    N = length(ket)
-    NW = length(operator)
-    x = copy(x0)
-    envs = MultCache(x, operator, ket)
-    # 通道标量类型提升（见 mpo·mps 版 `_vomps_sweeps` 注释）
-    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
-    x = _promote_scalar(T, x)
-    # 初始残差（收敛判定在扫掠之后，MPSKit IterativeSolver 语义）
-    ϵ = _galerkin_err(operator, ket, x, envs)
-    iter = 0
-    for outer iter in 1:maxiter
-        # localupdate: per-site local maps + regauge（全部站点对同一批环境）
-        ALs = Vector{Array{T,4}}(undef, N)
-        for ℓ in 1:N
-            W1t = operator.AC[_mod1(ℓ, NW)]
-            AC4 = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), W1t, ket.AC[ℓ])
-            ĉ = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ),
-                      ket.C[ℓ], operator.C[_mod1(ℓ, NW)])
-            ALs[ℓ] = regauge!(AC4, ĉ; alg = Defaults.alg_orth())
-        end
-        # gauge: restore the global right gauge（动态容差；内部同步全部家族）
-        alg_gauge = updatetol(Defaults.alg_gauge(), iter - 1, ϵ)
-        gauge_step!(x, ALs, x.C[N]; tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
-        # envs_step!（热启动 + 动态环境容差）
-        alg_envs = updatetol(Defaults.alg_environments(), iter - 1, ϵ)
-        envs = MultCache(x, operator, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
-                         tol = alg_envs.tol)
-        ϵ = _galerkin_err(operator, ket, x, envs)
-        verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
-        ϵ ≤ tol && break
-    end
-    iters === nothing || (iters[] = iter)
-    _global_normalize!(x)
-    return x, envs
-end
-
-"""
-    _idmrg_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO, x0::CanonicalIMPO;
-                  tol, maxiter, verbosity, iters) -> (x, envs)
-
-双 MPO 组合通道（mpo·mpo）的 IDMRG 模板：bra 为 CanonicalIMPO。Gauss–Seidel
-双扫掠 + 即时环境推进 + 重标定 + C 漂移收敛，管道与 mpo·mps 版
-（[`_idmrg_sweeps`](@ref)）完全一致；注意 rank-4 中心的正交分解按 MPS 视图
-`(wl, u·d, wr)` 分腿（leftorth 的 `(1, 2, 4)|(3)`、rightorth 的 `(1)|(2, 4, 3)`），
-分解结果 permute 回 `(wl, u, wr, d)`。 afterwards the mixed-canonical state is
-rebuilt from the `AR` string and the environments are re-solved for the final
-state. `iters::Ref{Int}` optionally receives the sweep count.
-"""
-function _idmrg_sweeps(operator::CanonicalIMPO, ket::CanonicalIMPO,
-                       x0::CanonicalIMPO;
-                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                       verbosity::Int = Defaults.verbosity,
-                       iters::Union{Nothing,Base.RefValue{Int}} = nothing)
-    N = length(ket)
-    NW = length(operator)
-    x = copy(x0)
-    envs = MultCache(x, operator, ket)
-    # 通道标量类型提升（见 mpo·mps 版 `_vomps_sweeps` 注释）
-    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
-    x = _promote_scalar(T, x)
-    ϵ = 2 * tol
-    iter = 0
-    for outer iter in 1:maxiter
-        C_old = copy(x.C[0])
-        # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
-        for ℓ in 1:N
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
-                             operator.AC[_mod1(ℓ, NW)], ket.AC[ℓ])
-            normalize!(x.AC[ℓ])
-            AL4, C = leftorth(x.AC[ℓ], (1, 2, 4), (3,))
-            x.AL[ℓ] = permutedims(AL4, (1, 2, 4, 3))   # (wl, u, d, wr) → (wl, u, wr, d)
-            x.C[ℓ] = C
-            transfer_leftenv!(envs, x, ket, ℓ + 1)
-        end
-        # right to left sweep
-        for ℓ in N:-1:1
-            x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ),
-                             operator.AC[_mod1(ℓ, NW)], ket.AC[ℓ])
-            normalize!(x.AC[ℓ])
-            C, AR4 = rightorth(x.AC[ℓ], (1,), (2, 4, 3))
-            x.C[ℓ - 1] = C
-            x.AR[ℓ] = permutedims(AR4, (1, 2, 4, 3))   # (wl, u, d, wr) → (wl, u, wr, d)
-            transfer_rightenv!(envs, x, ket, ℓ - 1)
-        end
-        # 环境重标定（MPSKit normalize!(envs, below, operator, above) 语义）
-        _normalize_ternary_envs!(envs, x, ket)
-        # 收敛判据：bond 0 中心矩阵漂移
-        ϵ = norm(x.C[0] - C_old)
-        verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
-        ϵ < tol && break
-    end
-    iters === nothing || (iters[] = iter)
-    # 规范恢复：从 AR 重建混合规范，环境对终态重解
-    alg_gauge = updatetol(Defaults.alg_gauge(), iter, ϵ)
-    x = CanonicalIMPO([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
-                      maxiter = alg_gauge.maxiter)
-    envs = MultCache(x, operator, ket)
-    _global_normalize!(x)
-    return x, envs
 end
 
 """
@@ -799,11 +728,14 @@ function _mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
     iters = Ref(0)
     y, _ = if alg isa VOMPS
         _vomps_sweeps(Wm, ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
-                      verbosity = alg.verbosity, iters = iters)
+                      verbosity = alg.verbosity, iters = iters,
+                      alg_gauge = alg.alg_gauge,
+                      alg_environments = alg.alg_environments,
+                      alg_orth = alg.alg_orth)
     else
         _idmrg_sweeps(Wm, ψ, x0; tol = alg.tol, maxiter = alg.maxiter,
-                      verbosity = alg.verbosity, alg_eigsolve = alg.alg_eigsolve,
-                      iters = iters)
+                      verbosity = alg.verbosity, iters = iters,
+                      alg_gauge = alg.alg_gauge)
     end
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
     # (preserving the ray), then normalize to the package norm convention
@@ -844,10 +776,14 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
     iters = Ref(0)
     x, _ = if alg isa VOMPS
         _vomps_sweeps(W1c, W2c, x0; tol = alg.tol, maxiter = alg.maxiter,
-                      verbosity = alg.verbosity, iters = iters)
+                      verbosity = alg.verbosity, iters = iters,
+                      alg_gauge = alg.alg_gauge,
+                      alg_environments = alg.alg_environments,
+                      alg_orth = alg.alg_orth)
     else
         _idmrg_sweeps(W1c, W2c, x0; tol = alg.tol, maxiter = alg.maxiter,
-                      verbosity = alg.verbosity, iters = iters)
+                      verbosity = alg.verbosity, iters = iters,
+                      alg_gauge = alg.alg_gauge)
     end
     return x, iters[]
 end

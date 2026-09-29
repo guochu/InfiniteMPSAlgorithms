@@ -62,10 +62,12 @@ end
 
 # rank-2 恒等通道固定点（environments.jl `_ternary_fixedpoints` 的无算符分支
 # 的 rank-2 版；rank-2 双层 push 的 (above, below) 参数序见文件头注释）。
-function _overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS;
-                              tol::Real, krylovdim::Int, maxiter::Int,
+# `alg`（如 `Defaults.alg_environments()` 或动态容差适配后的副本）提供
+# `tol`/`maxiter`；`krylovdim` 取 `Defaults.krylovdim`。
+function _overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS, alg;
                               GL0::Union{Nothing,AbstractArray} = nothing,
                               GR0::Union{Nothing,AbstractArray} = nothing)
+    alg = _envalg(alg)                       # 解开 DynamicTol 包装（.tol/.maxiter）
     N = length(below)
     T = promote_type(scalartype(below), scalartype(above))
     # 键 profile 逐站可变：环境定义在周期闭合的键 N 上（below/above 同长）
@@ -80,8 +82,8 @@ function _overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS;
         return vec(GL)
     end
     v0L = GL0 === nothing ? ones(T, Dl * Da) : vec(copy(GL0))
-    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
-                       krylovdim = krylovdim, maxiter = maxiter)
+    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = alg.tol,
+                       krylovdim = Defaults.krylovdim, maxiter = alg.maxiter)
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, eltype(GL1[1]))
     GLs = Vector{Matrix{TCL}}(undef, N)
@@ -98,8 +100,8 @@ function _overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS;
         return vec(GR)
     end
     v0R = GR0 === nothing ? ones(T, Da * Dl) : vec(copy(GR0))
-    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
-                       krylovdim = krylovdim, maxiter = maxiter)
+    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = alg.tol,
+                       krylovdim = Defaults.krylovdim, maxiter = alg.maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
     GRs = Vector{Matrix{TCR}}(undef, N)
     GRs[N] = GR = reshape(GRN[1], Da, Dl)
@@ -121,13 +123,13 @@ function _overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS;
     return GLs, GRs
 end
 
-"Ternary overlap channel: left/right fixed points of ⟨below|above⟩."
-function OverlapCache(below::CanonicalIMPS, above::CanonicalIMPS;
-                      tol::Real = Defaults.tol, krylovdim::Int = Defaults.krylovdim,
-                      maxiter::Int = Defaults.maxiter,
+"Ternary overlap channel: left/right fixed points of ⟨below|above⟩（`alg` 提供
+环境的 `tol`/`maxiter`）。"
+function OverlapCache(below::CanonicalIMPS, above::CanonicalIMPS,
+                      alg = Defaults.alg_environments();
                       GL0::Union{Nothing,AbstractArray} = nothing,
                       GR0::Union{Nothing,AbstractArray} = nothing)
-    GLs, GRs = _overlap_fixedpoints(below, above; tol, krylovdim, maxiter, GL0, GR0)
+    GLs, GRs = _overlap_fixedpoints(below, above, alg; GL0, GR0)
     return OverlapCache(below, above, GLs, GRs)
 end
 
@@ -181,7 +183,8 @@ function _galerkin_err(ket::CanonicalIMPS, x::CanonicalIMPS, envs::OverlapCache)
 end
 
 """
-    _overlap_vomps_sweeps(ket, x0; tol, maxiter, verbosity, iters) -> (x, envs)
+    _overlap_vomps_sweeps(ket, x0; tol, maxiter, verbosity, iters,
+                          alg_gauge, alg_environments, alg_orth) -> (x, envs)
 
 Overlap-maximizing VOMPS sweeps on the pure overlap channel (the operator-free
 branch of MPSKit's `approximate(ψ₀, ϕ, VOMPS())`): find `x` approximating the
@@ -195,10 +198,13 @@ after the sweep. `iters::Ref{Int}` optionally receives the sweep count; returns
 function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
                                tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                                verbosity::Int = Defaults.verbosity,
-                               iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+                               iters::Union{Nothing,Base.RefValue{Int}} = nothing,
+                               alg_gauge = Defaults.alg_gauge(),
+                               alg_environments = Defaults.alg_environments(),
+                               alg_orth = Defaults.alg_orth())
     N = length(ket)
     x = copy(x0)
-    envs = OverlapCache(x, ket)
+    envs = OverlapCache(x, ket, alg_environments)
     # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
@@ -206,20 +212,20 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
     ϵ = _galerkin_err(ket, x, envs)
     iter = 0
     for outer iter in 1:maxiter
-        # localupdate: per-site local maps + regauge（全部站点对同一批环境）
-        ALs = Vector{Array{T,3}}(undef, N)
+        # localupdate: per-site local maps + regauge（全部站点对同一批环境；
+        # 候选 AL 与 ket.AC 同形，eltype 提升到通道标量类型 T）
+        ALs = [similar(ket.AC[ℓ], T) for ℓ in 1:N]
         for ℓ in 1:N
             AC_new = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), ket.AC[ℓ])
             C_new = _mapC(leftenv(envs, _mod1(ℓ + 1, N)), rightenv(envs, ℓ), ket.C[ℓ])
-            ALs[ℓ] = regauge!(AC_new, C_new; alg = Defaults.alg_orth())
+            ALs[ℓ] = regauge!(AC_new, C_new; alg = alg_orth)
         end
         # gauge: restore the global right gauge（动态容差）
-        alg_gauge = updatetol(Defaults.alg_gauge(), iter - 1, ϵ)
-        gauge_step!(x, ALs, x.C[N]; tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
+        alg_g = updatetol(alg_gauge, iter - 1, ϵ)
+        gauge_step!(x, ALs, x.C[N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
         # envs_step!（热启动 + 动态环境容差）
-        alg_envs = updatetol(Defaults.alg_environments(), iter - 1, ϵ)
-        envs = OverlapCache(x, ket; GL0 = envs.lefts[1], GR0 = envs.rights[N],
-                            tol = alg_envs.tol)
+        alg_envs = updatetol(alg_environments, iter - 1, ϵ)
+        envs = OverlapCache(x, ket, alg_envs; GL0 = envs.lefts[1], GR0 = envs.rights[N])
         ϵ = _galerkin_err(ket, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
@@ -230,7 +236,7 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
 end
 
 """
-    _overlap_idmrg_sweeps(ket, x0; tol, maxiter, verbosity, iters) -> (x, envs)
+    _overlap_idmrg_sweeps(ket, x0; tol, maxiter, verbosity, iters, alg_gauge) -> (x, envs)
 
 IDMRG template on the pure overlap channel (the operator-free branch of
 MPSKit's `approximate(ψ₀, ϕ, IDMRG())`): sequential Gauss–Seidel double sweep
@@ -244,12 +250,12 @@ the `AR` string and the environments are re-solved for the final state.
 function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
                                tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
                                verbosity::Int = Defaults.verbosity,
-                               alg_eigsolve = Defaults.alg_eigsolve(),
-                               iters::Union{Nothing,Base.RefValue{Int}} = nothing)
+                               iters::Union{Nothing,Base.RefValue{Int}} = nothing,
+                               alg_gauge = Defaults.alg_gauge())
     N = length(ket)
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
-    envs = OverlapCache(x, ket)
+    envs = OverlapCache(x, ket, Defaults.alg_environments())
     # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
@@ -261,14 +267,14 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
         for ℓ in 1:N
             x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), ket.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = leftorth(x.AC[ℓ], (1, 2), (3,))
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ])
             transfer_leftenv!(envs, x, ket, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
             x.AC[ℓ] = _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), ket.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = rightorth(x.AC[ℓ], (1,), (2, 3))
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ])
             transfer_rightenv!(envs, x, ket, ℓ - 1)
         end
         # 环境重标定
@@ -280,10 +286,10 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS;
     end
     iters === nothing || (iters[] = iter)
     # 规范恢复：从 AR 重建混合规范，环境对终态重解
-    alg_gauge = updatetol(Defaults.alg_gauge(), iter, ϵ)
-    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
-                      maxiter = alg_gauge.maxiter)
-    envs = OverlapCache(x, ket)
+    alg_g = updatetol(alg_gauge, iter, ϵ)
+    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
+                      maxiter = alg_g.maxiter)
+    envs = OverlapCache(x, ket, Defaults.alg_environments())
     _global_normalize!(x)
     return x, envs
 end

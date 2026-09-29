@@ -35,14 +35,17 @@ _to3(L::AbstractArray{T,3}) where {T} = L
 # ---- ternary fixed-point kernel (shared by the MultCache / OverlapCache constructors) ----
 
 "Shared fixed-point solver of the ternary environments (left/right dominant
-eigenvectors + MPSKit-style normalization). `GL0`/`GR0` optionally warm start
+eigenvectors + MPSKit-style normalization). `alg`（如 `Defaults.alg_environments()`
+或动态容差适配后的副本）提供环境的 `tol`/`maxiter`；`krylovdim` 取
+`Defaults.krylovdim`。`GL0`/`GR0` optionally warm start
 the eigsolves with the previous environments: for block-degenerate targets the
 fixed-point space is multi-dimensional and a continuous initial guess keeps the
 ALS iteration stable."
-function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIMPS;
-                              tol::Real, krylovdim::Int, maxiter::Int,
+function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIMPS,
+                              alg = Defaults.alg_environments();
                               GL0::Union{Nothing,AbstractArray} = nothing,
                               GR0::Union{Nothing,AbstractArray} = nothing)
+    alg = _envalg(alg)                       # 解开 DynamicTol 包装（.tol/.maxiter）
     N = length(below)
     L = isnothing(operator) ? N : length(operator)
     (N % L == 0 && length(above) == N) ||
@@ -69,7 +72,8 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
     end
     v0L = GL0 === nothing ? ones(T, Dl * Dw * Da) : vec(copy(GL0))
     _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false,
-                       tol = tol, krylovdim = krylovdim, maxiter = maxiter)
+                       tol = alg.tol, krylovdim = Defaults.krylovdim,
+                       maxiter = alg.maxiter)
     # 复环境提升（MPSKit 对齐：环境张量按 eigsolve 返回的实际 eltype 存放；
     # 实输入下融合转移的 leading vector 可为复，通道随后整体升为复算术）
     TCL = promote_type(T, eltype(GL1[1]))
@@ -93,7 +97,8 @@ function _ternary_fixedpoints(below::CanonicalIMPS, operator, above::CanonicalIM
     end
     v0R = GR0 === nothing ? ones(T, Da * Dw * Dr) : vec(copy(GR0))
     _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false,
-                       tol = tol, krylovdim = krylovdim, maxiter = maxiter)
+                       tol = alg.tol, krylovdim = Defaults.krylovdim,
+                       maxiter = alg.maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = reshape(GRN[1], Da, Dw, Dr)

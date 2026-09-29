@@ -3,10 +3,10 @@
 # Elementwise waveform product `c₁₂ = c₁ .* c2`: virtual legs zipped per site,
 # physical leg shared (kernel `_naive_hadamard_tensor` in states/linalg.jl);
 # the physical dimension is unchanged and the bond dimension becomes the product
-# of the two. The iterative version runs the factorized zip engine
-# (`_vomps_zip_sweeps`/`_idmrg_zip_sweeps` on the `ZipKet` target — the fused
-# zip tensors are never materialized, the environment/本地映射直接消费
-# (ψ1, ψ2) 因子对). The strict compression-free Hadamard
+# of the two. The iterative version runs the zip channel of the unified
+# variational engines (`_vomps_sweeps`/`_idmrg_sweeps` 的 zip 方法，环境缓存为
+# `HadamardCache`——乘积因子 (ψ1, ψ2) 直接进入环境/局部映射收缩，融合 zip 张量
+# 从不物化）。The strict compression-free Hadamard
 # product lives in states/linalg.jl (`hadamard(::DenseIMPS, ::DenseIMPS)`);
 # there is no `CanonicalIMPS` method — convert explicitly first.
 
@@ -34,25 +34,22 @@ function _hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMR
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
-    N = length(ψ1)
     # 因子化 zip target（compute-on-the-fly）：融合 zip 张量从不物化，环境与
     # 局部映射直接消费 (ψ1, ψ2) 因子对（先与环境收缩——键优先的显式分步 GEMM，
     # 见 `_zip_push_left`/`_mapAC_zip`）；C 的融合序 = `kron(C2, C1)` 与 zip
     # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。
-    ket = ZipKet(
-        ℓ -> ψ1.AL[ℓ], ℓ -> ψ2.AL[ℓ],
-        ℓ -> ψ1.AR[ℓ], ℓ -> ψ2.AR[ℓ],
-        ℓ -> ψ1.AC[ℓ], ℓ -> ψ2.AC[ℓ],
-        ℓ -> ψ1.C[ℓ],  ℓ -> ψ2.C[ℓ],
-    )
     x0 = x0 === nothing ? svdguess_hadamard(ψ1, ψ2, D) : x0
     iters = Ref(0)
-    y = if alg isa VOMPS
-        _vomps_zip_sweeps(ket, x0, N; tol = alg.tol, maxiter = alg.maxiter,
-                          verbosity = alg.verbosity, iters = iters)
+    y, _ = if alg isa VOMPS
+        _vomps_sweeps(ψ2, ψ1, x0; tol = alg.tol, maxiter = alg.maxiter,
+                      verbosity = alg.verbosity, iters = iters,
+                      alg_gauge = alg.alg_gauge,
+                      alg_environments = alg.alg_environments,
+                      alg_orth = alg.alg_orth)
     else
-        _idmrg_zip_sweeps(ket, x0, N; tol = alg.tol, maxiter = alg.maxiter,
-                          verbosity = alg.verbosity, iters = iters)
+        _idmrg_sweeps(ψ2, ψ1, x0; tol = alg.tol, maxiter = alg.maxiter,
+                      verbosity = alg.verbosity, iters = iters,
+                      alg_gauge = alg.alg_gauge)
     end
     return y, iters[]
 end
@@ -128,108 +125,75 @@ function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
     y, _ = _hadamard(ψ1, ψ2, alg, out; D = D)
     return _copyinto!(out, y)
 end
-# ---------------- factorized zip engine (hadamard channel; bond-first contractions) ----------------
+
+# ---------------- zip（Hadamard）通道：HadamardCache 与统一引擎方法 ----------------
 #
 # hadamard 的惰性 target：`Ket[(c,a), s, (e,b)] = A2[c,s,e]·A1[a,s,b]`（ψ2 键为
 # 主指标、ψ1 为次指标，与 `kron(A2, A1)` 融合序一致；物理腿 s 是 below/A1/A2
-# 三方共享的收缩边）。经由 LazyKet 闭包的做法每次调用都先物化 (D1·D2, d, D1·D2)
-# 的融合张量、再与环境收缩——等价于「先做乘法再压缩」的最差收缩路径（中间张量
-# O((D1·D2)²·d)）。因子化引擎把 (A1, A2) 对一路保留到环境/局部映射的收缩里：
-# 共享物理腿按站点分片（per-s 片 GEMM，同 `_naive_hadamard_tensor` 的 kron 方
-# 案）、键指标优先——最大中间张量 O(Dx·D1·D2·d)，融合 zip 张量从不落地。
+# 三方共享的收缩边）。与 MultCache 的接口统一：HadamardCache 持 (bra, ket1, ket2)
+# 三槽、环境为 rank-3 `(below, a, c)`/`(b, e, below)`（与 MultCache 组合通道的
+# `(below, wl1, wl2)`/`(wr1, wr2, below)` 同格式）；环境/局部映射直接消费
+# (ψ1, ψ2) 因子对——共享物理腿按站点分片（per-s 切片 GEMM，同
+# `_naive_hadamard_tensor` 的 kron 方案）、键指标优先，最大中间张量
+# O(Dx·D1·D2·d)，融合 zip 张量从不落地。
 
-"""
-    ZipKet(ALf1, ALf2, ARf1, ARf2, ACf1, ACf2, Cf1, Cf2)
-
-因子化 zip（Hadamard/Schur 乘积）惰性 target：`Ket[(c,a), s, (e,b)] =
-A2[c,s,e]·A1[a,s,b]`（ψ2 键为主指标、ψ1 为次指标；`AL·C = C·AR = AC` 逐点
-成立，C 的融合序 = `kron(C2, C1)`）。环境与局部映射直接消费 `(A1, A2)` 因子
-对——融合 zip 张量从不物化。
-"""
-struct ZipKet{A1,A2,B1,B2,C1,C2,D1,D2}
-    ALf1::A1; ALf2::A2
-    ARf1::B1; ARf2::B2
-    ACf1::C1; ACf2::C2
-    Cf1::D1;  Cf2::D2
-end
-
-"""
-    _zip_push_left(L, below, A2, A1) -> Matrix
-
-因子化 zip 的 identity 通道左推（环境 `L` 为 `(x 键, 融合键 (c·a))` 矩阵，
-a 为快指标）：
-`L′[bl′, (e·b)] = Σ conj(below[bl, s, bl′])·L[bl, (c·a)]·A2[c,s,e]·A1[a,s,b]`.
-物理腿 s 为 below/A2/A1 三方共享边 ⇒ 按物理片收缩（per-s 切片 @tensor，同
-`_naive_hadamard_tensor` 的 kron 方案）：最大中间张量 O(Dx·D1·D2·d)，融合
-zip 张量从不物化。
-"""
-function _zip_push_left(L::AbstractMatrix, below::AbstractArray{Tb,3},
-                        A2::AbstractArray{Ta,3}, A1::AbstractArray{T1,3}) where {Tb,Ta,T1}
-    Dx = size(L, 1)
+"`_zip_push_left(L, below, A2, A1) -> L′`（rank-3 环境）：zip 通道 identity 左推
+`L′[bl′, b, e] = Σ conj(below[bl, s, bl′])·L[bl, a, c]·A2[c,s,e]·A1[a,s,b]`。
+物理腿 s 为三方共享边 ⇒ 按物理片收缩（per-s 切片 GEMM），最大中间张量
+O(Dx·D1·D2·d)，融合 zip 张量从不物化。"
+function _zip_push_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
+                        A2::AbstractArray{Ta,3}, A1::AbstractArray{T1,3}) where {TL,Tb,Ta,T1}
     bl′ = size(below, 3)
     D2, d = size(A2, 1), size(A2, 2)       # A2[c, s, e]
     D1 = size(A1, 1)                       # A1[a, s, b]
     T = promote_type(eltype(L), eltype(below), eltype(A2), eltype(A1))
-    L3 = reshape(L, Dx, D1, D2)            # (bl, a, c)：融合 (c·a) 的 a 为快指标
     belowC = conj(below)                   # (bl, s, bl′)
     W = zeros(T, D2, D1, bl′)              # 各 s 片累加：(e, b, bl′)
     for s in 1:d
         below_s = @view belowC[:, s, :]    # (bl, bl′)
         A1s = @view A1[:, s, :]            # (a, b)
         A2s = @view A2[:, s, :]            # (c, e)
-        @tensor W[e, b, bl′] += L3[bl, a, c] * A2s[c, e] * A1s[a, b] * below_s[bl, bl′]
+        @tensor W[e, b, bl′] += L[bl, a, c] * A2s[c, e] * A1s[a, b] * below_s[bl, bl′]
     end
-    return reshape(permutedims(W, (3, 2, 1)), bl′, D1 * D2)      # (bl′, (e·b))：b 为快指标
+    return permutedims(W, (3, 2, 1))       # [bl′, b, e] = (below, ψ1 键, ψ2 键)：b 快
 end
 
-"""
-    _zip_push_right(R, A2, A1, below) -> Matrix
-
-因子化 zip 的 identity 通道右推（环境 `R` 为 `(融合键 (e·b), x 键)` 矩阵，
-b 为快指标）：
-`R′[(c·a), bl′] = Σ R[(e·b), bl]·A2[c,s,e]·A1[a,s,b]·conj(below[bl′, s, bl])`
-（below = x.AR：第一维为新键、第三维为旧键）。物理腿按物理片收缩（per-s
-切片 @tensor），最大中间张量 O(D2·D1·Dx·d)，融合 zip 张量从不物化。
-"""
-function _zip_push_right(R::AbstractMatrix, A2::AbstractArray{Ta,3},
-                         A1::AbstractArray{T1,3}, below::AbstractArray{Tb,3}) where {Ta,T1,Tb}
-    bl′ = size(below, 1)                   # 新 below 键（输出列）
-    bl = size(below, 3)                    # 旧 below 键（R 的列）
-    D2, d = size(A2, 1), size(A2, 2)       # A2ar[e, s, c]
-    D1 = size(A1, 1)                       # A1ar[b, s, a]
+"`_zip_push_right(R, A2, A1, below) -> R′`（rank-3 环境）：zip 通道 identity 右推
+`R′[a, c, bl′] = Σ R[b, e, bl]·A2[c,s,e]·A1[a,s,b]·conj(below[bl′, s, bl])`
+（below = x.AR：第一维为新键、第三维为旧键）。物理腿按物理片收缩，最大中间
+张量 O(D2·D1·Dx·d)，融合 zip 张量从不物化。"
+function _zip_push_right(R::AbstractArray{TR,3}, A2::AbstractArray{Ta,3},
+                         A1::AbstractArray{T1,3}, below::AbstractArray{Tb,3}) where {TR,Ta,T1,Tb}
+    bl′ = size(below, 1)                   # 新 below 键（输出末维）
+    bl = size(below, 3)                    # 旧 below 键
+    D2, d = size(A2, 1), size(A2, 2)       # A2[c, s, e]
+    D1 = size(A1, 1)                       # A1[a, s, b]
     T = promote_type(eltype(R), eltype(below), eltype(A2), eltype(A1))
-    R3 = reshape(R, D1, D2, bl)            # (b, e, bl)：GR 行 = b + (e-1)·D1，b 为快指标
     belowC = conj(below)                   # (bl′, s, bl)
     W = zeros(T, D1, D2, bl′)              # 各 s 片累加：(a, c, bl′)
     for s in 1:d
         below_s = @view belowC[:, s, :]    # (bl′, bl)
-        A1s = @view A1[:, s, :]            # (a, b)：A1 的左键 a 为行
-        A2s = @view A2[:, s, :]            # (c, e)：A2 的左键 c 为行
-        @tensor W[a, c, bl′] += A2s[c, e] * A1s[a, b] * R3[b, e, bl] * below_s[bl′, bl]
+        A1s = @view A1[:, s, :]            # (a, b)
+        A2s = @view A2[:, s, :]            # (c, e)
+        @tensor W[a, c, bl′] += A2s[c, e] * A1s[a, b] * R[b, e, bl] * below_s[bl′, bl]
     end
-    return reshape(W, D1 * D2, bl′)                             # ((c, a), bl′)：a 为快指标
+    return W                               # [a, c, bl′] = (ψ1 键, ψ2 键, below)：a 快
 end
 
-"""
-    _mapAC_zip(GL, GR, A2ac, A1ac) -> Array{T,3}
-
-因子化 zip 的 identity 通道局部 AC 映射：
-`k[xL, p, xR] = Σ GL[xL, (c·a)]·A2ac[c,p,e]·A1ac[a,p,b]·GR[(e·b), xR]`.
-物理腿 p 为两因子共享的开放指标（非收缩边），分两步 @tensor：键 c → 键 a →
-融合右键 (e·b)，最大中间张量 O(Dx·D1·d·D2)，融合 zip AC 张量从不物化。
-"""
-function _mapAC_zip(GL::AbstractMatrix, GR::AbstractMatrix,
-                    A2ac::AbstractArray{Ta,3}, A1ac::AbstractArray{T1,3}) where {Ta,T1}
+"`_mapAC_zip(GL, GR, A2ac, A1ac) -> k`（rank-3 环境）：zip 通道局部 AC 投影
+`k[xL, p, xR] = Σ GL[xL, a, c]·A2ac[c,p,e]·A1ac[a,p,b]·GR[b, e, xR]`。
+物理腿 p 为两因子共享的开放指标（per-p 片 batched GEMM），键 c → 键 a →
+右键 (b, e) 分步收缩，最大中间张量 O(Dx·D1·d·D2)，融合 zip AC 从不物化。"
+function _mapAC_zip(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
+                    A2ac::AbstractArray{Ta,3}, A1ac::AbstractArray{T1,3}) where {Tg,Tgr,Ta,T1}
     Dx = size(GL, 1)
     D2, d = size(A2ac, 1), size(A2ac, 2)   # A2ac[c, p, e]
     D1 = size(A1ac, 1)                     # A1ac[a, p, b]
     T = promote_type(eltype(GL), eltype(GR), eltype(A2ac), eltype(A1ac))
-    GL3 = reshape(GL, Dx, D1, D2)          # (xL, a, c)：融合 (c·a) 的 a 为快指标
-    GR3 = reshape(GR, D1, D2, size(GR, 2)) # (b, e, xR)：融合 (e·b) 的 b 为快指标
-    # 步1（键 c）：Y[a, xL, p, e] = Σ_c GL3[xL, a, c]·A2ac[c, p, e]
-    @tensor Y[a, xL, p, e] := GL3[xL, a, c] * A2ac[c, p, e]      # 中间 Dx·D1·d·D2
-    # 步2a（键 a；p 逐片——p 为两因子共享的开放指标，@tensor 不支持批量共享，
-    #      按物理片 batched GEMM）：Z[p, b, e, xL] = Σ_a Y[a, xL, p, e]·A1ac[a, p, b]
+    # 步1（键 c）：Y[a, xL, p, e] = Σ_c GL[xL, a, c]·A2ac[c, p, e]
+    @tensor Y[a, xL, p, e] := GL[xL, a, c] * A2ac[c, p, e]      # 中间 Dx·D1·d·D2
+    # 步2a（键 a；p 逐片——p 为两因子共享的开放指标，按物理片 batched GEMM）：
+    # Z[p, b, e, xL] = Σ_a Y[a, xL, p, e]·A1ac[a, p, b]
     Y3 = reshape(Y, D1, Dx, d, D2)                               # (a, xL, p, e)
     Z = zeros(T, d, D1, D2, Dx)
     for p in 1:d
@@ -240,224 +204,271 @@ function _mapAC_zip(GL::AbstractMatrix, GR::AbstractMatrix,
             reshape(transpose(A1p) * reshape(Yp, D1, Dx * D2), D1, Dx, D2), (1, 3, 2)), D1, D2, Dx)
     end
     # 步2b（键 b, e）：k[xL, p, xR] = Σ Z·GR
-    xR = size(GR, 2)
+    xR = size(GR, 3)
     Zp = reshape(permutedims(Z, (1, 4, 2, 3)), d * Dx, D1 * D2)  # (p, xL, b, e)：列 = b + (e-1)·D1
-    kR = Zp * reshape(GR3, D1 * D2, xR)                           # (d·D1, xR)
+    kR = Zp * reshape(GR, D1 * D2, xR)                            # (d·D1, xR)
     return reshape(permutedims(reshape(kR, d, Dx, xR), (2, 1, 3)), Dx, d, xR)
 end
 
-"""
-    _mapC_zip(GL, C2, C1, GR) -> Matrix
-
-因子化 zip 的 identity 通道局部 C 映射：
-`Cnew[xL, xR] = Σ GL[xL, (c·a)]·C2[c, e]·C1[a, b]·GR[(e·b), xR]`.
-分两步 @tensor（键 c 与键 b），最大中间张量 O(Dx·D1·D2)，`kron(C2, C1)`
-从不物化。
-"""
-function _mapC_zip(GL::AbstractMatrix, C2::AbstractMatrix,
-                   C1::AbstractMatrix, GR::AbstractMatrix)
-    D2, D1 = size(C2, 1), size(C1, 1)
-    Dx = size(GL, 1)
-    GL3 = reshape(GL, Dx, D1, D2)          # (xL, a, c)：融合 (c·a) 的 a 为快指标
-    GR3 = reshape(GR, D1, D2, size(GR, 2)) # (b, e, xR)：融合 (e·b) 的 b 为快指标
-    @tensor Y[a, xL, e] := GL3[xL, a, c] * C2[c, e]              # 中间 Dx·D1·D2
-    @tensor S[a, e, xR] := C1[a, b] * GR3[b, e, xR]              # 中间 D1·D2·Dx
+"`_mapC_zip(GL, C2, C1, GR) -> Cnew`（rank-3 环境）：zip 通道局部 C 投影
+`Cnew[xL, xR] = Σ GL[xL, a, c]·C2[c, e]·C1[a, b]·GR[b, e, xR]`（kron(C2, C1)
+从不物化）。"
+function _mapC_zip(GL::AbstractArray{Tg,3}, C2::AbstractMatrix,
+                   C1::AbstractMatrix, GR::AbstractArray{Tgr,3}) where {Tg,Tgr}
+    @tensor Y[a, xL, e] := GL[xL, a, c] * C2[c, e]              # 中间 Dx·D1·D2
+    @tensor S[a, e, xR] := C1[a, b] * GR[b, e, xR]              # 中间 D1·D2·Dx
     @tensor Cnew[xL, xR] := Y[a, xL, e] * S[a, e, xR]
     return Cnew
 end
 
-"""
-    _lazy_ternary_fixedpoints(x, ket::ZipKet; tol, krylovdim, maxiter, GL0, GR0) -> (GLs, GRs)
+# ---------------- HadamardCache ----------------
 
-因子化 zip target 的 identity 通道固定点：环境推直接消费 `(A1, A2)` 因子对
-（[`_zip_push_left`](@ref)/[`_zip_push_right`](@ref)）。`GL`/`GR` 为
-`(x 键, 融合键 (c·a)/(e·b))` 矩阵。`GL0`/`GR0` 可选：用上一轮环境热启动
-eigsolve（保持不动点在逐轮之间的连续性）。
 """
-function _lazy_ternary_fixedpoints(x::CanonicalIMPS, ket::ZipKet;
-                                   tol::Real = Defaults.tol,
-                                   krylovdim::Int = Defaults.krylovdim,
-                                   maxiter::Int = Defaults.maxiter,
-                                   GL0::Union{Nothing,AbstractArray} = nothing,
-                                   GR0::Union{Nothing,AbstractArray} = nothing)
-    N = length(x)
-    T = scalartype(x)
-    Dl = size(x.AL[1], 1)
-    Dr = size(x.AR[1], 3)
-    Da1 = size(ket.ALf1(1), 1) * size(ket.ALf2(1), 1)
+    HadamardCache(bra, ket1, ket2, lefts, rights)
+    HadamardCache(below, ψ1, ψ2, alg; GL0, GR0) -> HadamardCache
+
+zip（Hadamard/Schur 乘积）通道 `⟨below|zip(ψ1, ψ2)⟩` 的环境缓存——接口与
+[`MultCache`](@ref) 统一（rank-3 环境 `(below, a, c)`/`(b, e, below)`，两个
+因子的键腿分开存放）。固定点由 :LM eigsolve 解出（`alg` 提供 `tol`/`maxiter`），
+归一化同 MPSKit（GR Frobenius 归一、GL 按局部 C 通道 overlap λ 缩放；
+`kron(C2, C1)` 从不物化）。
+"""
+struct HadamardCache{B<:CanonicalIMPS,K1<:CanonicalIMPS,K2<:CanonicalIMPS,T} <: Environments
+    bra::B
+    ket1::K1   # ψ1（次指标因子）
+    ket2::K2   # ψ2（主指标因子）
+    lefts::Vector{Array{T,3}}
+    rights::Vector{Array{T,3}}
+end
+
+function HadamardCache(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
+                       alg = Defaults.alg_environments();
+                       GL0::Union{Nothing,AbstractArray} = nothing,
+                       GR0::Union{Nothing,AbstractArray} = nothing)
+    GLs, GRs = _zip_fixedpoints(below, ψ1, ψ2, alg; GL0, GR0)
+    return HadamardCache(below, ψ1, ψ2, GLs, GRs)
+end
+
+"`leftenv(envs, ℓ)` / `rightenv(envs, ℓ)`：zip 通道环境访问（HadamardCache 的
+字段为 ket1/ket2，无 ket 槽）。"
+leftenv(envs::HadamardCache, ℓ::Integer) = envs.lefts[_mod1(ℓ, length(envs.ket1))]
+rightenv(envs::HadamardCache, ℓ::Integer) = envs.rights[_mod1(ℓ, length(envs.ket1))]
+
+"zip 通道的 identity 通道固定点（rank-3 环境；`alg` 提供 `tol`/`maxiter`，
+`krylovdim` 取 `Defaults.krylovdim`）。"
+function _zip_fixedpoints(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
+                          alg = Defaults.alg_environments();
+                          GL0::Union{Nothing,AbstractArray} = nothing,
+                          GR0::Union{Nothing,AbstractArray} = nothing)
+    alg = _envalg(alg)                       # 解开 DynamicTol 包装（.tol/.maxiter）
+    N = length(below)
+    T = promote_type(scalartype(below), scalartype(ψ1), scalartype(ψ2))
+    Dl = size(below.AL[1], 1)
+    D1 = size(ψ1.AL[1], 1)
+    D2 = size(ψ2.AL[1], 1)
 
     Tleft = function (v::AbstractVector)
-        GL = reshape(v, Dl, Da1)
+        GL = reshape(v, Dl, D1, D2)
         for ℓ in 1:N
-            GL = _zip_push_left(GL, x.AL[ℓ], ket.ALf2(ℓ), ket.ALf1(ℓ))
+            GL = _zip_push_left(GL, below.AL[ℓ], ψ2.AL[ℓ], ψ1.AL[ℓ])
         end
         return vec(GL)
     end
-    v0L = GL0 === nothing ? ones(T, Dl * Da1) : vec(copy(GL0))
-    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = tol,
-                       krylovdim = krylovdim, maxiter = maxiter)
+    v0L = GL0 === nothing ? ones(T, Dl * D1 * D2) : vec(copy(GL0))
+    _, GL1 = _eigsolve(Tleft, v0L, 1, :LM; ishermitian = false, tol = alg.tol,
+                       krylovdim = Defaults.krylovdim, maxiter = alg.maxiter)
+    # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, eltype(GL1[1]))
-    GLs = Vector{Matrix{TCL}}(undef, N)
-    GLs[1] = GL = reshape(GL1[1], Dl, Da1)
+    GLs = Vector{Array{TCL,3}}(undef, N)
+    GLs[1] = GL = reshape(GL1[1], Dl, D1, D2)
     for ℓ in 2:N
-        GL = _zip_push_left(GL, x.AL[ℓ-1], ket.ALf2(ℓ-1), ket.ALf1(ℓ-1))
-        GLs[ℓ] = GL
+        GLs[ℓ] = GL = _zip_push_left(GL, below.AL[ℓ-1], ψ2.AL[ℓ-1], ψ1.AL[ℓ-1])
     end
 
     Tright = function (v::AbstractVector)
-        GR = reshape(v, Da1, Dr)
+        GR = reshape(v, D1, D2, Dl)
         for ℓ in N:-1:1
-            GR = _zip_push_right(GR, ket.ARf2(ℓ), ket.ARf1(ℓ), x.AR[ℓ])
+            GR = _zip_push_right(GR, ψ2.AR[ℓ], ψ1.AR[ℓ], below.AR[ℓ])
         end
         return vec(GR)
     end
-    v0R = GR0 === nothing ? ones(T, Da1 * Dr) : vec(copy(GR0))
-    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = tol,
-                       krylovdim = krylovdim, maxiter = maxiter)
+    v0R = GR0 === nothing ? ones(T, D1 * D2 * Dl) : vec(copy(GR0))
+    _, GRN = _eigsolve(Tright, v0R, 1, :LM; ishermitian = false, tol = alg.tol,
+                       krylovdim = Defaults.krylovdim, maxiter = alg.maxiter)
     TCR = promote_type(T, eltype(GRN[1]))
-    GRs = Vector{Matrix{TCR}}(undef, N)
-    GRs[N] = GR = reshape(GRN[1], Da1, Dr)
+    GRs = Vector{Array{TCR,3}}(undef, N)
+    GRs[N] = GR = reshape(GRN[1], D1, D2, Dl)
     for ℓ in N-1:-1:1
-        GR = _zip_push_right(GR, ket.ARf2(ℓ+1), ket.ARf1(ℓ+1), x.AR[ℓ+1])
-        GRs[ℓ] = GR
+        GRs[ℓ] = GR = _zip_push_right(GR, ψ2.AR[ℓ+1], ψ1.AR[ℓ+1], below.AR[ℓ+1])
     end
 
-    # 归一化（MPSKit 约定：GR Frobenius、GL 乘局部 overlap λ）
+    # 归一化（MPSKit 约定：GR Frobenius、GL 乘局部 overlap λ；kron(C2, C1) 不物化）
     for ℓ in 1:N
-        GRs[ℓ] = GRs[ℓ] ./ norm(GRs[ℓ])
+        GRs[ℓ] ./= norm(GRs[ℓ])
     end
     for ℓ in 1:N
         inext = _mod1(ℓ + 1, N)
-        Cnew = _mapC_zip(GLs[inext], ket.Cf2(ℓ), ket.Cf1(ℓ), GRs[ℓ])
-        λ = dot(x.C[ℓ], Cnew)
-        λ == 0 && error("factorized zip environment: local overlap λ = 0 at site $ℓ")
-        GLs[inext] = GLs[inext] ./ λ
+        Cnew = _mapC_zip(GLs[inext], ψ2.C[ℓ], ψ1.C[ℓ], GRs[ℓ])
+        λ = dot(below.C[ℓ], Cnew)
+        λ == 0 && error("zip environment: local overlap λ = 0 at site $ℓ")
+        GLs[inext] ./= λ
     end
     return GLs, GRs
 end
 
-"因子化 zip target 的 per-site Galerkin 残差（语义同 `_galerkin_err`）。"
-function _lazy_galerkin_err(x::CanonicalIMPS, ket::ZipKet, GLs, GRs, N)
+# zip 通道的增量环境推进（rank-3 环境）
+function transfer_leftenv!(envs::HadamardCache, x::CanonicalIMPS,
+                           ket2::CanonicalIMPS, ket1::CanonicalIMPS, site::Int)
+    N = length(ket1)
+    ℓ = _mod1(site, N)
+    ℓm = _mod1(site - 1, N)
+    envs.lefts[ℓ] = _zip_push_left(envs.lefts[ℓm], x.AL[ℓm], ket2.AL[ℓm], ket1.AL[ℓm])
+    return envs
+end
+
+function transfer_rightenv!(envs::HadamardCache, x::CanonicalIMPS,
+                            ket2::CanonicalIMPS, ket1::CanonicalIMPS, site::Int)
+    N = length(ket1)
+    ℓ = _mod1(site, N)
+    ℓp = _mod1(site + 1, N)
+    envs.rights[ℓ] = _zip_push_right(envs.rights[ℓp], ket2.AR[ℓp], ket1.AR[ℓp],
+                                     x.AR[ℓp])
+    return envs
+end
+
+"zip 通道的环境重标定（MPSKit `normalize!` 语义：GR Frobenius 归一、GL[ℓ+1]
+按局部 C 通道 overlap λ 缩放；kron(C2, C1) 从不物化）。"
+function _normalize_ternary_envs!(envs::HadamardCache, x::CanonicalIMPS,
+                                  ket2::CanonicalIMPS, ket1::CanonicalIMPS)
+    N = length(ket1)
+    for ℓ in 1:N
+        GR = envs.rights[ℓ]
+        nr = norm(GR)
+        nr > 0 && (GR ./= nr)
+        Cnew = _mapC_zip(leftenv(envs, _mod1(ℓ + 1, N)), ket2.C[ℓ], ket1.C[ℓ],
+                         rightenv(envs, ℓ))
+        λ = dot(x.C[ℓ], Cnew)
+        λ == 0 && error("zip idmrg sweep: local overlap λ = 0 at site $ℓ")
+        envs.lefts[_mod1(ℓ + 1, N)] ./= λ
+    end
+    return envs
+end
+
+"zip 通道的最大逐站 Galerkin 残差（语义同 `_galerkin_err(operator::DenseIMPO, ...)`）。"
+function _galerkin_err(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
+                       x::CanonicalIMPS, envs::HadamardCache)
+    N = length(ket1)
     ϵ = 0.0
     for ℓ in 1:N
-        k = _mapAC_zip(GLs[ℓ], GRs[ℓ], ket.ACf2(ℓ), ket.ACf1(ℓ))
+        k = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ), ket2.AC[ℓ], ket1.AC[ℓ])
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], k))
     end
     return ϵ
 end
 
-"因子化 zip 通道的环境重标定（MPSKit `normalize!` 语义：GR Frobenius 归一、
-GL[ℓ+1] 按局部 C 通道 overlap λ 缩放，同 mult 组合通道的
-`_normalize_ternary_envs!`）。"
-function _normalize_lazy_zip_envs!(GLs, GRs, x::CanonicalIMPS, ket::ZipKet)
-    N = length(x)
-    for ℓ in 1:N
-        GRs[ℓ] = GRs[ℓ] ./ norm(GRs[ℓ])
-        Cnew = _mapC_zip(GLs[_mod1(ℓ + 1, N)], ket.Cf2(ℓ), ket.Cf1(ℓ), GRs[ℓ])
-        λ = dot(x.C[ℓ], Cnew)
-        λ == 0 && error("factorized zip idmrg sweep: local overlap λ = 0 at site $ℓ")
-        GLs[_mod1(ℓ + 1, N)] = GLs[_mod1(ℓ + 1, N)] ./ λ
-    end
-    return GLs, GRs
-end
-
 """
-    _vomps_zip_sweeps(ket::ZipKet, x0, N; tol, maxiter, verbosity, iters) -> x
+    _vomps_sweeps(ket2, ket1, x0; tol, maxiter, verbosity, iters,
+                  alg_gauge, alg_environments, alg_orth) -> (x, envs)
 
-VOMPS template on the factorized zip (Hadamard) channel (mirroring
-[`_vomps_sweeps`](@ref)): Jacobi-style rounds — all sites updated against the
-same environments via `_mapAC_zip`/`_mapC_zip` → `regauge!` → `gauge_step!`
-(dynamically adapted gauge tolerance) → environments re-solved warm-started
-(`_lazy_ternary_fixedpoints`, dynamically adapted tolerance) → Galerkin
-residual checked **after** the sweep. The fused zip tensors are never
-materialized. `iters::Ref{Int}` optionally receives the sweep count.
+zip（Hadamard）通道的 VOMPS 模板（`hadamard(ψ1, ψ2, alg)` 的引擎；管道与
+mpo·mps/mpo·mpo 版 [`_vomps_sweeps`](@ref) 完全一致）：localupdate
+（`k = _mapAC_zip(...)`、`ĉ = _mapC_zip(...)` → `regauge!`）→ `gauge_step!` →
+热启动环境重解 → 扫掠后检查 Galerkin 残差。乘积因子各自保持规范 ⇒ 无需
+gauge twist，融合 zip 张量从不物化。`iters::Ref{Int}` 可选接收扫掠轮数。
 """
-function _vomps_zip_sweeps(ket::ZipKet, x0::CanonicalIMPS, N::Int;
-                           tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                           verbosity::Int = Defaults.verbosity,
-                           iters::Union{Nothing,Base.RefValue{Int}} = nothing)
-    T0 = promote_type(scalartype(x0), eltype(ket.ACf1(1)))
+function _vomps_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIMPS;
+                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
+                       verbosity::Int = Defaults.verbosity,
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing,
+                       alg_gauge = Defaults.alg_gauge(),
+                       alg_environments = Defaults.alg_environments(),
+                       alg_orth = Defaults.alg_orth())
+    N = length(ket1)
     x = copy(x0)
-    GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
-    x = _promote_scalar(promote_type(T0, eltype(GLs[1])), x)
-    T = eltype(x.AL[1])
+    envs = HadamardCache(x, ket1, ket2, alg_environments)
+    # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
+    T = promote_type(scalartype(ket1), eltype(leftenv(envs, 1)))
+    x = _promote_scalar(T, x)
     # 初始残差（收敛判定在扫掠之后，MPSKit IterativeSolver 语义）
-    ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+    ϵ = _galerkin_err(ket2, ket1, x, envs)
     iter = 0
     for outer iter in 1:maxiter
-        ALs = Vector{Array{T,3}}(undef, N)
+        # localupdate: per-site local maps + regauge（全部站点对同一批环境；
+        # 候选 AL 与 ket1.AC 同形，eltype 提升到通道标量类型 T）
+        ALs = [similar(ket1.AC[ℓ], T) for ℓ in 1:N]
         for ℓ in 1:N
-            k = _mapAC_zip(GLs[ℓ], GRs[ℓ], ket.ACf2(ℓ), ket.ACf1(ℓ))
-            ĉ = _mapC_zip(GLs[_mod1(ℓ + 1, N)], ket.Cf2(ℓ), ket.Cf1(ℓ), GRs[ℓ])
-            ALs[ℓ] = regauge!(k, ĉ; alg = Defaults.alg_orth())
+            k = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ), ket2.AC[ℓ], ket1.AC[ℓ])
+            ĉ = _mapC_zip(leftenv(envs, _mod1(ℓ + 1, N)), ket2.C[ℓ], ket1.C[ℓ],
+                          rightenv(envs, ℓ))
+            ALs[ℓ] = regauge!(k, ĉ; alg = alg_orth)
         end
-        alg_gauge = updatetol(Defaults.alg_gauge(), iter - 1, ϵ)
-        gauge_step!(x, ALs, x.C[N]; tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
-        alg_envs = updatetol(Defaults.alg_environments(), iter - 1, ϵ)
-        GLs, GRs = _lazy_ternary_fixedpoints(x, ket; GL0 = GLs[1], GR0 = GRs[N],
-                                             tol = alg_envs.tol)
-        ϵ = _lazy_galerkin_err(x, ket, GLs, GRs, N)
+        # gauge: restore the global right gauge（动态容差）
+        alg_g = updatetol(alg_gauge, iter - 1, ϵ)
+        gauge_step!(x, ALs, x.C[N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
+        # envs_step!（热启动 + 动态环境容差）
+        alg_envs = updatetol(alg_environments, iter - 1, ϵ)
+        envs = HadamardCache(x, ket1, ket2, alg_envs;
+                             GL0 = envs.lefts[1], GR0 = envs.rights[N])
+        ϵ = _galerkin_err(ket2, ket1, x, envs)
         verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
         ϵ ≤ tol && break
     end
     iters === nothing || (iters[] = iter)
     _global_normalize!(x)
-    return x
+    return x, envs
 end
 
 """
-    _idmrg_zip_sweeps(ket::ZipKet, x0, N; tol, maxiter, verbosity, iters) -> x
+    _idmrg_sweeps(ket2, ket1, x0; tol, maxiter, verbosity, iters, alg_gauge) -> (x, envs)
 
-IDMRG template on the factorized zip (Hadamard) channel (mirroring
-[`_idmrg_sweeps`](@ref)): sequential Gauss–Seidel double sweep with on-the-fly
-environment transfer (`_zip_push_left`/`_zip_push_right` through the fresh
-`AL`/`AR` and the `(A1, A2)` factor pairs), `leftorth`/`rightorth` splits of
-the normalized local projections, per-double-sweep environment rescaling
-([`_normalize_lazy_zip_envs!`](@ref)), and center-matrix-drift convergence
-`ϵ = ‖C₀_new − C₀_old‖`; afterwards the mixed-canonical state is rebuilt from
-the `AR` string (MPSKit `MultilineMPS(ψ.AR)`). `iters::Ref{Int}` optionally
-receives the sweep count.
+zip（Hadamard）通道的 IDMRG 模板：Gauss–Seidel 双扫掠 + 即时环境推进 +
+重标定（[`_normalize_ternary_envs!`](@ref) 的 zip 方法）+ C 漂移收敛；随后从
+AR 串重建混合规范、环境对终态重解。`iters::Ref{Int}` 可选接收扫掠轮数。
 """
-function _idmrg_zip_sweeps(ket::ZipKet, x0::CanonicalIMPS, N::Int;
-                           tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
-                           verbosity::Int = Defaults.verbosity,
-                           iters::Union{Nothing,Base.RefValue{Int}} = nothing)
-    T0 = promote_type(scalartype(x0), eltype(ket.ACf1(1)))
+function _idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS, x0::CanonicalIMPS;
+                       tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
+                       verbosity::Int = Defaults.verbosity,
+                       iters::Union{Nothing,Base.RefValue{Int}} = nothing,
+                       alg_gauge = Defaults.alg_gauge())
+    N = length(ket1)
     x = copy(x0)
-    GLs, GRs = _lazy_ternary_fixedpoints(x, ket)
-    x = _promote_scalar(promote_type(T0, eltype(GLs[1])), x)
+    # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
+    envs = HadamardCache(x, ket1, ket2, Defaults.alg_environments())
+    # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
+    T = promote_type(scalartype(ket1), eltype(leftenv(envs, 1)))
+    x = _promote_scalar(T, x)
     ϵ = 2 * tol
     iter = 0
     for outer iter in 1:maxiter
         C_old = copy(x.C[0])
         # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
         for ℓ in 1:N
-            x.AC[ℓ] = _mapAC_zip(GLs[ℓ], GRs[ℓ], ket.ACf2(ℓ), ket.ACf1(ℓ))
+            x.AC[ℓ] = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                                 ket2.AC[ℓ], ket1.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = leftorth(x.AC[ℓ], (1, 2), (3,))
-            GLs[_mod1(ℓ + 1, N)] = _zip_push_left(GLs[ℓ], x.AL[ℓ],
-                                                  ket.ALf2(ℓ), ket.ALf1(ℓ))
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ])
+            transfer_leftenv!(envs, x, ket2, ket1, ℓ + 1)
         end
         # right to left sweep
         for ℓ in N:-1:1
-            x.AC[ℓ] = _mapAC_zip(GLs[ℓ], GRs[ℓ], ket.ACf2(ℓ), ket.ACf1(ℓ))
+            x.AC[ℓ] = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                                 ket2.AC[ℓ], ket1.AC[ℓ])
             normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = rightorth(x.AC[ℓ], (1,), (2, 3))
-            GRs[_mod1(ℓ - 1, N)] = _zip_push_right(GRs[ℓ], ket.ARf2(ℓ),
-                                                   ket.ARf1(ℓ), x.AR[ℓ])
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ])
+            transfer_rightenv!(envs, x, ket2, ket1, ℓ - 1)
         end
-        # 环境重标定（MPSKit normalize!(envs, below, operator, above) 语义）
-        _normalize_lazy_zip_envs!(GLs, GRs, x, ket)
+        # 环境重标定
+        _normalize_ternary_envs!(envs, x, ket2, ket1)
         # 收敛判据：bond 0 中心矩阵漂移
         ϵ = norm(x.C[0] - C_old)
         verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
         ϵ < tol && break
     end
     iters === nothing || (iters[] = iter)
-    # 规范恢复：从 AR 重建混合规范（MPSKit MultilineMPS(ψ.AR; alg_gauge...)）
-    alg_gauge = updatetol(Defaults.alg_gauge(), iter, ϵ)
-    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_gauge.tol,
-                      maxiter = alg_gauge.maxiter)
+    # 规范恢复：从 AR 重建混合规范，环境对终态重解
+    alg_g = updatetol(alg_gauge, iter, ϵ)
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
+    envs = HadamardCache(x, ket1, ket2, Defaults.alg_environments())
     _global_normalize!(x)
-    return x
+    return x, envs
 end

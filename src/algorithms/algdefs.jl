@@ -67,7 +67,7 @@ Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 end
 
 """
-    VOMPS(; D = Defaults.D, tol, maxiter, verbosity)
+    VOMPS(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_environments, alg_orth)
 
 Overlap-maximization algorithm parameters for the iterative
 MPO·MPS / MPO·MPO multiplication (named after MPSKit's `VOMPS` family).
@@ -81,12 +81,19 @@ the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
 `Base.:*(::DenseIMPO, ::DenseIMPS)` and
 `hadamard(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
 `operators/linalg.jl`).
+
+`alg_gauge`/`alg_environments`（动态容差规范固定 / 环境重解，MPSKit
+`adapt_solver` 语义）与 `alg_orth`（候选 `AL` 的 `regauge!` 正交化算法）随
+`alg` 传入各变分引擎。
 """
-@kwdef struct VOMPS <: Algorithm
+@kwdef struct VOMPS{G,N,O} <: Algorithm
     D::Int = Defaults.D
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
+    alg_gauge::G = Defaults.alg_gauge()
+    alg_environments::N = Defaults.alg_environments()
+    alg_orth::O = Defaults.alg_orth()
 end
 
 """

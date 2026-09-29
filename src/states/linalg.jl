@@ -12,6 +12,9 @@
 不变的态幅（`DenseIMPO(W::CanonicalIMPO) = DenseIMPO(W.AL)` 的 MPS 对应）。"
 DenseIMPS(ψ::CanonicalIMPS) = DenseIMPS(ψ.AL)
 
+"`CanonicalIMPS(ψ)`: 混合规范化的副本（`CanonicalIMPS(ψ.As)` 的显式转换）。"
+CanonicalIMPS(ψ::DenseIMPS) = CanonicalIMPS(ψ.As)
+
 function Base.:*(α::Number, ψ::DenseIMPS)
     out = [copy(a) for a in ψ.As]
     out[1] = α .* out[1]
