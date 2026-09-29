@@ -1,9 +1,9 @@
 # =====================================================================
-# mult / exact_mult 与 MPSKit 对比（固化自 debug/mult_concordance.jl）
+# mult / 严格乘法与 MPSKit 对比（固化自 debug/mult_concordance.jl）
 #
 # MPSKit 0.13 相关实现：
-# - `Base.:*(mpo1, mpo2)`：朴素 fuse_mul_mpo 乘法 ↔ 本包 exact_mult(W1, W2)；
-# - `Base.:*(mpo, mps)`：朴素 MPO·MPS 施加 ↔ 本包 exact_mult(W, ψ)；
+# - `Base.:*(mpo1, mpo2)`：朴素 fuse_mul_mpo 乘法 ↔ 本包 `W1 * W2`；
+# - `Base.:*(mpo, mps)`：朴素 MPO·MPS 施加 ↔ 本包 `W * DenseIMPS(...)`；
 # - `MPSKit.approximate(ψ₀, (O, ψ), VOMPS()/IDMRG())`：变分施加
 #   ↔ 本包 mult(W, ψ, alg)（D 由 alg.D 提供）。
 # 对比一律在稠密周期 trace 表示 / 射线保真度意义下进行（规范与尺度不变）。
@@ -20,20 +20,21 @@ Dw = 3                   # W 键维
 W1 = randomimpo(T, fill(d, N); D = Dw)
 W2 = randomimpo(T, fill(d, N); D = 2)
 
-@testset "exact_mult mpo*mpo ≡ MPSKit *(DenseIMPO, DenseIMPO)" begin
-    P = exact_mult(W1.Ws, W2.Ws)
+@testset "* (DenseIMPO, DenseIMPO) ≡ MPSKit *(DenseIMPO, DenseIMPO)" begin
+    P = W1 * W2
     PO = to_mpskit(W1) * to_mpskit(W2)
-    @test mpo_ray_residual(DenseIMPO(P), from_mpskit(PO)) < 1e-10
+    @test mpo_ray_residual(P, from_mpskit(PO)) < 1e-10
 end
 
-@testset "exact_mult mpo*mps ≡ MPSKit *(DenseIMPO, InfiniteMPS)" begin
-    K = exact_mult(W1.Ws, ψ.AL)
-    # 本包：朴素 fuse 后规范化成规范存储取稠密波形
-    Kψ = vec(_dense_mps_repr(CanonicalIMPS(collect(K))))
+@testset "* (DenseIMPO, DenseIMPS) ≡ MPSKit *(DenseIMPO, InfiniteMPS)" begin
+    Kψd = W1 * DenseIMPS(collect(ψ.AL))
+    # 本包：朴素 fuse 后的原始 DenseIMPS 取稠密波形
+    Kψ = vec(_dense_mps_repr(Kψd))
     # MPSKit：朴素施加结果（自身规范化的 AL）
     ϕ = to_mpskit(W1) * to_mpskit(ψ)
     Kmk = vec(_dense_mps_repr(from_mpskit(ϕ)))
-    ls = dot(Kmk, Kψ) / dot(Kmk, Kmk)
+    # 射线比较：Kψ 与 Kmk 平行（差一个构造归一标量），把 Kmk 投影到 Kψ 方向
+    ls = dot(Kψ, Kmk) / dot(Kψ, Kψ)
     @test norm(Kmk .- ls .* Kψ) / norm(Kmk) < 1e-10
 end
 
@@ -67,7 +68,7 @@ end
     @test abs(dot(yv, yi)) > 1 - 1e-6
 end
 
-@testset "mult mpo*mpo ≡ exact_mult（VOMPS / IDMRG 不动点一致）" begin
+@testset "mult mpo*mpo ≡ 严格乘法（VOMPS / IDMRG 不动点一致）" begin
     # 恒等 MPO 复合：mult(W2, I2) 精确恢复 W2 的射线（两算法）
     I2 = identityimpo(T, [2, 2])
     for alg in (VOMPS(D = 2, maxiter = 200, tol = 1e-11), IDMRG(D = 2, maxiter = 200, tol = 1e-11))
@@ -77,5 +78,5 @@ end
     end
     # 变分复合 vs 朴素精确：满键维时 overlap = N 且稠密表示平行
     y = mult(W1, W2, VOMPS(D = 6, maxiter = 300, tol = 1e-12))
-    @test mpo_ray_residual(DenseIMPO(y), DenseIMPO(exact_mult(W1.Ws, W2.Ws))) < 1e-6
+    @test mpo_ray_residual(DenseIMPO(y), W1 * W2) < 1e-6
 end

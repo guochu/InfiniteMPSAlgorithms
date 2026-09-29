@@ -88,8 +88,10 @@ The algebra drivers compute `y ≈ W·x` where `x` is an MPS (operator
 application) or an MPO (operator composition), with **compute-on-the-fly**
 compression: the naive target family is never materialized, and intermediate
 memory stays at the single-site level. The algorithm object is positional:
-[`VOMPS`](@ref) (overlap-maximizing ALS sweeps) or [`IDMRG`](@ref)
-(rank-1 effective-Hamiltonian local solves); both share the same fixed point.
+[`VOMPS`](@ref) (overlap-maximizing ALS sweeps, all sites updated against the
+same environments) or [`IDMRG`](@ref) (sequential Gauss–Seidel sweeps with
+on-the-fly environment transfer and center-matrix-drift convergence — strictly
+mirroring MPSKit's `approximate` algorithms); both share the same fixed point.
 
 ```julia
 mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
@@ -108,10 +110,15 @@ compress(x, alg::Union{VOMPS,IDMRG}) -> y
   the target bond dimension is taken from the bond profile of `out`
   (`D = max_bonddim(out)`, uniformized with `changebond!`), and `alg.D` is
   ignored.
-- The two-argument forms `mult(W, ψ)` / `mult(W, W2)` / `hadamard(ψ1, ψ2)`
-  perform the exact naive construction + canonical storage (no compression).
-- The debug twins `naive_mult` / `naive_hadamard` materialize the complete
-  naive family before compressing (reference implementations).
+- The strict (compression-free) constructions are the typed operators
+  `Base.:*(::DenseIMPO, ::DenseIMPO)` / `Base.:*(::DenseIMPO, ::DenseIMPS)` /
+  `hadamard(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
+  `operators/linalg.jl`) plus the two-argument canonical forms
+  `mult(W, ψ)` / `mult(W, W2)`; the strict operators do not accept
+  `CanonicalIMPS`/`CanonicalIMPO` (convert explicitly first).
+- The debug twins `naive_mult` / `naive_hadamard` were removed: the strict
+  typed operators (`Base.:*` / `hadamard` on `DenseIMPO`/`DenseIMPS`) followed
+  by `compress` / `compress!` express the same pipeline.
 - All iterative engines return the optimized chain only; convergence is judged
   by the Galerkin residual (no overlap is computed anywhere).
 

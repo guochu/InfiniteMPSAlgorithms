@@ -44,7 +44,7 @@ end
     # 缩键（截取前导奇异值子空间）：键 profile 达标、规范保持、保真度 = 逐 bond
     # 截断水平（块对角直和的逐 bond 截断不能精确回到分量——那需要变分压缩）
     ψ1 = randomimps(T, [2, 3]; D = 4)
-    ψsum = CanonicalIMPS(collect(exact_add(ψ1.AL, ψ1.AL)))
+    ψsum = CanonicalIMPS([cat(ψ1.AL[ℓ], ψ1.AL[ℓ]; dims = (1, 3)) for ℓ in 1:length(ψ1)])
     @test max_bonddim(ψsum) == 8
     changebond!(ψsum; D = 4)
     @test max_bonddim(ψsum) == 4
@@ -115,7 +115,7 @@ end
     Random.seed!(78)
     # 可精确表示的目标：ψ1 的自直和（键 2D，波形 = 2ψ1）
     ψ1 = randomimps(T, [2, 3]; D = 4)
-    ψsum = CanonicalIMPS(collect(exact_add(ψ1.AL, ψ1.AL)))
+    ψsum = CanonicalIMPS([cat(ψ1.AL[ℓ], ψ1.AL[ℓ]; dims = (1, 3)) for ℓ in 1:length(ψ1)])
     @test max_bonddim(ψsum) == 8
 
     # D ≥ 输入键：短路精确返回（无压缩）

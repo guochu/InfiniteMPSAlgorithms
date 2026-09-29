@@ -50,6 +50,7 @@ end
         include("mpskit/lowlevel_concordance.jl")
         include("mpskit/nonuniform_concordance.jl")
         include("mpskit/mult_concordance.jl")
+        include("mpskit/compress_concordance.jl")
         include("mpskit/groundstate_concordance.jl")
         include("mpskit/envs_concordance.jl")
         include("mpskit/finite_t_concordance.jl")

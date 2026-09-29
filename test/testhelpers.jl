@@ -20,6 +20,7 @@ function _dense_trace(ALs)
 end
 
 _dense_mps_repr(ψ) = _dense_trace(collect(ψ.AL))
+_dense_mps_repr(ψ::DenseIMPS) = _dense_trace(collect(ψ))
 
 # MPO：O[(u1…uN), (d1…dN)] = tr(∏ W[ℓ][:, u_ℓ, :, d_ℓ])
 function _dense_mpo_repr(W)

@@ -200,3 +200,55 @@ end
     @test_throws UndefKeywordError randomimpo(2)
 end
 
+@testset "DenseIMPS：scalar / hadamard / dot / norm / fidelity / distance" begin
+    T = ComplexF64
+    Random.seed!(21)
+    ψ1 = randomimps(T, [2, 3]; D = 4)
+    ψ2 = randomimps(T, [2, 3]; D = 4)
+    d1 = DenseIMPS(collect(ψ1.AL))
+    d2 = DenseIMPS(collect(ψ2.AL))
+    n1 = norm(ψ1)
+
+    # scalar 乘法：只缩放第一个张量；态 = α·ψ（非射线）
+    d1α = 3.5 * d1
+    @test d1α isa DenseIMPS
+    @test norm(d1α) ≈ 3.5 * n1 atol = 1e-10
+    @test norm(d1 / 2.5) ≈ n1 / 2.5 atol = 1e-10
+    @test norm(-d1) ≈ n1 atol = 1e-10
+    # 原始张量串的波形 = α × 原波形（_dense_trace 对 raw 串逐点缩放检查：
+    # α 缩放在第一个张量上 → 波形整体乘 α）
+    w0 = _dense_trace(collect(d1.As))
+    wα = _dense_trace(collect(d1α.As))
+    @test wα ≈ 3.5 .* w0 atol = 1e-10
+
+    # dot / norm：转移主导本征值
+    @test real(dot(d1, d1)) ≈ n1^2 atol = 1e-10 * max(n1^2, 1)
+    @test abs(dot(d1, d2)) ≤ n1 * norm(d2) + 1e-10
+
+    # fidelity / infidelity：标度与相位不变
+    @test fidelity(d1, d1) ≈ 1 atol = 1e-12
+    @test infidelity(d1, d1) ≈ 0 atol = 1e-12
+    @test fidelity(d1, 2.0 * d1) ≈ 1 atol = 1e-12
+    f12 = fidelity(d1, d2)
+    @test 0 ≤ f12 ≤ 1
+    @test infidelity(d1, d2) ≈ 1 - f12 atol = 1e-12
+    # 与 CanonicalIMPS 侧的 fidelity 交叉验证（同一态的两种表示）
+    @test abs(fidelity(d1, d2) - fidelity(ψ1, ψ2)) < 1e-10
+
+    # distance / distance2：‖ψ1 − ψ2‖² = sA + sB − 2Re⟨A,B⟩
+    @test distance(d1, d1) ≈ 0 atol = 1e-10
+    d2sc = distance2(d1, d2)
+    @test d2sc ≈ real(dot(d1, d1)) + real(dot(d2, d2)) - 2 * real(dot(d1, d2)) atol =
+          1e-9 * max(d2sc, 1)
+    @test distance(d1, d2) ≈ sqrt(d2sc) atol = 1e-10 * max(distance(d1, d2), 1)
+
+    # hadamard：物理维不变、键维 = 4·4，波形逐点乘积（原始串严格成立）
+    h = hadamard(d1, d2)
+    @test h isa DenseIMPS && phydims(h) == [2, 3] && max_bonddim(h) == 16
+    w1 = _dense_trace(collect(d1.As))
+    w2 = _dense_trace(collect(d2.As))
+    @test _dense_trace(collect(h.As)) ≈ w1 .* w2 atol = 1e-10 * max(abs(w1[1] * w2[1]), 1)
+    # 不支持 Canonical 输入
+    @test_throws MethodError hadamard(ψ1, ψ2)
+end
+

@@ -86,8 +86,11 @@ y = compress(ψ, VOMPS(D = 8))              # variational bond-dimension reducti
 mult!(out, W, ψ, VOMPS(D = 4))             # in-place: D taken from `out` (alg.D ignored)
 ```
 
-The two-argument `mult(W, ψ)` / `mult(W, W2)` / `hadamard(ψ1, ψ2)` forms give
-the exact naive construction (no compression). The `naive_*` twins of
+The strict (compression-free) constructions are the typed operators
+`W1 * W2` / `W * ψ` / `hadamard(ψ1, ψ2)` on the raw `DenseIMPO`/`DenseIMPS`
+containers (no canonicalization; `CanonicalIMPS`/`CanonicalIMPO` inputs are
+not accepted — convert explicitly first), plus the two-argument canonical
+forms `mult(W, ψ)` / `mult(W, W2)`. The `naive_*` twins of
 `mult` / `hadamard` materialize the full target family first and are intended
 for debugging.
 

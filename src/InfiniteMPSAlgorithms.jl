@@ -31,11 +31,14 @@ include("utility.jl")
 
 # ---- data structures (states) ----
 include("states/canonicalmps.jl")
+include("states/infinitemps.jl")
+include("states/linalg.jl")
 include("states/ortho.jl")
 include("states/constructors.jl")
 
 # ---- operators ----
 include("operators/infinitempo.jl")
+include("operators/linalg.jl")
 include("operators/sparsempotensor.jl")
 include("operators/mpohamiltonian.jl")
 include("operators/longrangeop.jl")
@@ -55,18 +58,19 @@ include("effective.jl")
 
 # ---- algorithms ----
 # algdefs: VUMPS / IDMRG / VOMPS parameter objects;
-# mult: iterative MPO multiplication (compression engine);
-# add / hadamard: iterative arithmetic (sharing the same engine);
-# arithmetics: naive exact constructors exact_* (debug only)
+# groundstates/: VUMPS / IDMRG ground-state searches;
+# timeevo/: TDVP and TEBD time evolution;
+# arithmetics/: iterative MPO algebra (mult / hadamard / compress) sharing the
+#               VOMPS / IDMRG compression engines, and the exact_* debug
+#               constructors;
 include("algorithms/algdefs.jl")
-include("algorithms/vumps.jl")
-include("algorithms/idmrg.jl")
-include("algorithms/tdvp.jl")
-include("algorithms/mult.jl")
-include("algorithms/hadamard.jl")
-include("algorithms/compress.jl")
-include("algorithms/arithmetics.jl")
-include("algorithms/tebd.jl")
+include("algorithms/groundstates/vumps.jl")
+include("algorithms/groundstates/idmrg.jl")
+include("algorithms/timeevo/tdvp.jl")
+include("algorithms/arithmetics/mult.jl")
+include("algorithms/arithmetics/hadamard.jl")
+include("algorithms/arithmetics/compress.jl")
+include("algorithms/timeevo/tebd.jl")
 
 # ---- observables ----
 include("observables/expval.jl")
@@ -87,7 +91,7 @@ export
     tsvd, tsvd!, leftorth, leftorth!, rightorth, rightorth!,
     OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD, Polar, tie,
     # data structures
-    CanonicalIMPS, DenseIMPO, CanonicalIMPO,
+    CanonicalIMPS, DenseIMPS, DenseIMPO, CanonicalIMPO,
     scalartype, phydim, phydims, max_bonddim, bonddim, dag, eachsite,
     ismixedcanonical, mixedcanonical_error,
     norm, normalize!, dot,
@@ -106,8 +110,8 @@ export
     # ground-state and time-evolution algorithms
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS,
     find_groundstate, timestep, time_evolve, integrate,
-    mult, naive_mult, hadamard, naive_hadamard,
-    exact_mult, exact_add, exact_hadamard, fuse, mpo_compress,
+    mult, hadamard,
+    fuse, mpo_compress, copyphyims,
     compress, mult!, hadamard!, compress!,
     changebond!, svdguess_mult, svdguess_hadamard, svdguess_compress,
     vectorize, devectorize, superoperator,

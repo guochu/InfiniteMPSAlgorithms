@@ -83,10 +83,11 @@ y = compress(ψ, VOMPS(D = 8))              # variational bond-dimension reducti
 mult!(out, W, ψ, VOMPS(D = 4))             # in-place: D taken from `out` (alg.D ignored)
 ```
 
-The two-argument `mult(W, ψ)` / `mult(W, W2)` / `hadamard(ψ1, ψ2)` forms give
-the exact naive construction (no compression). The `naive_*` twins of
-`mult` / `hadamard` materialize the full target family first and are intended
-for debugging.
+The strict (compression-free) constructions are the typed operators
+`W1 * W2` / `W * ψ` / `hadamard(ψ1, ψ2)` on the raw `DenseIMPO`/`DenseIMPS`
+containers (no canonicalization; `CanonicalIMPS`/`CanonicalIMPO` inputs are
+not accepted — convert explicitly first), plus the two-argument canonical
+forms `mult(W, ψ)` / `mult(W, W2)`.
 
 ### Observables
 
@@ -145,8 +146,10 @@ states, same parameters).
   `mult` / `mult!` (variational MPO·MPO composition and MPO·MPS application),
   `compress` / `compress!` (standalone bond reduction), `hadamard` /
   `hadamard!` (elementwise product), and `mpo_compress`.
-- **Naive exact constructors**: `exact_mult` (corresponds to MPSKit's naive
-  `*`), `exact_add`, `exact_hadamard`; deterministic initial guesses
+- **Strict algebra operators** (compression-free, mirroring MPSKit's naive
+  `*`): `DenseIMPO * DenseIMPO`, `DenseIMPO * DenseIMPS`,
+  `hadamard(::DenseIMPS, ::DenseIMPS)` on the raw `DenseIMPS`/`DenseIMPO`
+  containers, plus `exact_add`; deterministic initial guesses
   `svdguess_mult` / `svdguess_hadamard` / `svdguess_compress`.
 - **TEBD quantum gates** on infinite MPS: `apply!`, `swap!`,
   `UnitaryGate`, `GeneralGate` (Hastings update, aligned with TEMPO/GTEMPO).

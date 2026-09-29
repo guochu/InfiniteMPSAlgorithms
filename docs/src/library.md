@@ -97,20 +97,25 @@ integrate
 ```@docs
 mult
 mult!
-naive_mult
 compress
 compress!
 hadamard
 hadamard!
-naive_hadamard
 svdguess_mult
 svdguess_hadamard
 svdguess_compress
 changebond!
 mpo_compress
-exact_mult
-exact_add
-exact_hadamard
+DenseIMPS
+copyphyims
+```
+
+## Strict algebra operators
+
+```@docs
+Base.:*(::DenseIMPO, ::DenseIMPO)
+Base.:*(::DenseIMPO, ::DenseIMPS)
+hadamard(::DenseIMPS, ::DenseIMPS)
 ```
 
 ## TEBD gates

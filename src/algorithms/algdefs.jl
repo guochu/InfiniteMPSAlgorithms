@@ -23,14 +23,14 @@ Each iteration (MPSKit template):
 3. `envs_step!`: `recalculate!` recomputes the environments;
 4. the `finalize` callback; convergence criterion `calc_galerkin ≤ tol`.
 """
-@kwdef struct VUMPS{F} <: Algorithm
+@kwdef struct VUMPS{F,G,E,N} <: Algorithm
     D::Int = Defaults.D
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
-    alg_gauge = Defaults.alg_gauge()
-    alg_eigsolve = Defaults.alg_eigsolve()
-    alg_environments = Defaults.alg_environments()
+    alg_gauge::G = Defaults.alg_gauge()
+    alg_eigsolve::E = Defaults.alg_eigsolve()
+    alg_environments::N = Defaults.alg_environments()
     finalize::F = Defaults._finalize
 end
 
@@ -57,12 +57,12 @@ Each iteration (MPSKit template):
 Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 `InfiniteMPS(mps.AR)`) and the environments are recomputed.
 """
-@kwdef struct IDMRG{A} <: Algorithm
+@kwdef struct IDMRG{A,G} <: Algorithm
     D::Int = Defaults.D
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
-    alg_gauge = Defaults.alg_gauge()
+    alg_gauge::G = Defaults.alg_gauge()
     alg_eigsolve::A = Defaults.alg_eigsolve()
 end
 
@@ -76,8 +76,11 @@ compression (overlap maximization over the variational manifold, consistent
 with MPSKit). The driver functions (`mult`, `compress`,
 `hadamard`) take the bond dimension from `alg.D`; the in-place drivers
 (`mult!`, `compress!`, `hadamard!`) take it from the provided initial guess
-`out` and ignore `alg.D`. The two-argument `mult(W, ψ)` / `hadamard(ψ₁, ψ₂)`
-forms perform the exact naive construction without any compression.
+`out` and ignore `alg.D`. The strict compression-free constructions live as
+the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
+`Base.:*(::DenseIMPO, ::DenseIMPS)` and
+`hadamard(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
+`operators/linalg.jl`).
 """
 @kwdef struct VOMPS <: Algorithm
     D::Int = Defaults.D

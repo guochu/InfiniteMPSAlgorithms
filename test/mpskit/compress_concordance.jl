@@ -1,0 +1,142 @@
+# =====================================================================
+# compress ↔ MPSKit.approximate 严格对齐测试
+#
+# MPSKit 0.13 的 approximate（VOMPS / IDMRG，src/algorithms/approximate/）
+# 与本包 compress（经 _vomps_sweeps / _idmrg_sweeps）的逐步对齐：
+# - 相同的随机目标态与随机初态（同一组张量，两包各持独立副本）；
+# - 完全相同的算法参数（tol / maxiter）；
+# - VOMPS / IDMRG：逐迭代对比（maxiter = k、tol = 0 强制两包都恰好跑 k 轮）；
+# - 收敛迭代数一致（iters Ref ↔ MPSKit 的最小收敛轮数扫描）；
+# - 收敛终态在数值精度下一致（dense 周期 trace 表示的射线残差）。
+# MPSKit 的 approximate 无 MPO 目标版本 ⇒ MPO 压缩按 `asmps_view` 转成 MPS
+# 视图（恒等 MPO 通道）对比。
+#
+# 对齐语义备注（MPSKit 源码，2025 主线）：
+# - VOMPS：Jacobi 式 localupdate（AC/C 投影 + regauge!，全部站点对同一批
+#   环境）→ gaugefix!(:R) → 环境重解（热启动）→ calc_galerkin ≤ tol（扫掠
+#   之后判定，至少跑一轮）；
+# - IDMRG：Gauss–Seidel 顺序双扫（投影 → normalize! → left_orth!/right_orth!
+#   → transfer_leftenv!/transfer_rightenv! 即时推进环境）→ normalize!(envs)
+#   → ϵ = ‖C₀_new − C₀_old‖。
+# =====================================================================
+
+Random.seed!(20260928)
+T = ComplexF64
+N = 2                    # 单胞长度
+d = 2                    # 物理维
+Dψ = 6                   # 目标态键维
+D0 = 3                   # 压缩键维
+
+ψ = randomimps(T, fill(d, N); D = Dψ)
+x0 = randomimps(T, fill(d, N); D = D0)
+
+ψt_mk = to_mpskit(ψ)
+# 恒等 MPO（键维 1）：MPSKit 的 VOMPS/IDMRG 要求显式 (O, ψ) 元组
+Imk = MPSKit.InfiniteMPO([mkmpotensor(identityimpo(T, fill(d, N))[ℓ]) for ℓ in 1:N])
+
+"两包收敛态的射线残差（dense 周期 trace 表示，规范与尺度不变）。"
+function _compress_ray_residual(ya::CanonicalIMPS, yb::CanonicalIMPS)
+    a = vec(_dense_mps_repr(ya))
+    b = vec(_dense_mps_repr(yb))
+    ls = dot(b, a) / dot(b, b)
+    return norm(a .- ls .* b) / norm(a)
+end
+
+"MPSKit `approximate` 的最小收敛轮数（单调谓词 ϵ(k) ≤ tol 的指数括号 + 二分；
+MPSKit 在第 k 轮扫掠后 ϵ ≤ tol 即提前返回，故 ϵ(k) 随 k 单调下降且 k ≥ iter*
+时 ϵ 恒为 ϵ(iter*)）。返回 (iter*, ϕ)。"
+function _mpskit_converged_iter(algmk, tol)
+    evalk = k -> MPSKit.approximate(mkinfinitemps(x0), (Imk, ψt_mk),
+                                    algmk(; tol = tol, maxiter = k, verbosity = 0))
+    ϕ, _, ϵ = evalk(1)
+    ϵ ≤ tol && return 1, ϕ
+    hi = 2
+    while true
+        ϕ, _, ϵ = evalk(hi)
+        ϵ ≤ tol && break
+        hi *= 2
+        hi ≤ 2^12 || error("MPSKit approximate 不收敛")
+    end
+    lo = hi ÷ 2                       # ϵ(lo) > tol（倍增路径上已验证）
+    while hi - lo > 1
+        mid = (lo + hi) ÷ 2
+        ϕm, _, ϵm = evalk(mid)
+        if ϵm ≤ tol
+            hi = mid
+            ϕ = ϕm
+        else
+            lo = mid
+        end
+    end
+    return hi, ϕ
+end
+
+"本包 `_vomps_sweeps` 恰好跑 k 轮的压缩结果。"
+_ours_vomps(ψ, x0, k) = first(InfiniteMPSAlgorithms._compress(
+    ψ, VOMPS(D = D0, tol = 0.0, maxiter = k), x0; D = D0))
+
+"本包 `_idmrg_sweeps` 恰好跑 k 轮的压缩结果。"
+_ours_idmrg(ψ, x0, k) = first(InfiniteMPSAlgorithms._compress(
+    ψ, IDMRG(D = D0, tol = 0.0, maxiter = k), x0; D = D0))
+
+"MPSKit `approximate` 恰好跑 k 轮（tol = 0）的压缩结果（只取态）。"
+_mpskit_approx(algmk, k) = MPSKit.approximate(
+    mkinfinitemps(x0), (Imk, ψt_mk),
+    algmk(; tol = 0.0, maxiter = k, verbosity = 0))[1]
+
+@testset "compress VOMPS ≡ MPSKit approximate VOMPS（逐迭代对齐）" begin
+    for k in 1:5
+        y = _ours_vomps(ψ, x0, k)
+        ϕ = _mpskit_approx(MPSKit.VOMPS, k)
+        @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+    end
+end
+
+@testset "compress IDMRG ≡ MPSKit approximate IDMRG（逐迭代对齐）" begin
+    for k in 1:5
+        y = _ours_idmrg(ψ, x0, k)
+        ϕ = _mpskit_approx(MPSKit.IDMRG, k)
+        @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+    end
+end
+
+@testset "compress VOMPS 收敛迭代数与终态 ≡ MPSKit" begin
+    tol = 1.0e-10
+    iters = Ref(0)
+    y = InfiniteMPSAlgorithms._vomps_sweeps(nothing, ψ, x0, collect(ψ.AC);
+                                              tol = tol, maxiter = 500, iters = iters)[1]
+    mk_iter, ϕ = _mpskit_converged_iter(MPSKit.VOMPS, tol)
+    @test iters[] == mk_iter
+    @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+end
+
+@testset "compress IDMRG 收敛迭代数与终态 ≡ MPSKit" begin
+    tol = 1.0e-10
+    iters = Ref(0)
+    y = InfiniteMPSAlgorithms._idmrg_sweeps(ψ, x0, collect(ψ.AC);
+                                            tol = tol, maxiter = 500, iters = iters)[1]
+    mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
+    @test iters[] == mk_iter
+    @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+end
+
+# ---- MPO 压缩（MPSKit 无 MPO 目标 approximate ⇒ 走 asmps_view 的 MPS 视图）----
+
+@testset "compress(MPO) ≡ MPSKit approximate（MPS 视图，VOMPS/IDMRG）" begin
+    W = randomimpo(T, fill(d, N); D = 4)
+    Wview = asmps_view(collect(W.Ws))
+    x0w = randomimps(T, fill(size(Wview[1], 2), N); D = D0)
+    Wmk = MPSKit.InfiniteMPS([mkmpstensor(a) for a in Wview])
+    # 恒等 MPO 的物理维必须与 MPS 视图的融合物理维 (u·d) 一致
+    Imkw = MPSKit.InfiniteMPO([mkmpotensor(identityimpo(T, fill(size(Wview[1], 2), N))[ℓ])
+                               for ℓ in 1:N])
+    for (alg, algmk) in ((VOMPS(D = D0, tol = 1.0e-12, maxiter = 300), MPSKit.VOMPS),
+                         (IDMRG(D = D0, tol = 1.0e-12, maxiter = 300), MPSKit.IDMRG))
+        y = first(InfiniteMPSAlgorithms._compress(W, alg, x0w; D = D0))      # CanonicalIMPO
+        ϕ = MPSKit.approximate(mkinfinitemps(x0w), (Imkw, Wmk),
+                               algmk(; tol = 1.0e-12, maxiter = 300,
+                                     verbosity = 0))[1]
+        yview = CanonicalIMPS(asmps_view(collect(y.AL)))
+        @test _compress_ray_residual(yview, from_mpskit(ϕ)) < 1e-8
+    end
+end

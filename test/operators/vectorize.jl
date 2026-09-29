@@ -54,7 +54,7 @@
     @testset "mpo1·mpo2 的两条 mpo·mps 路径" begin
         W1 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
         W2 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
-        P = collect(exact_mult(W1.Ws, W2.Ws))        # 精确 MPO 乘积（参考）
+        P = collect((W1 * W2).Ws)                    # 严格 MPO 乘积（参考）
         ψref = vectorize(CanonicalIMPO(P))
         # a) 𝓦_L(W1) 作用在 vec(W2)
         ψa = mult(superoperator(W1; side = :left), vectorize(CanonicalIMPO(W2)))

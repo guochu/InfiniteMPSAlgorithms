@@ -294,7 +294,7 @@ function mpo_compress(W::DenseIMPO, D::Int;
     K = asmps_view(W.Ws)
     ket = CanonicalIMPS(K)       # canonicalize the MPS view of the MPO as the ket
     x0 = randomimps(scalartype(W), [dus[ℓ] * dds[ℓ] for ℓ in 1:N]; D = D)
-    x, _ = _overlap_sweeps(nothing, ket, x0, K;
+    x, _ = _vomps_sweeps(nothing, ket, x0, K;
                            tol = tol, maxiter = maxiter, verbosity = verbosity)
     _global_normalize!(x)
     ALs4 = mps_view_to_mpo(collect(x.AL); dus = dus, dds = dds)
