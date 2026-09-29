@@ -11,7 +11,7 @@
 # there is no `CanonicalIMPS` method — convert explicitly first.
 
 """
-    hadamard(ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, info)
+    hadamard(ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, envs, info)
 
 Compute-on-the-fly variational compression of the Hadamard/Schur product to
 the bond dimension `alg.D`: the zip target is consumed in **factorized form**
@@ -22,8 +22,10 @@ object `alg` (VOMPS/IDMRG), starting from the deterministic
 `svdguess_hadamard` initial state. Convergence is judged by the Galerkin
 residual alone (no overlap is computed — same contract as `mult`/`compress`).
 
-The second return is the engine's [`IterativeConvergenceInfo`](@ref)
-（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、`converged` 收敛标志）。
+The second return is the engine's final environments（zip 通道的
+[`HadamardCache`](@ref)，对返回态的射线解出）; the third return is the
+[`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
+`converged` 收敛标志）。
 """
 hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
     _hadamard(ψ1, ψ2, alg, nothing; D = alg.D)
@@ -39,12 +41,12 @@ function _hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMR
     # 见 `_zip_push_left`/`_mapAC_zip`）；C 的融合序 = `kron(C2, C1)` 与 zip
     # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。
     x0 = x0 === nothing ? svdguess_hadamard(ψ1, ψ2, D) : x0
-    y, _, info = if alg isa VOMPS
+    y, envs, info = if alg isa VOMPS
         _zip_vomps_sweeps(ψ2, ψ1, x0, alg)
     else
         _zip_idmrg_sweeps(ψ2, ψ1, x0, alg)
     end
-    return y, info
+    return y, envs, info
 end
 
 # ---------------- svdguess_hadamard (deterministic initial guess) & hadamard! (in-place) ----------------
@@ -103,20 +105,21 @@ function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
 end
 
 """
-    hadamard!(out, ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> out
+    hadamard!(out, ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
 
 In-place [`hadamard`](@ref): `out` is the user-provided state to be optimized
 as the initial guess. The target bond dimension is taken from the bond profile
 of `out` (its bond profile is first brought to uniform `D = max_bonddim(out)`
 with [`changebond!`](@ref)); `alg.D` is ignored. The optimized result is
-written back into `out`.
+written back into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境、
+`info` 为 [`IterativeConvergenceInfo`](@ref)。
 """
 function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = _hadamard(ψ1, ψ2, alg, out; D = D)
-    return _copyinto!(out, y)
+    y, envs, info = _hadamard(ψ1, ψ2, alg, out; D = D)
+    return _copyinto!(out, y), envs, info
 end
 
 # ---------------- zip（Hadamard）通道：HadamardCache 与统一引擎方法 ----------------

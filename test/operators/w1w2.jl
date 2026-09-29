@@ -35,7 +35,7 @@
     # （HS ray 保真度）是规范不变的；输出的逐 site 相位是压缩本征解的规范
     # 自由度（MPSKit 同样不钉定本征解相位），期望值等规范依赖量不作断言。
     I2 = identityimpo(T, [2, 2])
-    comp, _ = compress(I2, VOMPS(D = 1))
+    comp, _, _ = compress(I2, VOMPS(D = 1))
     @test comp isa CanonicalIMPO && max_bonddim(comp) == 1
     @test fidelity(comp, CanonicalIMPO(I2)) ≈ 1 atol = 1e-8
 end

@@ -66,7 +66,7 @@ end
           reshape(_dense_mpo_repr(W1), 4, 4) * reshape(_dense_mpo_repr(W2), 4, 4) atol = 1e-10
     # 迭代乘法：W1·I = W1（D = 2 = 目标键维）。与目标平行即可（整体相位/尺度是
     # 输出射线规范的自由度）
-    P1, _ = mult(W1, I2, VOMPS(D = 2))
+    P1, _, _ = mult(W1, I2, VOMPS(D = 2))
     @test P1 isa CanonicalIMPO && bonddim(P1, 1) == 2
     dP1 = vec(_dense_mpo_repr(DenseIMPO(P1)))
     dW1v = vec(_dense_mpo_repr(W1))
@@ -79,7 +79,7 @@ end
     s2 = DenseIMPO([cat(wa[ℓ], wa[ℓ]; dims = (1, 3)) for ℓ in 1:length(wa)])   # blockdiag(wa, wa)
     for alg in (VOMPS(D = 1, maxiter = 200), IDMRG(D = 1, maxiter = 200))
         Random.seed!(1)
-        Pc, _ = mult(s2, I2, alg)
+        Pc, _, _ = mult(s2, I2, alg)
         @test bonddim(Pc, 1) == 1
         d = _dense_mpo_repr(DenseIMPO(Pc))
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
@@ -103,12 +103,12 @@ end
     y = mult(W1, ψ)
     @test y isa CanonicalIMPS && ismixedcanonical(y)
     # lazy 路径
-    Pl, _ = mult(W1, I2, VOMPS(D = 2))
+    Pl, _, _ = mult(W1, I2, VOMPS(D = 2))
     @test Pl isa CanonicalIMPO && ismixedcanonical(Pl)
     # naive 兜底：maxiter = 0 使 lazy 引擎不收敛（overlap 不达 0.9N）而触发兜底
-    Pf, _ = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
+    Pf, _, _ = mult(W1, W2, VOMPS(D = 4, maxiter = 0))
     @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
-    Pf2, _ = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
+    Pf2, _, _ = mult(W1, W2, IDMRG(D = 4, maxiter = 0))
     @test Pf2 isa CanonicalIMPO && ismixedcanonical(Pf2)
 end
 
@@ -136,13 +136,13 @@ end
     # VOMPS / IDMRG：复环境通道下不崩溃；结果提升为复（MPSKit 对齐）、
     # 混合正则恒等式严格成立、范数 1
     for alg in (VOMPS(D = 2, maxiter = 50), IDMRG(D = 2, maxiter = 50))
-        yv, _ = mult(Wo, ψ, alg)
+        yv, _, _ = mult(Wo, ψ, alg)
         @test yv isa CanonicalIMPS && ismixedcanonical(yv)
         @test scalartype(yv) <: Complex
         @test norm(yv) ≈ 1 atol = 1e-10
     end
     # mpo·mpo 兜底（identity 通道，实）：同样正则
-    Pf, _ = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
+    Pf, _, _ = mult(Wo, Wo, VOMPS(D = 2, maxiter = 0))
     @test Pf isa CanonicalIMPO && ismixedcanonical(Pf)
 end
 
@@ -168,7 +168,7 @@ end
     # 压缩路径（两算法）：D = 9 = 精确键维 → 无损，与严格乘积的规范代表平行
     H12c = CanonicalIMPS(collect(H12.As))
     for alg in (VOMPS(D = 9, maxiter = 200), IDMRG(D = 9, maxiter = 200))
-        Hc, _ = hadamard(ψ1, ψ2, alg)
+        Hc, _, _ = hadamard(ψ1, ψ2, alg)
         @test max_bonddim(Hc) == 9
         @test abs(dot(Hc, H12c)) > 1 - 1e-8
     end
@@ -190,9 +190,10 @@ end
 
 # ---------------- mult!/compress!/hadamard! 完全对齐 ----------------
 #
-# 收敛信息经由内部函数取得：`_mult`/`_compress`/`_hadamard` 返回 `(y, info)`
-# （info::IterativeConvergenceInfo，niter = 扫掠轮数）；导出层
-# （mult/compress/hadamard）返回 `(y, info)`，in-place 版本不携带该信息。
+# 收敛信息经由内部函数取得：`_mult`/`_compress`/`_hadamard` 返回
+# `(y, envs, info)`（info::IterativeConvergenceInfo，niter = 扫掠轮数）；
+# 导出层（mult/compress/hadamard）与 in-place 版本均返回
+# `(result, envs, info)`。
 
 @testset "mult! ≡ compress!（完全对齐：同初态+同参数 → 同迭代数、终态一致）" begin
     # 语义对齐：mult!(out, W, ψ, alg)（compute-on-the-fly 通道）与
@@ -214,9 +215,9 @@ end
         # mpo·mps（内部函数取得迭代数）
         out1 = randomimps(T, [2, 2]; D = D0)
         out2 = copy(out1)
-        y1, i1 = InfiniteMPSAlgorithms._mult(W, ψ, alg, out1; D = D0)
-        y2, i2 = InfiniteMPSAlgorithms._compress(CanonicalIMPS(collect(ψraw.As)),
-                                                 alg, out2; D = D0)
+        y1, _, i1 = InfiniteMPSAlgorithms._mult(W, ψ, alg, out1; D = D0)
+        y2, _, i2 = InfiniteMPSAlgorithms._compress(CanonicalIMPS(collect(ψraw.As)),
+                                                    alg, out2; D = D0)
         @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))
@@ -227,10 +228,10 @@ end
         m1 = CanonicalIMPO(collect(randomimpo(T, [2, 2]; D = D0).Ws))
         m2 = copy(m1)
         p0 = m1
-        z1, j1 = InfiniteMPSAlgorithms._mult(W, W2, alg, p0; D = D0)
-        z2, j2 = InfiniteMPSAlgorithms._compress(CanonicalIMPO(collect(Wraw.Ws)),
-                                                 alg, vectorize(m2);
-                                                 D = D0)
+        z1, _, j1 = InfiniteMPSAlgorithms._mult(W, W2, alg, p0; D = D0)
+        z2, _, j2 = InfiniteMPSAlgorithms._compress(CanonicalIMPO(collect(Wraw.Ws)),
+                                                    alg, vectorize(m2);
+                                                    D = D0)
         @test j1.niter == j2.niter
         w1 = vectorize(z1)
         w2 = vectorize(z2)
@@ -262,8 +263,8 @@ end
                 IDMRG(D = D0, tol = 1e-12, maxiter = 300))
         out1 = randomimps(T, [2, 2]; D = D0)
         out2 = copy(out1)
-        y1, i1 = InfiniteMPSAlgorithms._mult(W1, ψ2, alg, out1; D = D0)
-        y2, i2 = InfiniteMPSAlgorithms._hadamard(ψ1, ψ2, alg, out2; D = D0)
+        y1, _, i1 = InfiniteMPSAlgorithms._mult(W1, ψ2, alg, out1; D = D0)
+        y2, _, i2 = InfiniteMPSAlgorithms._hadamard(ψ1, ψ2, alg, out2; D = D0)
         @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))

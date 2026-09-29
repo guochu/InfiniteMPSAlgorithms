@@ -680,8 +680,8 @@ function mult(W, ψ::CanonicalIMPS)
 end
 
 """
-    mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, info)
-    mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPO, info)
+    mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, envs, info)
+    mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPO, envs, info)
 
 The compute-on-the-fly version of the MPO multiplication: find `y ≈ W·ψ`
 (operator application) or `y ≈ W·W2` (operator composition), variationally
@@ -706,7 +706,10 @@ memory is O(single site) in both cases. Applying a time-evolution MPO is
   the environments take the eigensolver's complex output and the channel
   continues in complex arithmetic, so the result may be complex-valued.
 
-The second return is the engine's [`IterativeConvergenceInfo`](@ref)
+The second return is the engine's final environments（mpo·mps / mpo·mpo 通道的
+[`MultCache`](@ref)，对返回态的射线解出——mpo·mps 的返回态经 `CanonicalIMPS(y.AL,
+y.C[end])` 重右正则化，envs 与其规范代表可能有规范差但同射线）; the third
+return is the [`IterativeConvergenceInfo`](@ref)
 （`niter` 扫掠轮数、`losses` 逐轮残差/漂移、`converged` 收敛标志）。
 """
 mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
@@ -723,7 +726,7 @@ function _mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
     Wc = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
     # MPO-channel VOMPS/IDMRG (compute-on-the-fly, no naive target family)
     x0 = ψ₀ !== nothing ? ψ₀ : svdguess_mult(Wm, ψ, D)
-    y, _, info = if alg isa VOMPS
+    y, envs, info = if alg isa VOMPS
         _vomps_sweeps(Wc, ψ, x0, alg)
     else
         _idmrg_sweeps(Wc, ψ, x0, alg)
@@ -731,7 +734,7 @@ function _mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
     # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
     # (preserving the ray), then normalize to the package norm convention
     y = CanonicalIMPS(collect(y.AL), y.C[end])
-    return _global_normalize!(y), info
+    return _global_normalize!(y), envs, info
 end
 
 mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG}) =
@@ -749,12 +752,12 @@ function _mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG},
     W1c = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
     W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
     x0 = ψ₀ !== nothing ? ψ₀ : devectorize(svdguess_mult(Wm, W2m, D))
-    x, _, info = if alg isa VOMPS
+    x, envs, info = if alg isa VOMPS
         _vomps_sweeps(W1c, W2c, x0, alg)
     else
         _idmrg_sweeps(W1c, W2c, x0, alg)
     end
-    return x, info
+    return x, envs, info
 end
 
 # ---------------- svdguess_mult (deterministic initial guess) & mult! (in-place) ----------------
@@ -846,21 +849,23 @@ function svdguess_mult(Ws1::PeriodicVector{<:Array{T,4}},
 end
 
 """
-    mult!(out, W, ψ, alg::Union{VOMPS,IDMRG}) -> out
-    mult!(out, W, W2, alg::Union{VOMPS,IDMRG}) -> out
+    mult!(out, W, ψ, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
+    mult!(out, W, W2, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
 
 In-place [`mult`](@ref): `out` is the user-provided state/operator to be
 optimized as the initial guess. The target bond dimension is taken from the
 bond profile of `out` (its bond profile is first brought to uniform
 `D = max_bonddim(out)` with [`changebond!`](@ref)); `alg.D` is ignored. The
-optimized result is written back into `out`.
+optimized result is written back into `out`. Returns `(out, envs, info)`——
+`envs` 为引擎的最终环境、`info` 为 [`IterativeConvergenceInfo`](@ref)
+（`out` 写回后与 envs 的规范代表同射线）。
 """
 function mult!(out::CanonicalIMPS, W, ψ::CanonicalIMPS,
                alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = _mult(W, ψ, alg, out; D = D)
-    return _copyinto!(out, y)
+    y, envs, info = _mult(W, ψ, alg, out; D = D)
+    return _copyinto!(out, y), envs, info
 end
 
 "Raw-ket variant: `mult!` of a strict-algebra input (`W * DenseIMPS`, not yet
@@ -874,6 +879,6 @@ function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO},
                alg::Union{VOMPS,IDMRG})
     D = max_bonddim(out)
     changebond!(out; D = D)
-    y, _ = _mult(W, W2, alg, out; D = D)
-    return _copyinto!(out, y)
+    y, envs, info = _mult(W, W2, alg, out; D = D)
+    return _copyinto!(out, y), envs, info
 end

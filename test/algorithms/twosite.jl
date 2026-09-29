@@ -91,7 +91,7 @@
     @test abs(real(expectationvalue(ψw1, H) / 2) - eg) < 1e-4
 
     # MPO 压缩：2-site 恒等 MPO 压到 D=1
-    comp, _ = compress(I2, VOMPS(D = 1))
+    comp, _, _ = compress(I2, VOMPS(D = 1))
     @test comp isa CanonicalIMPO && max_bonddim(comp) == 1
     @test fidelity(comp, CanonicalIMPO(I2)) ≈ 1 atol = 1e-8
 
