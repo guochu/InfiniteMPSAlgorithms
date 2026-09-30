@@ -1,5 +1,45 @@
 # 变更记录（接口）
 
+## 2026-09-29 overlap.jl 并入 compress.jl
+
+纯重叠通道（`OverlapCache`、`overlap_fixedpoints`、`Overlap_AC/C_Hamiltonian`、
+`recalculate!`、`normalize_envs!`、`transfer_leftenv!/transfer_rightenv!` 的
+OverlapCache 方法、`_galerkin_err` 的 OverlapCache 方法、
+`_overlap_vomps_sweeps`/`_overlap_idmrg_sweeps`）整体并入
+`algorithms/arithmetics/compress.jl`（文件末尾章节），`overlap.jl` 删除，
+主文件相应去掉其 include。接口无变化，仅文件归位。
+
+## 2026-09-29 OverlapCache 通道 Hamiltonian 化 + `CompressionEnvironments` 层次
+
+- `_mapAC`/`_mapC`（纯重叠通道 rank-2 局部投影）由
+  `Overlap_AC_Hamiltonian`/`Overlap_C_Hamiltonian`（只存 leftenv/rightenv，
+  线性映射 `h(x) = GL·x·GR`）替代；装配入口 `AC_Hamiltonian(site,
+  envs::OverlapCache)` / `C_Hamiltonian(site, envs::OverlapCache)`，作用对象为
+  `ket.AC[site]` / `ket.C[site]`（C 的左环境取 `site + 1`，与 MPO 版约定一致）；
+  扫掠局部更新、`_galerkin_err`、`_overlap_fixedpoints` 归一化、环境重标定全部
+  改经该接口；
+- `_normalize_overlap_envs!` 改名 `normalize_envs!`（与 DMRGCache 版同函数的
+  分方法，3 参 `(envs, x, ket)`）；
+- `OverlapCache` 构造器将 bra/ket 提升到环境标量类型（`_promote_scalar`），
+  保证缓存内所有 fields 同一浮点类型；
+- 新增 `algorithms/arithmetics/envs.jl`：
+  `abstract type CompressionEnvironments <: Environments`，`OverlapCache`/
+  `MultCache`/`HadamardCache` 改继承之（哈密顿量通道 DMRGCache 不变），
+  已导出。
+
+## 2026-09-29 AC 有效哈密顿量保 Schur 稀疏结构；OverlapCache 新增 `recalculate!`
+
+- `AC_hamiltonian` 不再稠密化：`SparseIMPO` 的 Schur 张量原样存入
+  `MPO_AC_Hamiltonian.operators`，AC 作用按 level 对 (i, j) 逐块收缩
+  （Schur 上三角零块 `iszero` 跳过，语义与稠密收缩逐位一致）；稠密
+  `DenseIMPO` 路径不变（两作用方法签名互斥）；
+- 新增 `recalculate!(envs::OverlapCache, newbra, [alg_environments])`：
+  为更新后的 bra 重解 ⟨bra|ket⟩ 不动点（ket 不变），边界 eigsolve 以当前
+  `lefts[1]`/`rights[end]` 热启动（对标 MPSKit 原地 `recalculate!`）；
+  `newbra` 与新不动点就地写回 `envs`（纯原地更新，返回 `envs` 本身）。
+  `_overlap_vomps_sweeps` 的逐迭代环境重解与 `_overlap_idmrg_sweeps` 的收尾
+  环境重解改为调用该函数。
+
 ## 2026-09-29 环境机制文件归位；`AC_hamiltonian`/`C_hamiltonian` 固化 `DMRGCache`
 
 - `DMRGCache` 的定义与两个构造器（`DenseIMPO` 转移矩阵主本征向量版、

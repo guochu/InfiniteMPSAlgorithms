@@ -53,7 +53,7 @@ local contraction of every site is exactly 1 (identity-MPO expectation = N).
 """
 struct MultCache{O<:CanonicalIMPO,
                  B<:Union{CanonicalIMPS,CanonicalIMPO},
-                 K<:Union{CanonicalIMPS,CanonicalIMPO},T} <: Environments
+                 K<:Union{CanonicalIMPS,CanonicalIMPO},T} <: CompressionEnvironments
     operator::O
     bra::B
     ket::K
@@ -171,7 +171,7 @@ function MultCache(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO,
     return MultCache(W1, below, W2, GLs, GRs)
 end
 
-# 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 overlap.jl
+# 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 compress.jl
 # 严格乘法的 kernel（fuse / _naive_mul_tensor）见 operators/linalg.jl
 
 "VOMPS local AC map（mpo·mps 施加通道；**统一 4 参约定 (GL, GR, O, ketAC)**，
@@ -259,7 +259,7 @@ end
 "Maximum per-site Galerkin residual (mirrors MPSKit's
 `calc_galerkin(below, operator, above, envs)`, projecting the local-map output
 in the current environments with the current state `x.AL`); the operator-free
-overlap-channel version lives in overlap.jl."
+overlap-channel version lives in compress.jl."
 function _galerkin_err(operator::CanonicalIMPO, ket::CanonicalIMPS,
                        x::CanonicalIMPS, envs)
     N = length(ket)
@@ -353,7 +353,7 @@ end
 # MPSKit's `transfer_leftenv!`/`transfer_rightenv!` for the
 # `⟨below|operator|above⟩` channel: the below side is the state being optimized,
 # the above side the target chain; the operator-free overlap-channel versions
-# live in overlap.jl).
+# live in compress.jl).
 function transfer_leftenv!(envs::MultCache, x::CanonicalIMPS,
                            operator::CanonicalIMPO, ket::CanonicalIMPS, site::Int)
     N = length(ket)
@@ -419,7 +419,7 @@ template of [`_vomps_sweeps`](@ref)):
 Afterwards the mixed-canonical state is rebuilt from the `AR` string (MPSKit
 `MultilineMPS(ψ.AR)` at the dynamically adapted `alg.alg_gauge` tolerance) and
 the environments are recomputed for the final state. （compress 的无算符版本见
-overlap.jl 的 `_overlap_idmrg_sweeps`。）Returns the optimized state, its final
+compress.jl 的 `_overlap_idmrg_sweeps`。）Returns the optimized state, its final
 environments and the [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、
 `losses` = 逐轮中心矩阵漂移、`converged` 收敛标志）。
 """

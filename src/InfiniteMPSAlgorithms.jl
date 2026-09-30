@@ -71,8 +71,8 @@ include("algorithms/groundstates/effective.jl")
 include("algorithms/groundstates/vumps.jl")
 include("algorithms/groundstates/idmrg.jl")
 include("algorithms/timeevo/tdvp.jl")
+include("algorithms/arithmetics/envs.jl")
 include("algorithms/arithmetics/mult.jl")
-include("algorithms/arithmetics/overlap.jl")
 include("algorithms/arithmetics/hadamard.jl")
 include("algorithms/arithmetics/compress.jl")
 include("algorithms/timeevo/tebd.jl")
@@ -109,7 +109,7 @@ export
     TransferMatrix, push_env_left, push_env_right, fixedpoint, linsolve, regularize!,
     transfer_leftenv!, transfer_rightenv!,
     # environment caches (concrete types live in their algorithm files)
-    Environments, OverlapCache, MultCache, DMRGCache,
+    Environments, CompressionEnvironments, OverlapCache, MultCache, DMRGCache,
     recalculate!, leftenv, rightenv,
     AC_hamiltonian, C_hamiltonian, calc_galerkin,
     # ground-state and time-evolution algorithms

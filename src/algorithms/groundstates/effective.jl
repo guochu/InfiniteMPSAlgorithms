@@ -14,8 +14,8 @@ const MPSTensor{T} = AbstractArray{T, 3}
 
 Effective operator obtained by differentiating an MPS-MPO-MPS sandwich with
 respect to the local AC tensor (mirrors MPSKit's `AC_hamiltonian` structure).
-`operator` is a single rank-4 MPO tensor (an `SparseIMPO` Schur tensor is
-densified on construction).
+`operator` is a single rank-4 MPO tensor, or the `SparseIMPO` Schur tensor
+(applied block-wise per level pair — no densification).
 """
 struct MPO_AC_Hamiltonian{L<:MPSTensor,O<:Union{MPOTensor,SchurMPOTensor},R<:MPSTensor}
     leftenv::L
@@ -63,9 +63,7 @@ AC′[b, u_out, b′] = Σ GL[b, wl, ā] · x[ā, u_in, b̄] · W[wl, u_out, wr,
 ```
 """
 function AC_hamiltonian(site::Int, below, operator, above, envs::DMRGCache)
-    O = operator isa SparseIMPO ?
-        tompotensor(operator[site]) : operator[site]   # Schur 张量稠密化进统一 kernel
-    return MPO_AC_Hamiltonian(leftenv(envs, site), O, rightenv(envs, site))
+    return MPO_AC_Hamiltonian(leftenv(envs, site), operator[site], rightenv(envs, site))
 end
 
 # ---- action (MPSKit form, linear operators) ----
@@ -76,10 +74,28 @@ function (h::MPO_C_Hamiltonian)(x::AbstractMatrix{T}) where {T}
     return y
 end
 
-function (h::MPO_AC_Hamiltonian)(x::AbstractArray{T,3}) where {T}
+# 稠密 MPO 张量的 AC 作用（约束 Op<:MPOTensor 与下方 Schur 特化方法签名互斥）
+function (h::MPO_AC_Hamiltonian{L,Op,R})(x::AbstractArray{T,3}) where {L,Op<:MPOTensor,R,T}
     GL, GR = h.leftenv, h.rightenv
-    W = h.operators
+    W4 = h.operators
     @tensor y[b, u_out, b′] := GL[b, wl, ā] * x[ā, u_in, b̄] *
-                               W[wl, u_out, wr, u_in] * GR[b̄, wr, b′]
+                               W4[wl, u_out, wr, u_in] * GR[b̄, wr, b′]
+    return y
+end
+
+# Schur 稀疏算符的 AC 作用：按 level 对 (i, j) 逐块收缩（iszero 零块跳过——
+# Schur 上三角结构的零块从不落地），语义与稠密张量收缩逐位一致
+function (h::MPO_AC_Hamiltonian{L,Op,R})(x::AbstractArray{T,3}) where {L,Op<:SchurMPOTensor,R,T}
+    GL, GR, W = h.leftenv, h.rightenv, h.operators
+    nl = nlvls(W)
+    y = zeros(T, size(GL, 1), size(x, 2), size(GR, 3))
+    for i in 1:nl, j in 1:nl
+        Wij = W[i, j]                 # (u_out, u_in) 块
+        iszero(Wij) && continue
+        GLi = @view GL[:, i, :]       # (bra bond, ket bond)
+        GRj = @view GR[:, j, :]
+        @tensor y[b, u_out, c] += GLi[b, a] * x[a, u_in, bb] *
+                                  Wij[u_out, u_in] * GRj[bb, c]
+    end
     return y
 end

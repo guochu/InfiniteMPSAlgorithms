@@ -229,7 +229,7 @@ zip（Hadamard/Schur 乘积）通道 `⟨below|zip(ψ1, ψ2)⟩` 的环境缓存
 解出（`alg` 提供 `tol`/`maxiter`），归一化同 MPSKit（GR Frobenius 归一、GL 按
 局部 C 通道 overlap λ 缩放；`kron(C2, C1)` 从不物化）。
 """
-struct HadamardCache{B<:CanonicalIMPS,K1<:CanonicalIMPS,K2<:CanonicalIMPS,T} <: Environments
+struct HadamardCache{B<:CanonicalIMPS,K1<:CanonicalIMPS,K2<:CanonicalIMPS,T} <: CompressionEnvironments
     bra::B
     ket1::K1   # ψ1（次指标因子）
     ket2::K2   # ψ2（主指标因子）

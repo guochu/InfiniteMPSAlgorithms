@@ -7,7 +7,7 @@
 # - `MultCache`: MPO-application channel ⟨bra|W|ket⟩ (iterative MPO
 #   multiplication mult), see algorithms/arithmetics/mult.jl;
 # - `OverlapCache`: pure overlap channel ⟨bra|ket⟩ (variational compression of
-#   the algebra operations), see algorithms/arithmetics/overlap.jl;
+#   the algebra operations), see algorithms/arithmetics/compress.jl;
 # - `HadamardCache`: zip channel ⟨below|zip(ψ1, ψ2)⟩ (iterative Hadamard
 #   product), see algorithms/arithmetics/hadamard.jl.
 #
