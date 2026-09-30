@@ -212,12 +212,16 @@ end
     ψraw = W * DenseIMPS(collect(ψ.AL))
     for alg in (VOMPS(D = D0, tol = 1e-12, maxiter = 300),
                 IDMRG(D = D0, tol = 1e-12, maxiter = 300))
-        # mpo·mps（内部函数取得迭代数）
+        # mpo·mps（同初态：mult 通道 out1 ≡ compress 通道 envs.bra = out2）
         out1 = randomimps(T, [2, 2]; D = D0)
         out2 = copy(out1)
         y1, _, i1 = InfiniteMPSAlgorithms._mult(W, ψ, alg, out1; D = D0)
-        y2, _, i2 = InfiniteMPSAlgorithms._compress(CanonicalIMPS(collect(ψraw.As)),
-                                                    alg, out2; D = D0)
+        ket = CanonicalIMPS(collect(ψraw.As))
+        envs2 = OverlapCache(out2, ket, alg.alg_environments)
+        _, i2 = alg isa VOMPS ?
+                InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs2, alg) :
+                InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs2, alg)
+        y2 = InfiniteMPSAlgorithms._global_normalize!(envs2.bra)
         @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))
@@ -229,9 +233,12 @@ end
         m2 = copy(m1)
         p0 = m1
         z1, _, j1 = InfiniteMPSAlgorithms._mult(W, W2, alg, p0; D = D0)
-        z2, _, j2 = InfiniteMPSAlgorithms._compress(CanonicalIMPO(collect(Wraw.Ws)),
-                                                    alg, vectorize(m2);
-                                                    D = D0)
+        ketw = CanonicalIMPS(InfiniteMPSAlgorithms.vectorize(Wraw).As)
+        envs3 = OverlapCache(vectorize(m2), ketw, alg.alg_environments)
+        _, j2 = alg isa VOMPS ?
+                InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs3, alg) :
+                InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs3, alg)
+        z2 = InfiniteMPSAlgorithms.devectorize(envs3.bra)
         @test j1.niter == j2.niter
         w1 = vectorize(z1)
         w2 = vectorize(z2)

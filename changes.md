@@ -1,5 +1,27 @@
 # 变更记录（接口）
 
+## 2026-09-29 compress/compress! 直连扫掠引擎；`_compress`/`_compress_ket` 删除
+
+- 删除内部驱动 `_compress`（三种输入方法）与 `_compress_ket`（及其独占的
+  `_truncate_bonddim` 初猜）：`compress`/`compress!` 直接基于
+  `_overlap_vomps_sweeps!`/`_overlap_idmrg_sweeps!` 实现——构造
+  `OverlapCache(初态, 目标链, alg.alg_environments)` 后调用对应扫掠，最终态即
+  `envs.bra`（`compress` 用 `svdguess_compress(·, alg.D)` 作初态）；
+- `compress!` 的 `changebond!` 改用 `D = alg.D`（此前取 `max_bonddim(out)`）
+  ——`max_bonddim` 函数保留；
+- `compress` 不再保留 `alg.D ≥ max_bonddim` 的短路精确路径（`D` 超出输入键
+  时扫掠一步即收敛，行为不变）；初态对象不再被原地修改（引擎在缓存持有的
+  副本上演化）。
+
+## 2026-09-29 重叠通道扫掠改原地；OverlapCache 的 `length`/`scalartype`
+
+- `_overlap_vomps_sweeps!`/`_overlap_idmrg_sweeps!` 改为原地版本：
+  签名 `(envs::OverlapCache, alg) -> (envs, info)`——被优化的态即 `envs.bra`
+  （构造缓存的初态），扫掠全程原地演化并写回缓存（环境经 `recalculate!`
+  热启动重解）；`finalize` 回调返回的态写回缓存 bra 后继续使用；
+- `OverlapCache` 新增 `Base.length`（bra/ket 单胞长度）与 `scalartype`
+  （构造器统一提升后的缓存标量类型）。
+
 ## 2026-09-29 overlap.jl 并入 compress.jl
 
 纯重叠通道（`OverlapCache`、`overlap_fixedpoints`、`Overlap_AC/C_Hamiltonian`、

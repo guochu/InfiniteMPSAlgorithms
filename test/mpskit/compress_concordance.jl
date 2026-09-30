@@ -2,7 +2,7 @@
 # compress ↔ MPSKit.approximate 严格对齐测试
 #
 # MPSKit 0.13 的 approximate（VOMPS / IDMRG，src/algorithms/approximate/）
-# 与本包 compress（经 _overlap_vomps_sweeps / _overlap_idmrg_sweeps）的逐步对齐：
+# 与本包 compress（经 _overlap_vomps_sweeps! / _overlap_idmrg_sweeps!）的逐步对齐：
 # - 相同的随机目标态与随机初态（同一组张量，两包各持独立副本）；
 # - 完全相同的算法参数（tol / maxiter）；
 # - VOMPS / IDMRG：逐迭代对比（maxiter = k、tol = 0 强制两包都恰好跑 k 轮）；
@@ -71,13 +71,21 @@ function _mpskit_converged_iter(algmk, tol)
     return hi, ϕ
 end
 
-"本包 `_overlap_vomps_sweeps` 恰好跑 k 轮的压缩结果。"
-_ours_vomps(ψ, x0, k) = first(InfiniteMPSAlgorithms._compress(
-    ψ, VOMPS(D = D0, tol = 0.0, maxiter = k), x0; D = D0))
+"本包 `_overlap_vomps_sweeps!` 恰好跑 k 轮的压缩结果。"
+function _ours_vomps(ψ, x0, k)
+    alg = VOMPS(D = D0, tol = 0.0, maxiter = k)
+    envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
+    InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs, alg)
+    return envs.bra
+end
 
-"本包 `_overlap_idmrg_sweeps` 恰好跑 k 轮的压缩结果。"
-_ours_idmrg(ψ, x0, k) = first(InfiniteMPSAlgorithms._compress(
-    ψ, IDMRG(D = D0, tol = 0.0, maxiter = k), x0; D = D0))
+"本包 `_overlap_idmrg_sweeps!` 恰好跑 k 轮的压缩结果。"
+function _ours_idmrg(ψ, x0, k)
+    alg = IDMRG(D = D0, tol = 0.0, maxiter = k)
+    envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
+    InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs, alg)
+    return envs.bra
+end
 
 "MPSKit `approximate` 恰好跑 k 轮（tol = 0）的压缩结果（只取态）。"
 _mpskit_approx(algmk, k) = MPSKit.approximate(
@@ -102,8 +110,10 @@ end
 
 @testset "compress VOMPS 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
-    y, _, info = InfiniteMPSAlgorithms._overlap_vomps_sweeps(
-        ψ, x0, VOMPS(D = D0, tol = tol, maxiter = 500))
+    alg = VOMPS(D = D0, tol = tol, maxiter = 500)
+    envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
+    _, info = InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs, alg)
+    y = envs.bra
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.VOMPS, tol)
     @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
@@ -111,8 +121,10 @@ end
 
 @testset "compress IDMRG 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
-    y, _, info = InfiniteMPSAlgorithms._overlap_idmrg_sweeps(
-        ψ, x0, IDMRG(D = D0, tol = tol, maxiter = 500))
+    alg = IDMRG(D = D0, tol = tol, maxiter = 500)
+    envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
+    _, info = InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs, alg)
+    y = envs.bra
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
     @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
@@ -130,7 +142,15 @@ end
                                for ℓ in 1:N])
     for (alg, algmk) in ((VOMPS(D = D0, tol = 1.0e-12, maxiter = 300), MPSKit.VOMPS),
                          (IDMRG(D = D0, tol = 1.0e-12, maxiter = 300), MPSKit.IDMRG))
-        y = first(InfiniteMPSAlgorithms._compress(W, alg, x0w; D = D0))      # CanonicalIMPO
+        ket = CanonicalIMPS(vectorize(W).As)
+        envs = OverlapCache(x0w, ket, alg.alg_environments)
+        if alg isa VOMPS
+            InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs, alg)
+        else
+            InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs, alg)
+        end
+        y = InfiniteMPSAlgorithms._global_normalize!(envs.bra)
+        y = devectorize(y)                                                  # CanonicalIMPO
         ϕ = MPSKit.approximate(mkinfinitemps(x0w), (Imkw, Wmk),
                                algmk(; tol = 1.0e-12, maxiter = 300,
                                      verbosity = 0))[1]

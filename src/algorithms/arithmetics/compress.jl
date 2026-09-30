@@ -4,7 +4,7 @@
 # variational approximation of a *given* chain (the target is the chain itself,
 # unlike add/mult/hadamard whose targets are naive algebraic constructions).
 # The identity-channel engines (`OverlapCache` +
-# `_overlap_vomps_sweeps`/`_overlap_idmrg_sweeps`) live at the end of this
+# `_overlap_vomps_sweeps!`/`_overlap_idmrg_sweeps!`) live at the end of this
 # file; the MPO 施加 / zip 通道的引擎（mult.jl / hadamard.jl）共用同一管道。
 
 """
@@ -58,86 +58,53 @@ end
 Bond-dimension-`alg.D` variational approximation of a single chain (mirroring
 MPSKit's `approximate`: maximize the overlap between the compressed chain and
 the input chain, fixed point = the best rank-`D` approximation in the
-ring-trace fidelity sense). `alg.D ≥ max_bonddim` of the
-input short-circuits to the exact input. MPO results are always returned in
-mixed-canonical storage (`CanonicalIMPO`, satisfying `ismixedcanonical`) — a
-`DenseIMPO` input is canonicalized exactly (the operator value is preserved in
-the periodic-trace representation) instead of being passed through. The
-default initial guess is [`svdguess_compress`](@ref) (the input's own SVD
-truncation). The positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or
-[`IDMRG`](@ref) (MPSKit sequential Gauss–Seidel sweeps with on-the-fly
-environment transfer), which share the same fixed point.
+ring-trace fidelity sense). The default initial guess is
+[`svdguess_compress`](@ref) (the input's own SVD truncation to `alg.D`). The
+positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or [`IDMRG`](@ref)
+(MPSKit sequential Gauss–Seidel sweeps with on-the-fly environment transfer),
+which share the same fixed point.
 
 The second return is the engine's final environments（纯重叠通道的
-[`OverlapCache`](@ref)，对返回态的射线解出；MPO 压缩在 `vectorize` 的 MPS 视图
-上演化，envs 持该 MPS 视图）; the third return is the
+[`OverlapCache`](@ref)：bra = 被优化的压缩链、ket = 目标链；MPO 压缩在
+`vectorize` 的 MPS 视图上演化，envs 持该 MPS 视图）; the third return is the
 [`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
-`converged` 收敛标志；短路的精确路径为 0 轮、已收敛、恒等矩阵环境）。
+`converged` 收敛标志）。
 """
-compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
-    _compress(ψ, alg, nothing; D = alg.D)
-
-compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) =
-    _compress(W, alg, nothing; D = alg.D)
-
-compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) =
-    _compress(W, alg, nothing; D = alg.D)
-
-function _compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
-                   x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    if D >= max_bonddim(ψ)
-        out = copy(ψ)
-        return out, OverlapCache(out), IterativeConvergenceInfo(0, Float64[0.0], true)
-    end
-    x0 = x0 === nothing ? svdguess_compress(ψ, D) : x0
-    x, envs, info = if alg isa VOMPS
-        _overlap_vomps_sweeps(ψ, x0, alg)
-    else
-        _overlap_idmrg_sweeps(ψ, x0, alg)
-    end
-    return _global_normalize!(x), envs, info
+function compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
+    envs = OverlapCache(svdguess_compress(ψ, alg.D), ψ, alg.alg_environments)
+    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
+                              _overlap_idmrg_sweeps!(envs, alg)
+    x = _global_normalize!(envs.bra)
+    return x, envs, info
 end
 
-function _compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG},
-                   x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    if D >= max_bonddim(W)
-        out = copy(W)
-        return out, OverlapCache(vectorize(out)),
-               IterativeConvergenceInfo(0, Float64[0.0], true)
-    end
+function compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG})
     # 目标 MPS 的 ray 必须取 **AL 家族**（左正则串）：其周期 trace 才是算符串的
     # wavefunction（相似变换不变）；AC 家族在张量间携带 C 加权
     # （AC[ℓ] = AL[ℓ]·C[ℓ]），周期 trace 是规范依赖的加权量，作为压缩目标会
     # 定义另一个变分问题（与 `mult!` 的因子化目标不等价）。
     # `vectorize` 逐家族携带规范数据，其 AL 家族正是该 ray 的左正则串。
     ket = vectorize(W)
-    x0 = x0 === nothing ? svdguess_compress(W, D) : x0
-    x, envs, info = if alg isa VOMPS
-        _overlap_vomps_sweeps(ket, x0, alg)
-    else
-        _overlap_idmrg_sweeps(ket, x0, alg)
-    end
-    x = _global_normalize!(x)
+    envs = OverlapCache(svdguess_compress(W, alg.D), ket, alg.alg_environments)
+    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
+                              _overlap_idmrg_sweeps!(envs, alg)
+    x = _global_normalize!(envs.bra)
     return devectorize(x), envs, info
 end
 
-function _compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG},
-                   x0::Union{Nothing,CanonicalIMPS}; D::Int)
-    if D >= max_bonddim(W)
-        out = CanonicalIMPO(collect(W.Ws))
-        return out, OverlapCache(vectorize(out)),
-               IterativeConvergenceInfo(0, Float64[0.0], true)
-    end
+function compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG})
     ket = CanonicalIMPS(vectorize(W).As)
-    x0 = x0 === nothing ? svdguess_compress(ket, D) : x0
-    x, envs, info = if alg isa VOMPS
-        _overlap_vomps_sweeps(ket, x0, alg)
-    else
-        _overlap_idmrg_sweeps(ket, x0, alg)
-    end
-    x = _global_normalize!(x)
+    envs = OverlapCache(svdguess_compress(ket, alg.D), ket, alg.alg_environments)
+    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
+                              _overlap_idmrg_sweeps!(envs, alg)
+    x = _global_normalize!(envs.bra)
     return devectorize(x), envs, info
 end
+
+"Variational compression of a raw strict-algebra result
+(`DenseIMPO * DenseIMPS`, not yet canonicalized)."
+compress(ψ::DenseIMPS, alg::Union{VOMPS,IDMRG}) =
+    compress(CanonicalIMPS(collect(ψ.As)), alg)
 
 # ---------------- compress! (in-place) ----------------
 
@@ -146,26 +113,27 @@ end
     compress!(out, W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
 
 In-place [`compress`](@ref): `out` is the user-provided chain to be optimized
-as the initial guess. The target bond dimension is taken from the bond profile
-of `out` (its bond profile is first brought to uniform `D = max_bonddim(out)`
-with [`changebond!`](@ref)); `alg.D` is ignored. The optimized result is
-written back into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境、
-`info` 为 [`IterativeConvergenceInfo`](@ref)。
+as the initial guess; its bond profile is first brought to uniform
+`D = alg.D` with [`changebond!`](@ref). The optimized result is written back
+into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境（bra = 压缩
+链）、`info` 为 [`IterativeConvergenceInfo`](@ref)。
 """
 function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG})
-    D = max_bonddim(out)
-    changebond!(out; D = D)
-    y, envs, info = _compress(ψ, alg, out; D = D)
-    return _copyinto!(out, y), envs, info
+    changebond!(out; D = alg.D)
+    envs = OverlapCache(out, ψ, alg.alg_environments)
+    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
+                              _overlap_idmrg_sweeps!(envs, alg)
+    return _copyinto!(out, envs.bra), envs, info
 end
 
 function compress!(out::CanonicalIMPO, W::CanonicalIMPO,
                    alg::Union{VOMPS,IDMRG})
-    D = max_bonddim(out)
-    changebond!(out; D = D)
-    y, envs, info = _compress(W, alg, vectorize(out); D = D)
-    return _copyinto!(out, y), envs, info
+    changebond!(out; D = alg.D)
+    envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
+    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
+                              _overlap_idmrg_sweeps!(envs, alg)
+    return _copyinto!(out, devectorize(envs.bra)), envs, info
 end
 
 "Raw-target variants: `compress!` of a strict-algebra result
@@ -179,87 +147,6 @@ end
 function compress!(out::CanonicalIMPO, W::DenseIMPO,
                    alg::Union{VOMPS,IDMRG})
     return compress!(out, CanonicalIMPO(collect(W.Ws)), alg)
-end
-
-"Variational compression of a raw strict-algebra result
-(`DenseIMPO * DenseIMPS`, not yet canonicalized)."
-compress(ψ::DenseIMPS, alg::Union{VOMPS,IDMRG}) =
-    _compress(CanonicalIMPS(collect(ψ.As)), alg, nothing; D = alg.D)
-
-# ---------------- 共享的代数压缩装配（原 add.jl；add 已删除） ----------------
-
-"""
-    _compress_ket(K, physdims, D, alg; x0 = nothing) -> CanonicalIMPS
-
-Variationally compress the naively constructed target tensor string `K` (MPS
-view, rank-3) to bond dimension `D`: `alg::VOMPS` runs the ALS sweeps
-(`_overlap_vomps_sweeps`), `alg::IDMRG` the MPSKit sequential-sweep template
-(`_overlap_idmrg_sweeps`); finally the result is globally normalized (norm
-convention `‖AC[1]‖ = 1`). `x0` optionally provides the initial state (defaults
-to `svdguess`: the target's own bond-wise SVD truncation, deterministic and
-inside the correct basin).
-"""
-function _compress_ket(K::Vector{<:Array{T,3}}, physdims::AbstractVector{Int}, D::Int,
-                       alg::VOMPS; x0::Union{Nothing,CanonicalIMPS} = nothing) where {T}
-    ket = CanonicalIMPS(K)
-    x0 = x0 === nothing ? _truncate_bonddim(copy(ket), D) : x0
-    x, _, _ = _overlap_vomps_sweeps(ket, x0, alg)
-    return _global_normalize!(x)
-end
-
-function _compress_ket(K::Vector{<:Array{T,3}}, physdims::AbstractVector{Int}, D::Int,
-                       alg::IDMRG; x0::Union{Nothing,CanonicalIMPS} = nothing) where {T}
-    ket = CanonicalIMPS(K)
-    x0 = x0 === nothing ? _truncate_bonddim(copy(ket), D) : x0
-    x, _, _ = _overlap_idmrg_sweeps(ket, x0, alg)
-    return _global_normalize!(x)
-end
-
-_compress_ket(::Vector{<:Array{T,3}}, ::AbstractVector{Int}, ::Int,
-              alg::Algorithm) where {T} =
-    throw(ArgumentError("algebra compression only supports VOMPS() (DMRG-type) or IDMRG() algorithms; got $(typeof(alg))"))
-
-"""
-    _truncate_bonddim(ψ, D) -> CanonicalIMPS
-
-Deterministic initial state for the compression of a block-degenerate target
-(such as the direct sums of `add`): the SVD truncation of the naive target
-itself to bond dimension `D` — always inside the correct ALS basin, unlike a
-random initial state (the orthogonalities of `AL`/`AR` are preserved: the
-truncation factors `U`/`V` act between orthogonality-protected bonds).
-"""
-function _truncate_bonddim(ψ::CanonicalIMPS{T}, D::Int) where {T}
-    N = length(ψ)
-    # 逐 bond 在原态上独立 SVD（不同 bond 的正交投影互易，可统一应用；
-    # 串行"截一个再截下一个"会在已投影的态上用旧基因子，破坏混合规范）
-    svds = Dict{Int,Any}()
-    for ℓ in 1:N
-        size(ψ.C[ℓ], 1) > D || continue
-        svds[ℓ] = tsvd(ψ.C[ℓ]; trunc = truncdim(D))
-    end
-    isempty(svds) && return ψ
-    # 应用：AL/AR[ℓ] 右键乘 U_ℓ、左键乘 V_{ℓ-1}；C[ℓ] = diag(s_ℓ)。
-    # U/V 正交 ⇒ AR 串仍是右规范串，从它重建混合规范。
-    for ℓ in 1:N
-        ℓm = _mod1(ℓ - 1, N)
-        if haskey(svds, ℓ)
-            U, s, V, _ = svds[ℓ]
-            ψ.AL[ℓ] = @tensor A[a, s2, c] := ψ.AL[ℓ][a, s2, bb] * U[bb, c]
-            ψ.AR[ℓ] = @tensor A[a, s2, c] := ψ.AR[ℓ][a, s2, bb] * U[bb, c]
-            ψ.C[ℓ] = Matrix{T}(Diagonal(s))
-        end
-        if haskey(svds, ℓm)
-            _, _, Vm, _ = svds[ℓm]
-            ψ.AL[ℓ] = @tensor A[a, s2, b] := Vm[a, bb] * ψ.AL[ℓ][bb, s2, b]
-            ψ.AR[ℓ] = @tensor A[a, s2, b] := Vm[a, bb] * ψ.AR[ℓ][bb, s2, b]
-        end
-    end
-    y = CanonicalIMPS(collect(ψ.AR))
-    copy!(ψ.AL, y.AL)
-    copy!(ψ.AR, y.AR)
-    copy!(ψ.C, y.C)
-    copy!(ψ.AC, y.AC)
-    return ψ
 end
 
 # ---- lazy (on-the-fly) naive-SVD initial guess (shared by mult / hadamard) ----
@@ -354,8 +241,8 @@ _copyinto!(out::CanonicalIMPO, y::DenseIMPO) = _copyinto!(out, CanonicalIMPO(col
 
 Environments of the pure overlap channel `⟨bra|ket⟩` (identity channel): the
 left/right fixed points of the double-layer transfer, used by the VOMPS / IDMRG
-compression sweeps of `compress` ([`_overlap_vomps_sweeps`](@ref) /
-[`_overlap_idmrg_sweeps`](@ref)).
+compression sweeps of `compress` ([`_overlap_vomps_sweeps!`](@ref) /
+[`_overlap_idmrg_sweeps!`](@ref)).
 
 - `lefts[ℓ]`: rank-2 `(below bond, above bond)` left environment of site ℓ;
 - `rights[ℓ]`: rank-2 `(above bond, below bond)` right environment of site ℓ;
@@ -372,6 +259,12 @@ struct OverlapCache{B<:CanonicalIMPS,K<:CanonicalIMPS,T} <: CompressionEnvironme
     lefts::Vector{Array{T,2}}
     rights::Vector{Array{T,2}}
 end
+
+"纯重叠通道缓存的站数（bra/ket 的单胞长度）。"
+Base.length(envs::OverlapCache) = length(envs.ket)
+
+"缓存标量类型（构造器已把 bra/ket/lefts/rights 统一提升）。"
+scalartype(envs::OverlapCache) = scalartype(envs.bra)
 
 # ---- 纯重叠通道的局部映射（Overlap_AC/C_Hamiltonian） ----
 #
@@ -578,26 +471,24 @@ function _galerkin_err(ket::CanonicalIMPS, x::CanonicalIMPS, envs::OverlapCache)
 end
 
 """
-    _overlap_vomps_sweeps(ket, x0, alg::VOMPS) -> (x, envs, info)
+    _overlap_vomps_sweeps!(envs::OverlapCache, alg::VOMPS) -> (envs, info)
 
 Overlap-maximizing VOMPS sweeps on the pure overlap channel (the operator-free
-branch of MPSKit's `approximate(ψ₀, ϕ, VOMPS())`): find `x` approximating the
-target chain `ket` itself — variational compression. Jacobi-style rounds, the
-same `IterativeSolver` pipeline as the mult channel ([`_vomps_sweeps`](@ref)):
-`localupdate`（`AC_new = GL·ket.AC·GR`、`C_new = GL₊·ket.C·GR` → `regauge!`）→
-`gauge_step!` → warm-started environment re-solve → Galerkin residual checked
-after the sweep. Returns `(x, envs, info)`，`info` 为
+branch of MPSKit's `approximate(ψ₀, ϕ, VOMPS())`)：被优化的态即 `envs.bra`
+（构造缓存的初态），目标链为 `envs.ket`——variational compression。
+Jacobi-style rounds, the same `IterativeSolver` pipeline as the mult channel
+([`_vomps_sweeps`](@ref)): `localupdate`（`AC_new = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])`、
+`C_new = C_Hamiltonian(ℓ, envs)(ket.C[ℓ])` → `regauge!`）→ `gauge_step!` →
+`recalculate!` 环境热启动重解 → 扫掠后检查 Galerkin 残差。全部原地：态写回
+`envs.bra`、环境写回 `lefts`/`rights`，返回 `(envs, info)`，`info` 为
 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = [初始残差,
 逐轮 Galerkin 残差...]、`converged` 收敛标志）。
 """
-function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::VOMPS)
-    N = length(ket)
-    x = copy(x0)
-    envs = OverlapCache(x, ket, alg.alg_environments)
-    # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释；缓存的 bra/ket 已由
-    # 构造器提升到环境标量类型）
-    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
-    x = _promote_scalar(T, x)
+function _overlap_vomps_sweeps!(envs::OverlapCache, alg::VOMPS)
+    ket = envs.ket
+    x = envs.bra                       # 原地演化的态（缓存 bra 本体）
+    N = length(envs)
+    T = scalartype(envs)
     # 初始残差（收敛判定在扫掠之后，MPSKit IterativeSolver 语义）
     ϵ = _galerkin_err(ket, x, envs)
     iter = 0
@@ -605,7 +496,7 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::VOMPS
     converged = false
     for outer iter in 1:alg.maxiter
         # localupdate: per-site local maps + regauge（全部站点对同一批环境；
-        # 候选 AL 与 ket.AC 同形，eltype 提升到通道标量类型 T）
+        # 候选 AL 与 ket.AC 同形）
         ALs = [similar(ket.AC[ℓ], T) for ℓ in 1:N]
         for ℓ in 1:N
             AC_new = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])
@@ -618,8 +509,10 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::VOMPS
         # envs_step!（bra 更新 + 热启动 + 动态环境容差）
         alg_envs = updatetol(alg.alg_environments, iter - 1, ϵ)
         recalculate!(envs, x, alg_envs)
-        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
         x, envs = alg.finalize(iter, x, ket, envs)
+        envs.bra ≡ x || _copyinto!(envs.bra, x)
+        x = envs.bra
         ϵ = _galerkin_err(ket, x, envs)
         push!(losses, ϵ)
         alg.verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
@@ -629,31 +522,29 @@ function _overlap_vomps_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::VOMPS
         end
     end
     _global_normalize!(x)
-    return x, envs, IterativeConvergenceInfo(iter, losses, converged)
+    return envs, IterativeConvergenceInfo(iter, losses, converged)
 end
 
 """
-    _overlap_idmrg_sweeps(ket, x0, alg::IDMRG) -> (x, envs, info)
+    _overlap_idmrg_sweeps!(envs::OverlapCache, alg::IDMRG) -> (envs, info)
 
 IDMRG template on the pure overlap channel (the operator-free branch of
-MPSKit's `approximate(ψ₀, ϕ, IDMRG())`): sequential Gauss–Seidel double sweep
-with on-the-fly environment transfer, `leftorth`/`rightorth` splits of the
+MPSKit's `approximate(ψ₀, ϕ, IDMRG())`)：被优化的态即 `envs.bra`（构造缓存的
+初态），目标链为 `envs.ket`——sequential Gauss–Seidel double sweep with
+on-the-fly environment transfer, `leftorth`/`rightorth` splits of the
 normalized local projections, per-double-sweep environment rescaling
 ([`normalize_envs!`](@ref)) and center-matrix-drift convergence
 `ϵ = ‖C₀_new − C₀_old‖`; afterwards the mixed-canonical state is rebuilt from
 the `AR` string and the environments are re-solved for the final state.
-Returns `(x, envs, info)`，`info` 为 [`IterativeConvergenceInfo`](@ref)
-（`niter` = 扫掠轮数、`losses` = 逐轮中心矩阵漂移、`converged` 收敛标志）。
+全部原地：态写回 `envs.bra`、环境写回 `lefts`/`rights`，返回 `(envs, info)`，
+`info` 为 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` =
+逐轮中心矩阵漂移、`converged` 收敛标志）。
 """
-function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::IDMRG)
-    N = length(ket)
-    x = copy(x0)
-    # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
-    envs = OverlapCache(x, ket, alg.alg_environments)
-    # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释；缓存的 bra/ket 已由
-    # 构造器提升到环境标量类型）
-    T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
-    x = _promote_scalar(T, x)
+function _overlap_idmrg_sweeps!(envs::OverlapCache, alg::IDMRG)
+    ket = envs.ket
+    x = envs.bra                       # 原地演化的态（缓存 bra 本体）
+    N = length(envs)
+    T = scalartype(envs)
     ϵ = 2 * alg.tol
     iter = 0
     losses = Float64[]
@@ -680,8 +571,10 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::IDMRG
         ϵ = norm(x.C[0] - C_old)
         push!(losses, ϵ)
         alg.verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
-        # finalize（逐迭代回调，MPSKit finalize! 语义）
+        # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
         x, envs = alg.finalize(iter, x, ket, envs)
+        envs.bra ≡ x || _copyinto!(envs.bra, x)
+        x = envs.bra
         if ϵ < alg.tol
             converged = true
             break
@@ -691,7 +584,7 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::IDMRG
     alg_g = updatetol(alg.alg_gauge, iter, ϵ)
     x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
                       maxiter = alg_g.maxiter)
-    recalculate!(envs, x, alg.alg_environments)
     _global_normalize!(x)
-    return x, envs, IterativeConvergenceInfo(iter, losses, converged)
+    recalculate!(envs, x, alg.alg_environments)
+    return envs, IterativeConvergenceInfo(iter, losses, converged)
 end

@@ -419,7 +419,7 @@ template of [`_vomps_sweeps`](@ref)):
 Afterwards the mixed-canonical state is rebuilt from the `AR` string (MPSKit
 `MultilineMPS(ψ.AR)` at the dynamically adapted `alg.alg_gauge` tolerance) and
 the environments are recomputed for the final state. （compress 的无算符版本见
-compress.jl 的 `_overlap_idmrg_sweeps`。）Returns the optimized state, its final
+compress.jl 的 `_overlap_idmrg_sweeps!`。）Returns the optimized state, its final
 environments and the [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、
 `losses` = 逐轮中心矩阵漂移、`converged` 收敛标志）。
 """
