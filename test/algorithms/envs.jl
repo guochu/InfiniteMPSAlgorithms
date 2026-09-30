@@ -136,7 +136,10 @@ end
     @test phydims(q) == dims && all(bonddim(q, ℓ) == 6 for ℓ in 1:3)
     y, _, _ = compress(ψ, VOMPS(D = 6, maxiter = 10))
     @test phydims(y) == dims
-    ym = mult(H1, ψ)
+    # 严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）
+    apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
+        CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As))
+    ym = apply_exact(H1, ψ)
     @test phydims(ym) == dims
     @test phydims(superoperator(H1)) == [dims[ℓ]^2 for ℓ in 1:3]
     @test isfinite(real(correlator(ψ, Matrix{T}(I, dims[1], dims[1]),

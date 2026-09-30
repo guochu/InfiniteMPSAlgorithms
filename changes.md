@@ -1,5 +1,40 @@
 # 变更记录（接口）
 
+## 2026-09-29 重叠通道局部映射回归 `_mapAC`/`_mapC`；删严格 `mult(W, ψ)`；`calc_galerkin` 改名；`_compression_sweep!` 移入 envs.jl
+
+- 删除 `Overlap_AC_Hamiltonian`/`Overlap_C_Hamiltonian` 及其装配入口
+  `AC_Hamiltonian(site, envs::OverlapCache)`/`C_Hamiltonian(site,
+  envs::OverlapCache)`：无算符通道的局部投影回归更简单的 rank-2
+  `_mapAC(GL, GR, ketac)`/`_mapC(GL, GR, ketc)`（与三元/zip 通道同名分派），
+  `_local_AC`/`_local_C` 与 `overlap_fixedpoints` 的归一化直接调用之；
+- 删除严格 `mult(W, ψ)`（二参数精确朴素构造）——等价表达
+  `CanonicalIMPS(collect(W * DenseIMPS(collect(ψ.AL))))`（canonicalize + 归一）；
+- `_galerkin_err(envs, x)` 改名 **`calc_galerkin(envs, x)`**（对齐 MPSKit
+  命名；单站投影范数 `_galerkin` 不变）；
+- `_compression_sweep!`（两个泛型方法）从 compress.jl 移到
+  arithmetics/envs.jl（`CompressionEnvironments` 层次所在处）。
+
+## 2026-09-29 统一扫掠引擎 `_compression_sweep!`；mult/hadamard 直连引擎
+
+- `_overlap_vomps_sweeps!`/`_overlap_idmrg_sweeps!`（compress 通道）、
+  `_vomps_sweeps`/`_idmrg_sweeps`（mult 通道）、`_zip_vomps_sweeps`/
+  `_zip_idmrg_sweeps`（hadamard 通道）六个扫掠函数统一为
+  **`_compression_sweep!(envs::CompressionEnvironments, alg::Union{VOMPS,IDMRG})
+  -> (envs, info)`**（两个泛型方法，按缓存与 alg 分派；`(envs, alg)` 原地契约
+  不变）：通道差异收敛到逐缓存的 `_local_AC`/`_local_C`（局部投影）、
+  `recalculate!`（环境重解）、`transfer_leftenv!/transfer_rightenv!(envs, x,
+  site)`、`normalize_envs!(envs, x)`、`_galerkin_err(envs, x)`、
+  `_finalize_target(envs)`（finalize 回调的通道目标）上；
+- `mult`/`mult!`/`hadamard`/`hadamard!` 直接构造缓存并调用
+  `_compression_sweep!`（内部驱动 `_mult`/`_hadamard` 删除）；
+  `mult!`/`hadamard!` 的 `changebond!` 改用 `D = alg.D`（与 `compress!` 一致，
+  `max_bonddim` 不再用于此）；
+- `MultCache`/`HadamardCache` 构造器把各槽位提升到通道标量类型（环境 eltype，
+  同 OverlapCache）——扫掠对缓存 bra 的原地演化恒在同型算术上进行；
+  `CompressionEnvironments` 新增泛型 `Base.length`/`scalartype`；
+- IDMRG 收尾的 AR 混合规范重建统一改经 `_rebuild`（compress.jl 此前直接构造
+  `CanonicalIMPS`）。
+
 ## 2026-09-29 compress/compress! 直连扫掠引擎；`_compress`/`_compress_ket` 删除
 
 - 删除内部驱动 `_compress`（三种输入方法）与 `_compress_ket`（及其独占的

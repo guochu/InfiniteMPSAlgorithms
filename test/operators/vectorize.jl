@@ -85,10 +85,14 @@
         W2 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
         P = collect((W1 * W2).Ws)                    # 严格 MPO 乘积（参考）
         ψref = vectorize(CanonicalIMPO(P))
+        # 严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）
+        apply_exact(W, ψ) = CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As)
         # a) 𝓦_L(W1) 作用在 vec(W2)
-        ψa = mult(superoperator(W1; side = :left), vectorize(CanonicalIMPO(W2)))
+        ψa = apply_exact(superoperator(W1; side = :left),
+                         vectorize(CanonicalIMPO(W2)))
         # b) 𝓦_R(W2) 作用在 vec(W1)
-        ψb = mult(superoperator(W2; side = :right), vectorize(CanonicalIMPO(W1)))
+        ψb = apply_exact(superoperator(W2; side = :right),
+                         vectorize(CanonicalIMPO(W1)))
         @test fidelity(ψa, ψref) ≈ 1 atol = 1e-9          # Hilbert–Schmidt 内积下同态
         @test fidelity(ψb, ψref) ≈ 1 atol = 1e-9
         @test fidelity(ψa, ψb) ≈ 1 atol = 1e-9

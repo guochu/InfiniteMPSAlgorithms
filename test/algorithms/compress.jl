@@ -279,7 +279,8 @@ end
 
     # svdguess 初猜（默认）与随机初猜（in-place 的 out 提供）都应收敛到
     # 高保真度的压缩结果（与精确构造射线的保真度 ≥ 0.9·N）
-    y_exact = mult(W, ψ1)                          # 精确朴素构造（二参数版本）
+    y_exact = InfiniteMPSAlgorithms._global_normalize!(
+        CanonicalIMPS([fuse(W[ℓ], ψ1.AL[ℓ]) for ℓ in 1:length(ψ1)]))   # 精确朴素构造（W * ψ）
     y_svd, _, _ = mult(W, ψ1, VOMPS(D = 3))        # svdguess 初猜
     @test fidelity(y_svd, y_exact) > 0.9           # 方向一致（幅值无意义）
     out = randomimps(T, [2, 2]; D = 3)

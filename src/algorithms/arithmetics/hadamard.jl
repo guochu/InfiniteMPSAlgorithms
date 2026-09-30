@@ -3,9 +3,9 @@
 # Elementwise waveform product `c₁₂ = c₁ .* c2`: virtual legs zipped per site,
 # physical leg shared (kernel `_naive_hadamard_tensor` in states/linalg.jl);
 # the physical dimension is unchanged and the bond dimension becomes the product
-# of the two. The iterative version runs the zip channel's own variational
-# engines（`_zip_vomps_sweeps`/`_zip_idmrg_sweeps`，环境缓存为
-# `HadamardCache`——乘积因子 (ψ1, ψ2) 直接进入环境/局部映射收缩，融合 zip 张量
+# of the two. The iterative version shares the unified compression sweep engine
+# （[`_compression_sweep!`](@ref) 的 `HadamardCache` 方法，compress.jl）
+# ——乘积因子 (ψ1, ψ2) 直接进入环境/局部映射收缩，融合 zip 张量
 # 从不物化）。The strict compression-free Hadamard
 # product lives in states/linalg.jl (`hadamard(::DenseIMPS, ::DenseIMPS)`);
 # there is no `CanonicalIMPS` method — convert explicitly first.
@@ -16,22 +16,18 @@
 Compute-on-the-fly variational compression of the Hadamard/Schur product to
 the bond dimension `alg.D`: the zip target is consumed in **factorized form**
 (the (ψ1, ψ2) tensor pairs go straight into the environment/局部映射收缩 — the
-fused zip tensors are never materialized) and
-variationally compressed with the positional algorithm
-object `alg` (VOMPS/IDMRG), starting from the deterministic
-`svdguess_hadamard` initial state. Convergence is judged by the Galerkin
+fused zip tensors are never materialized) and variationally compressed with
+the positional algorithm object `alg` (VOMPS/IDMRG), starting from the
+deterministic `svdguess_hadamard` initial state（扫掠经
+[`_compression_sweep!`](@ref)）. Convergence is judged by the Galerkin
 residual alone (no overlap is computed — same contract as `mult`/`compress`).
 
 The second return is the engine's final environments（zip 通道的
-[`HadamardCache`](@ref)，对返回态的射线解出）; the third return is the
+[`HadamardCache`](@ref)：bra = 被优化的乘积链）; the third return is the
 [`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
 `converged` 收敛标志）。
 """
-hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) =
-    _hadamard(ψ1, ψ2, alg, nothing; D = alg.D)
-
-function _hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG},
-                   x0::Union{Nothing,CanonicalIMPS}; D::Int)
+function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
@@ -40,13 +36,10 @@ function _hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMR
     # 局部映射直接消费 (ψ1, ψ2) 因子对（先与环境收缩——键优先的显式分步 GEMM，
     # 见 `_zip_push_left`/`_mapAC_zip`）；C 的融合序 = `kron(C2, C1)` 与 zip
     # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。
-    x0 = x0 === nothing ? svdguess_hadamard(ψ1, ψ2, D) : x0
-    y, envs, info = if alg isa VOMPS
-        _zip_vomps_sweeps(ψ2, ψ1, x0, alg)
-    else
-        _zip_idmrg_sweeps(ψ2, ψ1, x0, alg)
-    end
-    return y, envs, info
+    envs = HadamardCache(svdguess_hadamard(ψ1, ψ2, alg.D), ψ1, ψ2,
+                         alg.alg_environments)
+    _, info = _compression_sweep!(envs, alg)
+    return envs.bra, envs, info
 end
 
 # ---------------- svdguess_hadamard (deterministic initial guess) & hadamard! (in-place) ----------------
@@ -108,18 +101,21 @@ end
     hadamard!(out, ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
 
 In-place [`hadamard`](@ref): `out` is the user-provided state to be optimized
-as the initial guess. The target bond dimension is taken from the bond profile
-of `out` (its bond profile is first brought to uniform `D = max_bonddim(out)`
-with [`changebond!`](@ref)); `alg.D` is ignored. The optimized result is
-written back into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境、
-`info` 为 [`IterativeConvergenceInfo`](@ref)。
+as the initial guess; its bond profile is first brought to uniform
+`D = alg.D` with [`changebond!`](@ref). The optimized result is written back
+into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境（bra = 乘积
+链）、`info` 为 [`IterativeConvergenceInfo`](@ref)。
 """
 function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG})
-    D = max_bonddim(out)
-    changebond!(out; D = D)
-    y, envs, info = _hadamard(ψ1, ψ2, alg, out; D = D)
-    return _copyinto!(out, y), envs, info
+    (length(ψ1) == length(ψ2)) ||
+        throw(DimensionMismatch("hadamard requires equal lengths"))
+    all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
+        throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
+    changebond!(out; D = alg.D)
+    envs = HadamardCache(out, ψ1, ψ2, alg.alg_environments)
+    _, info = _compression_sweep!(envs, alg)
+    return _copyinto!(out, envs.bra), envs, info
 end
 
 # ---------------- zip（Hadamard）通道：HadamardCache 与统一引擎方法 ----------------
@@ -242,7 +238,30 @@ function HadamardCache(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalI
                        GL0::Union{Nothing,AbstractArray} = nothing,
                        GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = hadamard_fixedpoints(below, ψ1, ψ2, alg; GL0, GR0)
-    return HadamardCache(below, ψ1, ψ2, GLs, GRs)
+    # 槽位提升到通道标量类型（环境 eltype）：[`_compression_sweep!`](@ref) 对缓存
+    # bra 的原地演化恒在同型算术上进行
+    T = eltype(GLs[1])
+    return HadamardCache(_promote_scalar(T, below), _promote_scalar(T, ψ1),
+                         _promote_scalar(T, ψ2), GLs, GRs)
+end
+
+"""
+    recalculate!(envs::HadamardCache, newbra, [alg_environments]) -> envs
+
+Recompute the `⟨bra|zip(ψ1, ψ2)⟩` fixed points for the updated bra `newbra`
+（因子不变，[`hadamard_fixedpoints`](@ref) 重解），边界 eigsolve 以当前存储的
+`lefts[1]`/`rights[end]` 热启动（对标 MPSKit 的原地 `recalculate!`）。
+`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。
+"""
+function recalculate!(envs::HadamardCache, newbra::CanonicalIMPS,
+                      alg_environments = Defaults.alg_environments())
+    GLs, GRs = hadamard_fixedpoints(newbra, envs.ket1, envs.ket2,
+                                    alg_environments;
+                                    GL0 = envs.lefts[1], GR0 = envs.rights[end])
+    copy!(envs.lefts, GLs)
+    copy!(envs.rights, GRs)
+    envs.bra ≡ newbra || _copyinto!(envs.bra, newbra)
+    return envs
 end
 
 "`leftenv(envs, ℓ)` / `rightenv(envs, ℓ)`：zip 通道环境访问（HadamardCache 的
@@ -312,36 +331,33 @@ function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::Can
 end
 
 # zip 通道的增量环境推进（rank-3 环境）
-function transfer_leftenv!(envs::HadamardCache, x::CanonicalIMPS,
-                           ket2::CanonicalIMPS, ket1::CanonicalIMPS, site::Int)
-    N = length(ket1)
+function transfer_leftenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
+    N = length(envs.ket1)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
-    envs.lefts[ℓ] = _zip_push_left(envs.lefts[ℓm], x.AL[ℓm], ket2.AL[ℓm], ket1.AL[ℓm])
+    envs.lefts[ℓ] = _zip_push_left(envs.lefts[ℓm], x.AL[ℓm], envs.ket2.AL[ℓm],
+                                   envs.ket1.AL[ℓm])
     return envs
 end
 
-function transfer_rightenv!(envs::HadamardCache, x::CanonicalIMPS,
-                            ket2::CanonicalIMPS, ket1::CanonicalIMPS, site::Int)
-    N = length(ket1)
+function transfer_rightenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
+    N = length(envs.ket1)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
-    envs.rights[ℓ] = _zip_push_right(envs.rights[ℓp], ket2.AR[ℓp], ket1.AR[ℓp],
-                                     x.AR[ℓp])
+    envs.rights[ℓ] = _zip_push_right(envs.rights[ℓp], envs.ket2.AR[ℓp],
+                                     envs.ket1.AR[ℓp], x.AR[ℓp])
     return envs
 end
 
 "zip 通道的环境重标定（MPSKit `normalize!` 语义：GR Frobenius 归一、GL[ℓ+1]
 按局部 C 通道 overlap λ 缩放；kron(C2, C1) 从不物化）。"
-function _normalize_ternary_envs!(envs::HadamardCache, x::CanonicalIMPS,
-                                  ket2::CanonicalIMPS, ket1::CanonicalIMPS)
-    N = length(ket1)
+function normalize_envs!(envs::HadamardCache, x::CanonicalIMPS)
+    N = length(envs.ket1)
     for ℓ in 1:N
         GR = envs.rights[ℓ]
         nr = norm(GR)
         nr > 0 && (GR ./= nr)
-        Cnew = _mapC_zip(leftenv(envs, _mod1(ℓ + 1, N)), ket2.C[ℓ], ket1.C[ℓ],
-                         rightenv(envs, ℓ))
+        Cnew = _local_C(envs, ℓ)
         λ = dot(x.C[ℓ], Cnew)
         λ == 0 && error("zip idmrg sweep: local overlap λ = 0 at site $ℓ")
         envs.lefts[_mod1(ℓ + 1, N)] ./= λ
@@ -349,130 +365,33 @@ function _normalize_ternary_envs!(envs::HadamardCache, x::CanonicalIMPS,
     return envs
 end
 
-"zip 通道的最大逐站 Galerkin 残差（语义同 `_galerkin_err(operator::DenseIMPO, ...)`）。"
-function _galerkin_err(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
-                       x::CanonicalIMPS, envs::HadamardCache)
-    N = length(ket1)
+"压缩通道的统一局部映射入口（[`_compression_sweep!`](@ref) 用；全部输入由缓存
+持有）：`_local_AC(envs, ℓ)` 为 site ℓ 的 AC 局部投影、`_local_C(envs, ℓ)` 为
+bond ℓ 的 C 局部投影（zip 通道 = `_mapAC_zip`/`_mapC_zip`）。"
+function _local_AC(envs::HadamardCache, ℓ::Int)
+    return _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
+                      envs.ket2.AC[ℓ], envs.ket1.AC[ℓ])
+end
+
+function _local_C(envs::HadamardCache, ℓ::Int)
+    return _mapC_zip(leftenv(envs, _mod1(ℓ + 1, length(envs.ket1))),
+                     envs.ket2.C[ℓ], envs.ket1.C[ℓ], rightenv(envs, ℓ))
+end
+
+"扫掠 finalize 回调的通道目标（[`_compression_sweep!`](@ref) 用）：zip 通道 =
+ψ2（主指标因子）。"
+_finalize_target(envs::HadamardCache) = envs.ket2
+
+"zip 通道的最大逐站 Galerkin 残差（语义同 `_galerkin(AL, AC_map)`：
+local-map 输出在当前态 `x.AL` 切空间上的正交分量范数）。"
+function calc_galerkin(envs::HadamardCache, x::CanonicalIMPS)
+    N = length(envs.ket1)
     ϵ = 0.0
     for ℓ in 1:N
-        k = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ), ket2.AC[ℓ], ket1.AC[ℓ])
-        ϵ = max(ϵ, _galerkin(x.AL[ℓ], k))
+        ϵ = max(ϵ, _galerkin(x.AL[ℓ], _local_AC(envs, ℓ)))
     end
     return ϵ
 end
 
-"""
-    _zip_vomps_sweeps(ket2, ket1, x0, alg::VOMPS) -> (x, envs, info)
-
-zip（Hadamard）通道的 VOMPS 模板（`hadamard(ψ1, ψ2, alg)` 的引擎；管道与
-mpo·mps/mpo·mpo 版 [`_vomps_sweeps`](@ref) 完全一致）：localupdate
-（`k = _mapAC_zip(...)`、`ĉ = _mapC_zip(...)` → `regauge!`）→ `gauge_step!` →
-热启动环境重解 → 扫掠后检查 Galerkin 残差。乘积因子各自保持规范 ⇒ 无需
-gauge twist，融合 zip 张量从不物化。返回 `(x, envs, info)`，`info` 为
-[`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = [初始残差,
-逐轮 Galerkin 残差...]、`converged` 收敛标志）。
-"""
-function _zip_vomps_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
-                           x0::CanonicalIMPS, alg::VOMPS)
-    N = length(ket1)
-    x = copy(x0)
-    envs = HadamardCache(x, ket1, ket2, alg.alg_environments)
-    # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
-    T = promote_type(scalartype(ket1), eltype(leftenv(envs, 1)))
-    x = _promote_scalar(T, x)
-    # 初始残差（收敛判定在扫掠之后，MPSKit IterativeSolver 语义）
-    ϵ = _galerkin_err(ket2, ket1, x, envs)
-    iter = 0
-    losses = [ϵ]
-    converged = false
-    for outer iter in 1:alg.maxiter
-        # localupdate: per-site local maps + regauge（全部站点对同一批环境；
-        # 候选 AL 与 ket1.AC 同形，eltype 提升到通道标量类型 T）
-        ALs = [similar(ket1.AC[ℓ], T) for ℓ in 1:N]
-        for ℓ in 1:N
-            k = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ), ket2.AC[ℓ], ket1.AC[ℓ])
-            ĉ = _mapC_zip(leftenv(envs, _mod1(ℓ + 1, N)), ket2.C[ℓ], ket1.C[ℓ],
-                          rightenv(envs, ℓ))
-            ALs[ℓ] = regauge!(k, ĉ; alg = alg.alg_orth)
-        end
-        # gauge: restore the global right gauge（动态容差）
-        alg_g = updatetol(alg.alg_gauge, iter - 1, ϵ)
-        gauge_step!(x, ALs, x.C[N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
-        # envs_step!（热启动 + 动态环境容差）
-        alg_envs = updatetol(alg.alg_environments, iter - 1, ϵ)
-        envs = HadamardCache(x, ket1, ket2, alg_envs;
-                             GL0 = envs.lefts[1], GR0 = envs.rights[N])
-        # finalize（逐迭代回调，MPSKit finalize! 语义）
-        x, envs = alg.finalize(iter, x, ket2, envs)
-        ϵ = _galerkin_err(ket2, ket1, x, envs)
-        push!(losses, ϵ)
-        alg.verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
-        if ϵ ≤ alg.tol
-            converged = true
-            break
-        end
-    end
-    _global_normalize!(x)
-    return x, envs, IterativeConvergenceInfo(iter, losses, converged)
-end
-
-"""
-    _zip_idmrg_sweeps(ket2, ket1, x0, alg::IDMRG) -> (x, envs, info)
-
-zip（Hadamard）通道的 IDMRG 模板：Gauss–Seidel 双扫掠 + 即时环境推进 +
-重标定（[`_normalize_ternary_envs!`](@ref) 的 zip 方法）+ C 漂移收敛；随后从
-AR 串重建混合规范、环境对终态重解。返回 `(x, envs, info)`，`info` 为
-[`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = 逐轮中心
-矩阵漂移、`converged` 收敛标志）。
-"""
-function _zip_idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
-                           x0::CanonicalIMPS, alg::IDMRG)
-    N = length(ket1)
-    x = copy(x0)
-    # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
-    envs = HadamardCache(x, ket1, ket2, alg.alg_environments)
-    # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
-    T = promote_type(scalartype(ket1), eltype(leftenv(envs, 1)))
-    x = _promote_scalar(T, x)
-    ϵ = 2 * alg.tol
-    iter = 0
-    losses = Float64[]
-    converged = false
-    for outer iter in 1:alg.maxiter
-        C_old = copy(x.C[0])
-        # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
-        for ℓ in 1:N
-            x.AC[ℓ] = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
-                                 ket2.AC[ℓ], ket1.AC[ℓ])
-            normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg.alg_orth)
-            transfer_leftenv!(envs, x, ket2, ket1, ℓ + 1)
-        end
-        # right to left sweep
-        for ℓ in N:-1:1
-            x.AC[ℓ] = _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
-                                 ket2.AC[ℓ], ket1.AC[ℓ])
-            normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg.alg_orth)
-            transfer_rightenv!(envs, x, ket2, ket1, ℓ - 1)
-        end
-        # 环境重标定
-        _normalize_ternary_envs!(envs, x, ket2, ket1)
-        # 收敛判据：bond 0 中心矩阵漂移
-        ϵ = norm(x.C[0] - C_old)
-        push!(losses, ϵ)
-        alg.verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
-        # finalize（逐迭代回调，MPSKit finalize! 语义）
-        x, envs = alg.finalize(iter, x, ket2, envs)
-        if ϵ < alg.tol
-            converged = true
-            break
-        end
-    end
-    # 规范恢复：从 AR 重建混合规范（容差取 alg_gauge 的动态适配），环境对终态重解
-    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
-    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
-    envs = HadamardCache(x, ket1, ket2, alg.alg_environments)
-    _global_normalize!(x)
-    return x, envs, IterativeConvergenceInfo(iter, losses, converged)
-end
+# zip 通道的统一扫掠引擎（`_compression_sweep!` 的 HadamardCache 方法）与
+# hadamard/hadamard! 的装配见文件前部；OverlapsCache 版本见 compress.jl。

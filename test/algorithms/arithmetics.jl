@@ -87,6 +87,10 @@ end
     end
 end
 
+"严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）。"
+apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
+    CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As))
+
 @testset "mult：结果类型与正则性（含 naive 兜底）" begin
     # 确认点 1：mult 的所有 MPO 输出（精确 / lazy / naive 兜底）一律
     # CanonicalIMPO 且 ismixedcanonical，不得透出 DenseIMPO
@@ -100,7 +104,7 @@ end
     @test Pe isa CanonicalIMPO && ismixedcanonical(Pe) && bonddim(Pe, 1) == 6
     # mpo·mps 精确路径
     ψ = randomimps(T, [2, 2]; D = 3)
-    y = mult(W1, ψ)
+    y = apply_exact(W1, ψ)
     @test y isa CanonicalIMPS && ismixedcanonical(y)
     # lazy 路径
     Pl, _, _ = mult(W1, I2, VOMPS(D = 2))
@@ -131,7 +135,7 @@ end
     @test abs(imag(λs[1])) > 0.9 * abs(λs[1])
 
     # 精确 mult（naive fuse + gaugefix，实通道）：正则且保持实
-    ye = mult(Wo, ψ)
+    ye = apply_exact(Wo, ψ)
     @test ye isa CanonicalIMPS && ismixedcanonical(ye) && scalartype(ye) == Float64
     # VOMPS / IDMRG：复环境通道下不崩溃；结果提升为复（MPSKit 对齐）、
     # 混合正则恒等式严格成立、范数 1
@@ -215,12 +219,10 @@ end
         # mpo·mps（同初态：mult 通道 out1 ≡ compress 通道 envs.bra = out2）
         out1 = randomimps(T, [2, 2]; D = D0)
         out2 = copy(out1)
-        y1, _, i1 = InfiniteMPSAlgorithms._mult(W, ψ, alg, out1; D = D0)
+        y1, _, i1 = mult!(out1, W, ψ, alg)
         ket = CanonicalIMPS(collect(ψraw.As))
         envs2 = OverlapCache(out2, ket, alg.alg_environments)
-        _, i2 = alg isa VOMPS ?
-                InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs2, alg) :
-                InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs2, alg)
+        _, i2 = InfiniteMPSAlgorithms._compression_sweep!(envs2, alg)
         y2 = InfiniteMPSAlgorithms._global_normalize!(envs2.bra)
         @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
@@ -232,12 +234,10 @@ end
         m1 = CanonicalIMPO(collect(randomimpo(T, [2, 2]; D = D0).Ws))
         m2 = copy(m1)
         p0 = m1
-        z1, _, j1 = InfiniteMPSAlgorithms._mult(W, W2, alg, p0; D = D0)
+        z1, _, j1 = mult!(p0, W, W2, alg)
         ketw = CanonicalIMPS(InfiniteMPSAlgorithms.vectorize(Wraw).As)
         envs3 = OverlapCache(vectorize(m2), ketw, alg.alg_environments)
-        _, j2 = alg isa VOMPS ?
-                InfiniteMPSAlgorithms._overlap_vomps_sweeps!(envs3, alg) :
-                InfiniteMPSAlgorithms._overlap_idmrg_sweeps!(envs3, alg)
+        _, j2 = InfiniteMPSAlgorithms._compression_sweep!(envs3, alg)
         z2 = InfiniteMPSAlgorithms.devectorize(envs3.bra)
         @test j1.niter == j2.niter
         w1 = vectorize(z1)
@@ -263,15 +263,15 @@ end
     mp = W1 * DenseIMPS(collect(ψ2.AL))
     @test _dense_trace(collect(hd)) ≈ _dense_trace(collect(mp)) atol = 1e-10
 
-    # 变分层面（内部函数取得迭代数）：
-    # _mult(out, copyphyims(ψ1), ψ2, alg) ≡ _hadamard(out, ψ1, ψ2, alg)
+    # 变分层面（mult! ≡ hadamard!，同初态+同参数 → 同迭代数、终态一致）：
+    # mult!(out, copyphyims(ψ1), ψ2, alg) ≡ hadamard!(out, ψ1, ψ2, alg)
     D0 = 6
     for alg in (VOMPS(D = D0, tol = 1e-12, maxiter = 300),
                 IDMRG(D = D0, tol = 1e-12, maxiter = 300))
         out1 = randomimps(T, [2, 2]; D = D0)
         out2 = copy(out1)
-        y1, _, i1 = InfiniteMPSAlgorithms._mult(W1, ψ2, alg, out1; D = D0)
-        y2, _, i2 = InfiniteMPSAlgorithms._hadamard(ψ1, ψ2, alg, out2; D = D0)
+        y1, _, i1 = mult!(out1, W1, ψ2, alg)
+        y2, _, i2 = hadamard!(out2, ψ1, ψ2, alg)
         @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))

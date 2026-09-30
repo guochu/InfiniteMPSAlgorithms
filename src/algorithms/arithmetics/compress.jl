@@ -4,7 +4,7 @@
 # variational approximation of a *given* chain (the target is the chain itself,
 # unlike add/mult/hadamard whose targets are naive algebraic constructions).
 # The identity-channel engines (`OverlapCache` +
-# `_overlap_vomps_sweeps!`/`_overlap_idmrg_sweeps!`) live at the end of this
+# `_compression_sweep!`) live at the end of this
 # file; the MPO 施加 / zip 通道的引擎（mult.jl / hadamard.jl）共用同一管道。
 
 """
@@ -72,8 +72,7 @@ The second return is the engine's final environments（纯重叠通道的
 """
 function compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
     envs = OverlapCache(svdguess_compress(ψ, alg.D), ψ, alg.alg_environments)
-    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
-                              _overlap_idmrg_sweeps!(envs, alg)
+    _, info = _compression_sweep!(envs, alg)
     x = _global_normalize!(envs.bra)
     return x, envs, info
 end
@@ -86,8 +85,7 @@ function compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG})
     # `vectorize` 逐家族携带规范数据，其 AL 家族正是该 ray 的左正则串。
     ket = vectorize(W)
     envs = OverlapCache(svdguess_compress(W, alg.D), ket, alg.alg_environments)
-    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
-                              _overlap_idmrg_sweeps!(envs, alg)
+    _, info = _compression_sweep!(envs, alg)
     x = _global_normalize!(envs.bra)
     return devectorize(x), envs, info
 end
@@ -95,8 +93,7 @@ end
 function compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG})
     ket = CanonicalIMPS(vectorize(W).As)
     envs = OverlapCache(svdguess_compress(ket, alg.D), ket, alg.alg_environments)
-    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
-                              _overlap_idmrg_sweeps!(envs, alg)
+    _, info = _compression_sweep!(envs, alg)
     x = _global_normalize!(envs.bra)
     return devectorize(x), envs, info
 end
@@ -122,8 +119,7 @@ function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG})
     changebond!(out; D = alg.D)
     envs = OverlapCache(out, ψ, alg.alg_environments)
-    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
-                              _overlap_idmrg_sweeps!(envs, alg)
+    _, info = _compression_sweep!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
@@ -131,8 +127,7 @@ function compress!(out::CanonicalIMPO, W::CanonicalIMPO,
                    alg::Union{VOMPS,IDMRG})
     changebond!(out; D = alg.D)
     envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
-    _, info = alg isa VOMPS ? _overlap_vomps_sweeps!(envs, alg) :
-                              _overlap_idmrg_sweeps!(envs, alg)
+    _, info = _compression_sweep!(envs, alg)
     return _copyinto!(out, devectorize(envs.bra)), envs, info
 end
 
@@ -241,8 +236,7 @@ _copyinto!(out::CanonicalIMPO, y::DenseIMPO) = _copyinto!(out, CanonicalIMPO(col
 
 Environments of the pure overlap channel `⟨bra|ket⟩` (identity channel): the
 left/right fixed points of the double-layer transfer, used by the VOMPS / IDMRG
-compression sweeps of `compress` ([`_overlap_vomps_sweeps!`](@ref) /
-[`_overlap_idmrg_sweeps!`](@ref)).
+compression sweeps of `compress` ([`_compression_sweep!`](@ref)).
 
 - `lefts[ℓ]`: rank-2 `(below bond, above bond)` left environment of site ℓ;
 - `rights[ℓ]`: rank-2 `(above bond, below bond)` right environment of site ℓ;
@@ -260,60 +254,23 @@ struct OverlapCache{B<:CanonicalIMPS,K<:CanonicalIMPS,T} <: CompressionEnvironme
     rights::Vector{Array{T,2}}
 end
 
-"纯重叠通道缓存的站数（bra/ket 的单胞长度）。"
-Base.length(envs::OverlapCache) = length(envs.ket)
+# ---- 纯重叠通道的局部映射（rank-2 `_mapAC`/`_mapC`，与三元/zip 通道的
+# `_mapAC`/`_mapC` 同名分派：环境为 rank-2 矩阵，被作用张量经参数传入） ----
 
-"缓存标量类型（构造器已把 bra/ket/lefts/rights 统一提升）。"
-scalartype(envs::OverlapCache) = scalartype(envs.bra)
-
-# ---- 纯重叠通道的局部映射（Overlap_AC/C_Hamiltonian） ----
-#
-# 接口与 effective.jl 的 MPO_AC/C_Hamiltonian 对齐：只存 leftenv/rightenv，
-# 被作用的局部张量经调用传入——AC_Hamiltonian(site, envs)(ket.AC[site])、
-# C_Hamiltonian(site, envs)(ket.C[site])，线性映射 `h(x) = GL·x·GR`。
-
-"""
-    Overlap_AC_Hamiltonian(leftenv, rightenv)
-    AC_Hamiltonian(site, envs::OverlapCache) -> callable
-
-纯重叠通道 site 站的 AC 局部映射：`h(ketac) = GL·ketac·GR`（被作用对象 =
-`envs.ket.AC[site]`，即对 `ket.AC` 的 Jacobi 投影）。
-"""
-struct Overlap_AC_Hamiltonian{L<:AbstractMatrix,R<:AbstractMatrix}
-    leftenv::L
-    rightenv::R
+"纯重叠通道 site 站的 AC 局部投影：
+`ACnew[aL, p, aR] = GL[aL, bL]·ketac[bL, p, bR]·GR[bR, aR]`。"
+function _mapAC(GL::AbstractMatrix{Tg}, GR::AbstractMatrix{Tgr},
+                ketac::AbstractArray{Tk,3}) where {Tg,Tgr,Tk}
+    @tensor ACnew[aL, p, aR] := GL[aL, bL] * ketac[bL, p, bR] * GR[bR, aR]
+    return ACnew
 end
 
-"""
-    Overlap_C_Hamiltonian(leftenv, rightenv)
-    C_Hamiltonian(site, envs::OverlapCache) -> callable
-
-纯重叠通道 bond site 的 C 局部映射：`h(ketc) = GL·ketc·GR`（被作用对象 =
-`envs.ket.C[site]`，即对 `ket.C` 的 Jacobi 投影）。
-"""
-struct Overlap_C_Hamiltonian{L<:AbstractMatrix,R<:AbstractMatrix}
-    leftenv::L
-    rightenv::R
-end
-
-"AC_Hamiltonian(site, envs) 的装配：`leftenv(envs, site)` 与 `rightenv(envs, site)`。"
-function AC_Hamiltonian(site::Int, envs::OverlapCache)
-    return Overlap_AC_Hamiltonian(leftenv(envs, site), rightenv(envs, site))
-end
-
-"C_Hamiltonian(site, envs) 的装配：`leftenv(envs, site + 1)` 与 `rightenv(envs, site)`。"
-function C_Hamiltonian(site::Int, envs::OverlapCache)
-    return Overlap_C_Hamiltonian(leftenv(envs, site + 1), rightenv(envs, site))
-end
-
-function (h::Overlap_AC_Hamiltonian)(ketac::AbstractArray{T,3}) where {T}
-    @tensor y[aL, p, aR] := h.leftenv[aL, bL] * ketac[bL, p, bR] * h.rightenv[bR, aR]
-    return y
-end
-
-function (h::Overlap_C_Hamiltonian)(ketc::AbstractMatrix{T}) where {T}
-    @tensor y[a, a′] := h.leftenv[a, b] * ketc[b, b′] * h.rightenv[b′, a′]
-    return y
+"纯重叠通道 bond site 的 C 局部投影：
+`Cnew[aL, aR] = GL[aL, bL]·ketc[bL, bR]·GR[bR, aR]`。"
+function _mapC(GL::AbstractMatrix{Tg}, GR::AbstractMatrix{Tgr},
+               ketc::AbstractMatrix{Tk}) where {Tg,Tgr,Tk}
+    @tensor Cnew[aL, aR] := GL[aL, bL] * ketc[bL, bR] * GR[bR, aR]
+    return Cnew
 end
 
 "Identity channel: in the AL/AR gauges the fixed points are identity matrices."
@@ -383,7 +340,7 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS,
     end
     for ℓ in 1:N
         inext = _mod1(ℓ + 1, N)
-        Cnew = Overlap_C_Hamiltonian(GLs[inext], GRs[ℓ])(above.C[ℓ])
+        Cnew = _mapC(GLs[inext], GRs[ℓ], above.C[ℓ])
         λ = dot(below.C[ℓ], Cnew)
         λ == 0 && error("overlap environment: local overlap λ = 0 at site $ℓ")
         GLs[inext] ./= λ
@@ -423,34 +380,31 @@ end
 
 # ---- 纯重叠通道的增量环境推进（IDMRG 扫掠用；rank-2 参数序 (above, below)）----
 
-function transfer_leftenv!(envs::OverlapCache, x::CanonicalIMPS,
-                           ket::CanonicalIMPS, site::Int)
-    N = length(ket)
+function transfer_leftenv!(envs::OverlapCache, x::CanonicalIMPS, site::Int)
+    N = length(envs.ket)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
-    envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], ket.AL[ℓm], x.AL[ℓm])
+    envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], envs.ket.AL[ℓm], x.AL[ℓm])
     return envs
 end
 
-function transfer_rightenv!(envs::OverlapCache, x::CanonicalIMPS,
-                            ket::CanonicalIMPS, site::Int)
-    N = length(ket)
+function transfer_rightenv!(envs::OverlapCache, x::CanonicalIMPS, site::Int)
+    N = length(envs.ket)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
-    envs.rights[ℓ] = push_env_right(envs.rights[ℓp], ket.AR[ℓp], x.AR[ℓp])
+    envs.rights[ℓ] = push_env_right(envs.rights[ℓp], envs.ket.AR[ℓp], x.AR[ℓp])
     return envs
 end
 
 "纯重叠通道的环境重标定（MPSKit `normalize!(envs, below, above)` 语义：GR
 Frobenius 归一、GL[ℓ+1] 按局部 C 通道 overlap λ 缩放）。"
-function normalize_envs!(envs::OverlapCache, x::CanonicalIMPS,
-                         ket::CanonicalIMPS)
-    N = length(ket)
+function normalize_envs!(envs::OverlapCache, x::CanonicalIMPS)
+    N = length(envs.ket)
     for ℓ in 1:N
         GR = envs.rights[ℓ]
         nr = norm(GR)
         nr > 0 && (GR ./= nr)
-        Cnew = C_Hamiltonian(ℓ, envs)(ket.C[ℓ])
+        Cnew = _local_C(envs, ℓ)
         λ = dot(x.C[ℓ], Cnew)
         λ == 0 && error("overlap idmrg sweep: local overlap λ = 0 at site $ℓ")
         envs.lefts[_mod1(ℓ + 1, N)] ./= λ
@@ -458,133 +412,30 @@ function normalize_envs!(envs::OverlapCache, x::CanonicalIMPS,
     return envs
 end
 
-"纯重叠通道的最大逐站 Galerkin 残差（语义同 mult.jl 的
-`_galerkin_err(operator, ket, x, envs)`，无算符插入）。"
-function _galerkin_err(ket::CanonicalIMPS, x::CanonicalIMPS, envs::OverlapCache)
-    N = length(ket)
+"压缩通道的统一局部映射入口（[`_compression_sweep!`](@ref) 用；全部输入由缓存
+持有）：`_local_AC(envs, ℓ)` 为 site ℓ 的 AC 局部投影、`_local_C(envs, ℓ)` 为
+bond ℓ 的 C 局部投影（无算符通道 = rank-2 `_mapAC`/`_mapC`）。"
+_local_AC(envs::OverlapCache, ℓ::Int) =
+    _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), envs.ket.AC[ℓ])
+
+_local_C(envs::OverlapCache, ℓ::Int) =
+    _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs.ket))), rightenv(envs, ℓ),
+          envs.ket.C[ℓ])
+
+"扫掠 finalize 回调的通道目标（[`_compression_sweep!`](@ref) 用）：compress
+通道 = ket。"
+_finalize_target(envs::OverlapCache) = envs.ket
+
+"纯重叠通道的最大逐站 Galerkin 残差（语义同 mult.jl 的 `calc_galerkin`，
+无算符插入）。"
+function calc_galerkin(envs::OverlapCache, x::CanonicalIMPS)
+    N = length(envs.ket)
     ϵ = 0.0
     for ℓ in 1:N
-        ACmap = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])
-        ϵ = max(ϵ, _galerkin(x.AL[ℓ], ACmap))
+        ϵ = max(ϵ, _galerkin(x.AL[ℓ], _local_AC(envs, ℓ)))
     end
     return ϵ
 end
 
-"""
-    _overlap_vomps_sweeps!(envs::OverlapCache, alg::VOMPS) -> (envs, info)
-
-Overlap-maximizing VOMPS sweeps on the pure overlap channel (the operator-free
-branch of MPSKit's `approximate(ψ₀, ϕ, VOMPS())`)：被优化的态即 `envs.bra`
-（构造缓存的初态），目标链为 `envs.ket`——variational compression。
-Jacobi-style rounds, the same `IterativeSolver` pipeline as the mult channel
-([`_vomps_sweeps`](@ref)): `localupdate`（`AC_new = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])`、
-`C_new = C_Hamiltonian(ℓ, envs)(ket.C[ℓ])` → `regauge!`）→ `gauge_step!` →
-`recalculate!` 环境热启动重解 → 扫掠后检查 Galerkin 残差。全部原地：态写回
-`envs.bra`、环境写回 `lefts`/`rights`，返回 `(envs, info)`，`info` 为
-[`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = [初始残差,
-逐轮 Galerkin 残差...]、`converged` 收敛标志）。
-"""
-function _overlap_vomps_sweeps!(envs::OverlapCache, alg::VOMPS)
-    ket = envs.ket
-    x = envs.bra                       # 原地演化的态（缓存 bra 本体）
-    N = length(envs)
-    T = scalartype(envs)
-    # 初始残差（收敛判定在扫掠之后，MPSKit IterativeSolver 语义）
-    ϵ = _galerkin_err(ket, x, envs)
-    iter = 0
-    losses = [ϵ]
-    converged = false
-    for outer iter in 1:alg.maxiter
-        # localupdate: per-site local maps + regauge（全部站点对同一批环境；
-        # 候选 AL 与 ket.AC 同形）
-        ALs = [similar(ket.AC[ℓ], T) for ℓ in 1:N]
-        for ℓ in 1:N
-            AC_new = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])
-            C_new = C_Hamiltonian(ℓ, envs)(ket.C[ℓ])
-            ALs[ℓ] = regauge!(AC_new, C_new; alg = alg.alg_orth)
-        end
-        # gauge: restore the global right gauge（动态容差）
-        alg_g = updatetol(alg.alg_gauge, iter - 1, ϵ)
-        gauge_step!(x, ALs, x.C[N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
-        # envs_step!（bra 更新 + 热启动 + 动态环境容差）
-        alg_envs = updatetol(alg.alg_environments, iter - 1, ϵ)
-        recalculate!(envs, x, alg_envs)
-        # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
-        x, envs = alg.finalize(iter, x, ket, envs)
-        envs.bra ≡ x || _copyinto!(envs.bra, x)
-        x = envs.bra
-        ϵ = _galerkin_err(ket, x, envs)
-        push!(losses, ϵ)
-        alg.verbosity > 0 && _logiter(stdout, "VOMPS", iter, ϵ)
-        if ϵ ≤ alg.tol
-            converged = true
-            break
-        end
-    end
-    _global_normalize!(x)
-    return envs, IterativeConvergenceInfo(iter, losses, converged)
-end
-
-"""
-    _overlap_idmrg_sweeps!(envs::OverlapCache, alg::IDMRG) -> (envs, info)
-
-IDMRG template on the pure overlap channel (the operator-free branch of
-MPSKit's `approximate(ψ₀, ϕ, IDMRG())`)：被优化的态即 `envs.bra`（构造缓存的
-初态），目标链为 `envs.ket`——sequential Gauss–Seidel double sweep with
-on-the-fly environment transfer, `leftorth`/`rightorth` splits of the
-normalized local projections, per-double-sweep environment rescaling
-([`normalize_envs!`](@ref)) and center-matrix-drift convergence
-`ϵ = ‖C₀_new − C₀_old‖`; afterwards the mixed-canonical state is rebuilt from
-the `AR` string and the environments are re-solved for the final state.
-全部原地：态写回 `envs.bra`、环境写回 `lefts`/`rights`，返回 `(envs, info)`，
-`info` 为 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` =
-逐轮中心矩阵漂移、`converged` 收敛标志）。
-"""
-function _overlap_idmrg_sweeps!(envs::OverlapCache, alg::IDMRG)
-    ket = envs.ket
-    x = envs.bra                       # 原地演化的态（缓存 bra 本体）
-    N = length(envs)
-    T = scalartype(envs)
-    ϵ = 2 * alg.tol
-    iter = 0
-    losses = Float64[]
-    converged = false
-    for outer iter in 1:alg.maxiter
-        C_old = copy(x.C[0])
-        # left to right sweep（Gauss–Seidel：环境随扫掠即时推进）
-        for ℓ in 1:N
-            x.AC[ℓ] = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])
-            normalize!(x.AC[ℓ])
-            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg.alg_orth)
-            transfer_leftenv!(envs, x, ket, ℓ + 1)
-        end
-        # right to left sweep
-        for ℓ in N:-1:1
-            x.AC[ℓ] = AC_Hamiltonian(ℓ, envs)(ket.AC[ℓ])
-            normalize!(x.AC[ℓ])
-            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg.alg_orth)
-            transfer_rightenv!(envs, x, ket, ℓ - 1)
-        end
-        # 环境重标定
-        normalize_envs!(envs, x, ket)
-        # 收敛判据：bond 0 中心矩阵漂移
-        ϵ = norm(x.C[0] - C_old)
-        push!(losses, ϵ)
-        alg.verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
-        # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
-        x, envs = alg.finalize(iter, x, ket, envs)
-        envs.bra ≡ x || _copyinto!(envs.bra, x)
-        x = envs.bra
-        if ϵ < alg.tol
-            converged = true
-            break
-        end
-    end
-    # 规范恢复：从 AR 重建混合规范（容差取 alg_gauge 的动态适配），环境对终态重解
-    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
-    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
-                      maxiter = alg_g.maxiter)
-    _global_normalize!(x)
-    recalculate!(envs, x, alg.alg_environments)
-    return envs, IterativeConvergenceInfo(iter, losses, converged)
-end
+# 统一扫掠引擎 `_compression_sweep!`（三个通道共享的 VOMPS/IDMRG 模板）定义在
+# arithmetics/envs.jl（CompressionEnvironments 层次所在处）。
