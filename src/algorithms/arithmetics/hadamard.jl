@@ -4,7 +4,7 @@
 # physical leg shared (kernel `_naive_hadamard_tensor` in states/linalg.jl);
 # the physical dimension is unchanged and the bond dimension becomes the product
 # of the two. The iterative version shares the unified compression sweep engine
-# （[`_compression_sweep!`](@ref) 的 `HadamardCache` 方法，compress.jl）
+# （[`compression_sweeps!`](@ref)，arithmetics/envs.jl）
 # ——乘积因子 (ψ1, ψ2) 直接进入环境/局部映射收缩，融合 zip 张量
 # 从不物化）。The strict compression-free Hadamard
 # product lives in states/linalg.jl (`hadamard(::DenseIMPS, ::DenseIMPS)`);
@@ -19,7 +19,7 @@ the bond dimension `alg.D`: the zip target is consumed in **factorized form**
 fused zip tensors are never materialized) and variationally compressed with
 the positional algorithm object `alg` (VOMPS/IDMRG), starting from the
 deterministic `svdguess_hadamard` initial state（扫掠经
-[`_compression_sweep!`](@ref)）. Convergence is judged by the Galerkin
+[`compression_sweeps!`](@ref)）. Convergence is judged by the Galerkin
 residual alone (no overlap is computed — same contract as `mult`/`compress`).
 
 The second return is the engine's final environments（zip 通道的
@@ -38,7 +38,7 @@ function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG
     # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。
     envs = HadamardCache(svdguess_hadamard(ψ1, ψ2, alg.D), ψ1, ψ2,
                          alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
+    _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
@@ -114,7 +114,7 @@ function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
     changebond!(out; D = alg.D)
     envs = HadamardCache(out, ψ1, ψ2, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
+    _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
@@ -238,7 +238,7 @@ function HadamardCache(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalI
                        GL0::Union{Nothing,AbstractArray} = nothing,
                        GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = hadamard_fixedpoints(below, ψ1, ψ2, alg; GL0, GR0)
-    # 槽位提升到通道标量类型（环境 eltype）：[`_compression_sweep!`](@ref) 对缓存
+    # 槽位提升到通道标量类型（环境 eltype）：[`compression_sweeps!`](@ref) 对缓存
     # bra 的原地演化恒在同型算术上进行
     T = eltype(GLs[1])
     return HadamardCache(_promote_scalar(T, below), _promote_scalar(T, ψ1),
@@ -263,11 +263,6 @@ function recalculate!(envs::HadamardCache, newbra::CanonicalIMPS,
     envs.bra ≡ newbra || _copyinto!(envs.bra, newbra)
     return envs
 end
-
-"`leftenv(envs, ℓ)` / `rightenv(envs, ℓ)`：zip 通道环境访问（HadamardCache 的
-字段为 ket1/ket2，无 ket 槽）。"
-leftenv(envs::HadamardCache, ℓ::Integer) = envs.lefts[_mod1(ℓ, length(envs.ket1))]
-rightenv(envs::HadamardCache, ℓ::Integer) = envs.rights[_mod1(ℓ, length(envs.ket1))]
 
 "zip 通道的 identity 通道固定点（rank-3 环境；环境核与 mult.jl 的
 [`mixed_fixedpoints`](@ref) 统一——左右不动点由 :LM 主本征对经 [`fixedpoint`](@ref)
@@ -332,7 +327,7 @@ end
 
 # zip 通道的增量环境推进（rank-3 环境）
 function transfer_leftenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
-    N = length(envs.ket1)
+    N = length(envs)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
     envs.lefts[ℓ] = _zip_push_left(envs.lefts[ℓm], x.AL[ℓm], envs.ket2.AL[ℓm],
@@ -341,7 +336,7 @@ function transfer_leftenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
 end
 
 function transfer_rightenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
-    N = length(envs.ket1)
+    N = length(envs)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
     envs.rights[ℓ] = _zip_push_right(envs.rights[ℓp], envs.ket2.AR[ℓp],
@@ -352,7 +347,7 @@ end
 "zip 通道的环境重标定（MPSKit `normalize!` 语义：GR Frobenius 归一、GL[ℓ+1]
 按局部 C 通道 overlap λ 缩放；kron(C2, C1) 从不物化）。"
 function normalize_envs!(envs::HadamardCache, x::CanonicalIMPS)
-    N = length(envs.ket1)
+    N = length(envs)
     for ℓ in 1:N
         GR = envs.rights[ℓ]
         nr = norm(GR)
@@ -365,7 +360,7 @@ function normalize_envs!(envs::HadamardCache, x::CanonicalIMPS)
     return envs
 end
 
-"压缩通道的统一局部映射入口（[`_compression_sweep!`](@ref) 用；全部输入由缓存
+"压缩通道的统一局部映射入口（[`compression_sweeps!`](@ref) 用；全部输入由缓存
 持有）：`_local_AC(envs, ℓ)` 为 site ℓ 的 AC 局部投影、`_local_C(envs, ℓ)` 为
 bond ℓ 的 C 局部投影（zip 通道 = `_mapAC_zip`/`_mapC_zip`）。"
 function _local_AC(envs::HadamardCache, ℓ::Int)
@@ -374,18 +369,18 @@ function _local_AC(envs::HadamardCache, ℓ::Int)
 end
 
 function _local_C(envs::HadamardCache, ℓ::Int)
-    return _mapC_zip(leftenv(envs, _mod1(ℓ + 1, length(envs.ket1))),
+    return _mapC_zip(leftenv(envs, _mod1(ℓ + 1, length(envs))),
                      envs.ket2.C[ℓ], envs.ket1.C[ℓ], rightenv(envs, ℓ))
 end
 
-"扫掠 finalize 回调的通道目标（[`_compression_sweep!`](@ref) 用）：zip 通道 =
+"扫掠 finalize 回调的通道目标（[`compression_sweeps!`](@ref) 用）：zip 通道 =
 ψ2（主指标因子）。"
 _finalize_target(envs::HadamardCache) = envs.ket2
 
 "zip 通道的最大逐站 Galerkin 残差（语义同 `_galerkin(AL, AC_map)`：
 local-map 输出在当前态 `x.AL` 切空间上的正交分量范数）。"
 function calc_galerkin(envs::HadamardCache, x::CanonicalIMPS)
-    N = length(envs.ket1)
+    N = length(envs)
     ϵ = 0.0
     for ℓ in 1:N
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], _local_AC(envs, ℓ)))
@@ -393,5 +388,5 @@ function calc_galerkin(envs::HadamardCache, x::CanonicalIMPS)
     return ϵ
 end
 
-# zip 通道的统一扫掠引擎（`_compression_sweep!` 的 HadamardCache 方法）与
+# zip 通道的统一扫掠引擎（`compression_sweeps!` 的 HadamardCache 方法）与
 # hadamard/hadamard! 的装配见文件前部；OverlapsCache 版本见 compress.jl。

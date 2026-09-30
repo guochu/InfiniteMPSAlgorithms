@@ -23,10 +23,17 @@ Abstract supertype of the left/right fixed-point environments of
 InfiniteEnvironments); concrete types: [`DMRGCache`](@ref) (Hamiltonian
 channel), [`MultCache`](@ref) (MPO application), [`OverlapCache`](@ref)
 (pure overlap) and [`HadamardCache`](@ref) (zip product).
+
+**`length` 契约**：每个子类必须定义 `Base.length(envs)` = 环境的单胞长度 =
+输入态/算符单胞长度的最小公倍数（环境数组 `lefts`/`rights` 的元素个数、以及
+该通道输出的量 `out` 的长度都等于这个数）；`leftenv`/`rightenv` 以它为周期
+取模循环站点指标。
 """
 abstract type Environments end
 
-"leftenv(envs, ℓ): the left environment of site ℓ."
-leftenv(envs::Environments, ℓ::Integer) = envs.lefts[_mod1(ℓ, length(envs.ket))]
-"rightenv(envs, ℓ): the right environment of site ℓ."
-rightenv(envs::Environments, ℓ::Integer) = envs.rights[_mod1(ℓ, length(envs.ket))]
+"leftenv(envs, ℓ): the left environment of site ℓ（以 `length(envs)` 为周期
+取模循环）。"
+leftenv(envs::Environments, ℓ::Integer) = envs.lefts[_mod1(ℓ, length(envs))]
+"rightenv(envs, ℓ): the right environment of site ℓ（以 `length(envs)` 为
+周期取模循环）。"
+rightenv(envs::Environments, ℓ::Integer) = envs.rights[_mod1(ℓ, length(envs))]

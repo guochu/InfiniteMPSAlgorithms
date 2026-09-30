@@ -222,8 +222,8 @@ end
         y1, _, i1 = mult!(out1, W, ψ, alg)
         ket = CanonicalIMPS(collect(ψraw.As))
         envs2 = OverlapCache(out2, ket, alg.alg_environments)
-        _, i2 = InfiniteMPSAlgorithms._compression_sweep!(envs2, alg)
-        y2 = InfiniteMPSAlgorithms._global_normalize!(envs2.bra)
+        _, i2 = InfiniteMPSAlgorithms.compression_sweeps!(envs2, alg)
+        y2 = envs2.bra                                                     # 引擎已归一化
         @test i1.niter == i2.niter
         v1 = vec(_dense_mps_repr(y1))
         v2 = vec(_dense_mps_repr(y2))
@@ -237,7 +237,7 @@ end
         z1, _, j1 = mult!(p0, W, W2, alg)
         ketw = CanonicalIMPS(InfiniteMPSAlgorithms.vectorize(Wraw).As)
         envs3 = OverlapCache(vectorize(m2), ketw, alg.alg_environments)
-        _, j2 = InfiniteMPSAlgorithms._compression_sweep!(envs3, alg)
+        _, j2 = InfiniteMPSAlgorithms.compression_sweeps!(envs3, alg)
         z2 = InfiniteMPSAlgorithms.devectorize(envs3.bra)
         @test j1.niter == j2.niter
         w1 = vectorize(z1)

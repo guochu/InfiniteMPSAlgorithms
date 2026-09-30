@@ -169,6 +169,10 @@ struct DMRGCache{H<:Union{SparseIMPO,DenseIMPO},K<:CanonicalIMPS,T} <: Environme
     rights::Vector{Array{T,3}}
 end
 
+"哈密顿量通道缓存的站数（`Environments` 的 `length` 契约）：ket 的单胞长度——
+operator 的单胞长度恒为其因子（N 是它的倍数），故最小公倍数 = `length(envs.ket)`。"
+Base.length(envs::DMRGCache) = length(envs.ket)
+
 """
     DMRGCache(ψ, W::DenseIMPO; kwargs...) -> DMRGCache
 

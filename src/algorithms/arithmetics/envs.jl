@@ -7,7 +7,9 @@
 
 abstract type CompressionEnvironments <: Environments end
 
-"压缩通道缓存的站数（bra/ket 的单胞长度）。"
+"压缩通道缓存的站数（`Environments` 的 `length` 契约）：输入单胞长度的最小
+公倍数——构造时已保证 bra 与 ket 同长、operator（若存在）长度为其因子，故
+= `length(envs.bra)`。"
 Base.length(envs::CompressionEnvironments) = length(envs.bra)
 
 "压缩通道缓存标量类型（环境张量的实际 eltype——实输入下复提升后的通道算术
@@ -17,7 +19,7 @@ scalartype(envs::CompressionEnvironments) = eltype(envs.lefts[1])
 # ---------------- 统一压缩扫掠引擎（compress / mult / hadamard 共用） ----------------
 
 """
-    _compression_sweep!(envs::CompressionEnvironments, alg::VOMPS) -> (envs, info)
+    compression_sweeps!(envs::CompressionEnvironments, alg::VOMPS) -> (envs, info)
 
 压缩通道的统一变分扫掠引擎（`compress`/`mult`/`hadamard` 及其 in-place 版本的
 共享底层；MPSKit `approximate` 的 `IterativeSolver` 管道）：被优化的态即
@@ -28,9 +30,10 @@ zip(ket1, ket2)。`alg::VOMPS` 跑 Jacobi 式 ALS 轮：`localupdate`
 环境热启动重解 → 扫掠后检查 Galerkin 残差。全部原地：态写回 `envs.bra`、
 环境写回 `lefts`/`rights`，返回 `(envs, info)`，`info` 为
 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = [初始残差,
-逐轮 Galerkin 残差...]、`converged` 收敛标志）。
+逐轮 Galerkin 残差...]、`converged` 收敛标志）。返回时 `envs.bra` 已按包约定
+归一化且处于混合规范——调用方无需再做任何收尾。
 """
-function _compression_sweep!(envs::CompressionEnvironments, alg::VOMPS)
+function compression_sweeps!(envs::CompressionEnvironments, alg::VOMPS)
     x = envs.bra                       # 原地演化的态（缓存 bra 本体）
     N = length(envs)
     T = scalartype(envs)
@@ -70,7 +73,7 @@ function _compression_sweep!(envs::CompressionEnvironments, alg::VOMPS)
 end
 
 """
-    _compression_sweep!(envs::CompressionEnvironments, alg::IDMRG) -> (envs, info)
+    compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG) -> (envs, info)
 
 统一扫掠引擎的 IDMRG 模板（MPSKit `approximate(ψ₀, ..., IDMRG())`）：sequential
 Gauss–Seidel double sweep with on-the-fly environment transfer
@@ -83,9 +86,10 @@ rebuilt from the `AR` string（[`_rebuild`](@ref)，容差取 `alg_gauge` 的动
 ([`recalculate!`](@ref))。全部原地：态写回 `envs.bra`、环境写回
 `lefts`/`rights`，返回 `(envs, info)`，`info` 为
 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = 逐轮中心
-矩阵漂移、`converged` 收敛标志）。
+矩阵漂移、`converged` 收敛标志）。返回时 `envs.bra` 已按包约定归一化且处于
+混合规范——调用方无需再做任何收尾。
 """
-function _compression_sweep!(envs::CompressionEnvironments, alg::IDMRG)
+function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
     x = envs.bra                       # 原地演化的态（缓存 bra 本体）
     N = length(envs)
     ϵ = 2 * alg.tol

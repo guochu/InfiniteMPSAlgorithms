@@ -3,9 +3,9 @@
 # Find `out ≈ x` with `max_bonddim(out) = D`: the overlap-maximizing
 # variational approximation of a *given* chain (the target is the chain itself,
 # unlike add/mult/hadamard whose targets are naive algebraic constructions).
-# The identity-channel engines (`OverlapCache` +
-# `_compression_sweep!`) live at the end of this
-# file; the MPO 施加 / zip 通道的引擎（mult.jl / hadamard.jl）共用同一管道。
+# The identity-channel engine (`OverlapCache` + `compression_sweeps!`) is
+# defined in arithmetics/envs.jl；MPO 施加 / zip 通道的引擎（mult.jl /
+# hadamard.jl）共用同一管道。
 
 """
     svdguess_compress(x, D) -> CanonicalIMPS
@@ -72,9 +72,8 @@ The second return is the engine's final environments（纯重叠通道的
 """
 function compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
     envs = OverlapCache(svdguess_compress(ψ, alg.D), ψ, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
-    x = _global_normalize!(envs.bra)
-    return x, envs, info
+    _, info = compression_sweeps!(envs, alg)
+    return envs.bra, envs, info
 end
 
 function compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG})
@@ -85,17 +84,15 @@ function compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG})
     # `vectorize` 逐家族携带规范数据，其 AL 家族正是该 ray 的左正则串。
     ket = vectorize(W)
     envs = OverlapCache(svdguess_compress(W, alg.D), ket, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
-    x = _global_normalize!(envs.bra)
-    return devectorize(x), envs, info
+    _, info = compression_sweeps!(envs, alg)
+    return devectorize(envs.bra), envs, info
 end
 
 function compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG})
     ket = CanonicalIMPS(vectorize(W).As)
     envs = OverlapCache(svdguess_compress(ket, alg.D), ket, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
-    x = _global_normalize!(envs.bra)
-    return devectorize(x), envs, info
+    _, info = compression_sweeps!(envs, alg)
+    return devectorize(envs.bra), envs, info
 end
 
 "Variational compression of a raw strict-algebra result
@@ -119,7 +116,7 @@ function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS,
                    alg::Union{VOMPS,IDMRG})
     changebond!(out; D = alg.D)
     envs = OverlapCache(out, ψ, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
+    _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
@@ -127,7 +124,7 @@ function compress!(out::CanonicalIMPO, W::CanonicalIMPO,
                    alg::Union{VOMPS,IDMRG})
     changebond!(out; D = alg.D)
     envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
+    _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, devectorize(envs.bra)), envs, info
 end
 
@@ -236,7 +233,7 @@ _copyinto!(out::CanonicalIMPO, y::DenseIMPO) = _copyinto!(out, CanonicalIMPO(col
 
 Environments of the pure overlap channel `⟨bra|ket⟩` (identity channel): the
 left/right fixed points of the double-layer transfer, used by the VOMPS / IDMRG
-compression sweeps of `compress` ([`_compression_sweep!`](@ref)).
+compression sweeps of `compress` ([`compression_sweeps!`](@ref)).
 
 - `lefts[ℓ]`: rank-2 `(below bond, above bond)` left environment of site ℓ;
 - `rights[ℓ]`: rank-2 `(above bond, below bond)` right environment of site ℓ;
@@ -381,7 +378,7 @@ end
 # ---- 纯重叠通道的增量环境推进（IDMRG 扫掠用；rank-2 参数序 (above, below)）----
 
 function transfer_leftenv!(envs::OverlapCache, x::CanonicalIMPS, site::Int)
-    N = length(envs.ket)
+    N = length(envs)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
     envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], envs.ket.AL[ℓm], x.AL[ℓm])
@@ -389,7 +386,7 @@ function transfer_leftenv!(envs::OverlapCache, x::CanonicalIMPS, site::Int)
 end
 
 function transfer_rightenv!(envs::OverlapCache, x::CanonicalIMPS, site::Int)
-    N = length(envs.ket)
+    N = length(envs)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
     envs.rights[ℓ] = push_env_right(envs.rights[ℓp], envs.ket.AR[ℓp], x.AR[ℓp])
@@ -399,7 +396,7 @@ end
 "纯重叠通道的环境重标定（MPSKit `normalize!(envs, below, above)` 语义：GR
 Frobenius 归一、GL[ℓ+1] 按局部 C 通道 overlap λ 缩放）。"
 function normalize_envs!(envs::OverlapCache, x::CanonicalIMPS)
-    N = length(envs.ket)
+    N = length(envs)
     for ℓ in 1:N
         GR = envs.rights[ℓ]
         nr = norm(GR)
@@ -412,24 +409,24 @@ function normalize_envs!(envs::OverlapCache, x::CanonicalIMPS)
     return envs
 end
 
-"压缩通道的统一局部映射入口（[`_compression_sweep!`](@ref) 用；全部输入由缓存
+"压缩通道的统一局部映射入口（[`compression_sweeps!`](@ref) 用；全部输入由缓存
 持有）：`_local_AC(envs, ℓ)` 为 site ℓ 的 AC 局部投影、`_local_C(envs, ℓ)` 为
 bond ℓ 的 C 局部投影（无算符通道 = rank-2 `_mapAC`/`_mapC`）。"
 _local_AC(envs::OverlapCache, ℓ::Int) =
     _mapAC(leftenv(envs, ℓ), rightenv(envs, ℓ), envs.ket.AC[ℓ])
 
 _local_C(envs::OverlapCache, ℓ::Int) =
-    _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs.ket))), rightenv(envs, ℓ),
+    _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs))), rightenv(envs, ℓ),
           envs.ket.C[ℓ])
 
-"扫掠 finalize 回调的通道目标（[`_compression_sweep!`](@ref) 用）：compress
+"扫掠 finalize 回调的通道目标（[`compression_sweeps!`](@ref) 用）：compress
 通道 = ket。"
 _finalize_target(envs::OverlapCache) = envs.ket
 
 "纯重叠通道的最大逐站 Galerkin 残差（语义同 mult.jl 的 `calc_galerkin`，
 无算符插入）。"
 function calc_galerkin(envs::OverlapCache, x::CanonicalIMPS)
-    N = length(envs.ket)
+    N = length(envs)
     ϵ = 0.0
     for ℓ in 1:N
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], _local_AC(envs, ℓ)))
@@ -437,5 +434,5 @@ function calc_galerkin(envs::OverlapCache, x::CanonicalIMPS)
     return ϵ
 end
 
-# 统一扫掠引擎 `_compression_sweep!`（三个通道共享的 VOMPS/IDMRG 模板）定义在
+# 统一扫掠引擎 `compression_sweeps!`（三个通道共享的 VOMPS/IDMRG 模板）定义在
 # arithmetics/envs.jl（CompressionEnvironments 层次所在处）。

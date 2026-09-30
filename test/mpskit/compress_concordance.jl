@@ -2,7 +2,7 @@
 # compress ↔ MPSKit.approximate 严格对齐测试
 #
 # MPSKit 0.13 的 approximate（VOMPS / IDMRG，src/algorithms/approximate/）
-# 与本包 compress（经 _compression_sweep!）的逐步对齐：
+# 与本包 compress（经 compression_sweeps!）的逐步对齐：
 # - 相同的随机目标态与随机初态（同一组张量，两包各持独立副本）；
 # - 完全相同的算法参数（tol / maxiter）；
 # - VOMPS / IDMRG：逐迭代对比（maxiter = k、tol = 0 强制两包都恰好跑 k 轮）；
@@ -71,19 +71,19 @@ function _mpskit_converged_iter(algmk, tol)
     return hi, ϕ
 end
 
-"本包 `_compression_sweep!`（VOMPS）恰好跑 k 轮的压缩结果。"
+"本包 `compression_sweeps!`（VOMPS）恰好跑 k 轮的压缩结果。"
 function _ours_vomps(ψ, x0, k)
     alg = VOMPS(D = D0, tol = 0.0, maxiter = k)
     envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
-    InfiniteMPSAlgorithms._compression_sweep!(envs, alg)
+    InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
     return envs.bra
 end
 
-"本包 `_compression_sweep!`（IDMRG）恰好跑 k 轮的压缩结果。"
+"本包 `compression_sweeps!`（IDMRG）恰好跑 k 轮的压缩结果。"
 function _ours_idmrg(ψ, x0, k)
     alg = IDMRG(D = D0, tol = 0.0, maxiter = k)
     envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
-    InfiniteMPSAlgorithms._compression_sweep!(envs, alg)
+    InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
     return envs.bra
 end
 
@@ -112,7 +112,7 @@ end
     tol = 1.0e-10
     alg = VOMPS(D = D0, tol = tol, maxiter = 500)
     envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
-    _, info = InfiniteMPSAlgorithms._compression_sweep!(envs, alg)
+    _, info = InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
     y = envs.bra
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.VOMPS, tol)
     @test info.niter == mk_iter
@@ -123,7 +123,7 @@ end
     tol = 1.0e-10
     alg = IDMRG(D = D0, tol = tol, maxiter = 500)
     envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
-    _, info = InfiniteMPSAlgorithms._compression_sweep!(envs, alg)
+    _, info = InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
     y = envs.bra
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
     @test info.niter == mk_iter
@@ -145,12 +145,11 @@ end
         ket = CanonicalIMPS(vectorize(W).As)
         envs = OverlapCache(x0w, ket, alg.alg_environments)
         if alg isa VOMPS
-            InfiniteMPSAlgorithms._compression_sweep!(envs, alg)
+            InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
         else
-            InfiniteMPSAlgorithms._compression_sweep!(envs, alg)
+            InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
         end
-        y = InfiniteMPSAlgorithms._global_normalize!(envs.bra)
-        y = devectorize(y)                                                  # CanonicalIMPO
+        y = devectorize(envs.bra)                                           # CanonicalIMPO
         ϕ = MPSKit.approximate(mkinfinitemps(x0w), (Imkw, Wmk),
                                algmk(; tol = 1.0e-12, maxiter = 300,
                                      verbosity = 0))[1]

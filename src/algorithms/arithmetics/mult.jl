@@ -157,7 +157,7 @@ function MultCache(below::CanonicalIMPS, operator::Union{DenseIMPO,CanonicalIMPO
     # 规范化，envs/局部映射/C 通道全程消费同一规范化算符
     Wc = operator isa CanonicalIMPO ? operator : CanonicalIMPO(collect(operator.Ws))
     GLs, GRs = mixed_fixedpoints(below, Wc, above, alg; GL0, GR0)
-    # 槽位提升到通道标量类型（环境 eltype）：[`_compression_sweep!`](@ref) 对缓存
+    # 槽位提升到通道标量类型（环境 eltype）：[`compression_sweeps!`](@ref) 对缓存
     # bra 的原地演化恒在同型算术上进行
     T = eltype(GLs[1])
     return MultCache(_promote_scalar(T, Wc), _promote_scalar(T, below),
@@ -283,7 +283,7 @@ function _galerkin(AL::AbstractArray{Ta,3}, ACnew::AbstractArray{Tb,3}) where {T
     return norm(out)
 end
 
-"压缩通道的统一局部映射入口（[`_compression_sweep!`](@ref) 用；全部输入由缓存
+"压缩通道的统一局部映射入口（[`compression_sweeps!`](@ref) 用；全部输入由缓存
 持有，mpo·mps / mpo·mpo 两通道靠 ket 槽的秩分派统一）：`_local_AC(envs, ℓ)` 为
 site ℓ 的 AC 局部投影、`_local_C(envs, ℓ)` 为 bond ℓ 的 C 局部投影。"
 function _local_AC(envs::MultCache, ℓ::Int)
@@ -292,11 +292,11 @@ function _local_AC(envs::MultCache, ℓ::Int)
 end
 
 function _local_C(envs::MultCache, ℓ::Int)
-    return _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs.ket))), rightenv(envs, ℓ),
+    return _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs))), rightenv(envs, ℓ),
                  envs.ket.C[ℓ], envs.operator.C[_mod1(ℓ, length(envs.operator))])
 end
 
-"扫掠 finalize 回调的通道目标（[`_compression_sweep!`](@ref) 用）：mult 通道 =
+"扫掠 finalize 回调的通道目标（[`compression_sweeps!`](@ref) 用）：mult 通道 =
 operator。"
 _finalize_target(envs::MultCache) = envs.operator
 
@@ -305,7 +305,7 @@ _finalize_target(envs::MultCache) = envs.operator
 local-map 输出在当前态 `x.AL` 切空间上的正交分量范数)。mpo·mps / mpo·mpo
 两通道由 `_local_AC` 的秩分派统一。"
 function calc_galerkin(envs::MultCache, x::Union{CanonicalIMPS,CanonicalIMPO})
-    N = length(envs.ket)
+    N = length(envs)
     ϵ = 0.0
     for ℓ in 1:N
         ϵ = max(ϵ, _galerkin(x.AL[ℓ], _local_AC(envs, ℓ)))
@@ -320,7 +320,7 @@ end
 # 秩分派统一).
 function transfer_leftenv!(envs::MultCache,
                            x::Union{CanonicalIMPS,CanonicalIMPO}, site::Int)
-    N = length(envs.ket)
+    N = length(envs)
     ℓ = _mod1(site, N)
     ℓm = _mod1(site - 1, N)
     envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], x.AL[ℓm],
@@ -331,7 +331,7 @@ end
 
 function transfer_rightenv!(envs::MultCache,
                             x::Union{CanonicalIMPS,CanonicalIMPO}, site::Int)
-    N = length(envs.ket)
+    N = length(envs)
     ℓ = _mod1(site, N)
     ℓp = _mod1(site + 1, N)
     envs.rights[ℓ] = push_env_right(envs.rights[ℓp], envs.ket.AR[ℓp],
@@ -346,7 +346,7 @@ scaled by `inv(λ)` with the local C-channel overlap
 `λ = ⟨x.C[ℓ], C_map(ℓ)⟩`（C 通道恢复算符的 C 权重，与 envs 的规范家族约定
 配套）。"
 function normalize_envs!(envs::MultCache, x::Union{CanonicalIMPS,CanonicalIMPO})
-    N = length(envs.ket)
+    N = length(envs)
     for ℓ in 1:N
         GR = envs.rights[ℓ]
         nr = norm(GR)
@@ -505,9 +505,8 @@ memory is O(single site) in both cases. Applying a time-evolution MPO is
   continues in complex arithmetic, so the result may be complex-valued.
 
 The second return is the engine's final environments（mpo·mps / mpo·mpo 通道的
-[`MultCache`](@ref)，对返回态的射线解出——mpo·mps 的返回态经 `CanonicalIMPS(y.AL,
-y.C[end])` 重右正则化，envs 与其规范代表可能有规范差但同射线）; the third
-return is the [`IterativeConvergenceInfo`](@ref)
+[`MultCache`](@ref)，对返回态 `envs.bra` 的射线解出，envs 与其规范代表可能有
+规范差但同射线）; the third return is the [`IterativeConvergenceInfo`](@ref)
 （`niter` 扫掠轮数、`losses` 逐轮残差/漂移、`converged` 收敛标志）。
 """
 function mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
@@ -515,13 +514,11 @@ function mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
     (length(ψ) % length(Wm) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     # MPO-channel VOMPS/IDMRG (compute-on-the-fly, no naive target family)：
-    # 初态 = [`svdguess_mult`](@ref)，扫掠经 [`_compression_sweep!`](@ref)
+    # 初态 = [`svdguess_mult`](@ref)，扫掠经 [`compression_sweeps!`](@ref)
     envs = MultCache(svdguess_mult(Wm, ψ, alg.D), Wm, ψ, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
-    # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
-    # (preserving the ray), then normalize to the package norm convention
-    y = CanonicalIMPS(collect(envs.bra.AL), envs.bra.C[end])
-    return _global_normalize!(y), envs, info
+    _, info = compression_sweeps!(envs, alg)
+    # 引擎收尾已保证 envs.bra 处于混合规范且按包约定归一化，直接返回其本体
+    return envs.bra, envs, info
 end
 
 function mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG})
@@ -536,7 +533,7 @@ function mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG})
     W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
     envs = MultCache(devectorize(svdguess_mult(Wm, W2m, alg.D)), W1c, W2c,
                      alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
+    _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
@@ -645,11 +642,8 @@ function mult!(out::CanonicalIMPS, W, ψ::CanonicalIMPS,
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     changebond!(out; D = alg.D)
     envs = MultCache(out, Wm, ψ, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
-    # guarantee the mixed canonical form: re-right-canonicalize from AL + C[end]
-    # (preserving the ray), then normalize to the package norm convention
-    y = CanonicalIMPS(collect(envs.bra.AL), envs.bra.C[end])
-    return _copyinto!(out, _global_normalize!(y)), envs, info
+    _, info = compression_sweeps!(envs, alg)
+    return _copyinto!(out, envs.bra), envs, info
 end
 
 "Raw-ket variant: `mult!` of a strict-algebra input (`W * DenseIMPS`, not yet
@@ -669,6 +663,6 @@ function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO},
     W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
     changebond!(out; D = alg.D)
     envs = MultCache(out, W1c, W2c, alg.alg_environments)
-    _, info = _compression_sweep!(envs, alg)
+    _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end

@@ -257,6 +257,45 @@ end
     @test contract_mpo_expval(ψ.AC[1], GL, I1[1], GR) ≈ norm(ψ.AC[1])^2 atol = 1e-10
 end
 
+@testset "Environments length 契约：length(envs) = 输入单胞的 lcm，输出量同长" begin
+    T = ComplexF64
+    Random.seed!(25)
+    # N = 2 的链 × L = 1 的算符 ⇒ 环境单胞 = lcm(2, 1) = 2
+    ψ2 = randomimps(T, [2, 2]; D = 4)
+    I1 = identityimpo(T, [2])                # L = 1 的恒等 MPO
+    H1 = tfim_hamiltonian(T = T)             # L = 1 的 SparseIMPO
+
+    # 四个具体缓存：length = 输入单胞的最小公倍数，环境数组与它同长
+    envsH = DMRGCache(ψ2, H1)
+    envsO = OverlapCache(ψ2, ψ2)
+    envsM = MultCache(ψ2, I1, ψ2)
+    envsZ = InfiniteMPSAlgorithms.HadamardCache(ψ2, ψ2, ψ2)
+    @test length(envsH) == length(envsO) == length(envsM) == length(envsZ) == 2
+    for envs in (envsH, envsO, envsM, envsZ)
+        @test length(envs.lefts) == length(envs.rights) == length(envs)
+    end
+    # 同单胞输入（N = L）不放大；N = 1 链的环境单胞为 1
+    @test length(DMRGCache(ψ2, identityimpo(T, [2, 2]))) == 2
+    ψ1 = randomimps(T, [2]; D = 4)
+    @test length(OverlapCache(ψ1, ψ1)) == 1
+
+    # leftenv / rightenv 以 length(envs) 为周期取模循环
+    @test leftenv(envsH, 3) === leftenv(envsH, 1)
+    @test rightenv(envsH, 0) === rightenv(envsH, 2)
+    @test leftenv(envsM, 3) === leftenv(envsM, 1)
+    @test rightenv(envsM, 0) === rightenv(envsM, 2)
+
+    # 通道输出量的长度 = 环境单胞 = lcm：
+    # mult（mpo·mps → 态）、mult（mpo·mpo → 算符）、compress（态）
+    y, envsY, _ = mult(I1, ψ2, VOMPS(D = 4, maxiter = 50, tol = 1e-10))
+    @test length(y) == length(envsY) == 2
+    W2 = randomimpo(T, [2, 2]; D = 2)
+    yW, envsW, _ = mult(I1, W2, VOMPS(D = 2, maxiter = 50, tol = 1e-10))
+    @test length(yW) == length(envsW) == 2
+    yc, envsC, _ = compress(ψ2, VOMPS(D = 3, maxiter = 50, tol = 1e-10))
+    @test length(yc) == length(envsC) == 2
+end
+
 @testset "DenseIMPO 构造、周期下标与标量代数" begin
     T = ComplexF64
     Random.seed!(31)

@@ -1,5 +1,31 @@
 # 变更记录（接口）
 
+## 2026-09-30 扫掠引擎改名 `compression_sweeps!`；`Environments` 的 `length` 契约
+
+- `_compression_sweep!` 改名 **`compression_sweeps!`**（无下划线前缀；两个泛型
+  方法 `(envs::CompressionEnvironments, alg::Union{VOMPS,IDMRG}) -> (envs,
+  info)` 不变）。引擎收尾已保证 `envs.bra` 按包约定归一化且处于混合规范，
+  公开层不再重复收尾：`mult`（mpo·mps）删除返回前的
+  `CanonicalIMPS(y.AL, y.C[end])` 重右正则化 + `_global_normalize!`，直接返回
+  `envs.bra` 本体；`mult!`（mpo·mps）相应改为 `_copyinto!(out, envs.bra)`；
+  `compress`/`compress!`/`hadamard`/`hadamard!`/`mult`（mpo·mpo）此前已直连
+  引擎，仅随改名；
+- **`Environments` 的 `length` 契约**：每个子类必须定义
+  `Base.length(envs)` = 环境的单胞长度 = 输入态/算符单胞长度的**最小公倍数**
+  （环境数组 `lefts`/`rights` 的元素个数、以及该通道输出量 `out` 的长度都
+  等于这个数）；泛型 `leftenv`/`rightenv` 的取模周期从 `length(envs.ket)` 改
+  为 `length(envs)`（environments.jl），各缓存方法内部的
+  `length(envs.ket)`/`length(envs.ket1)` 统一为 `length(envs)`；
+  `HadamardCache` 的 `leftenv`/`rightenv` 覆盖删除（泛型方法已覆盖）；
+  `DMRGCache` 补 `Base.length(envs) = length(envs.ket)`（operator 单胞恒为
+  ket 的因子，lcm = `length(ket)`）；`CompressionEnvironments` 的泛型
+  `length`（= `length(envs.bra)`）即 lcm 契约的实现（构造时已保证 bra/ket
+  同长、operator 长度为其因子）；
+- 测试固化该行为（test/algorithms/api.jl 新增 testset）：四个具体缓存
+  （DMRGCache/OverlapCache/MultCache/HadamardCache，N=2 链 × L=1 算符 ⇒
+  length = 2）、环境数组同长、N=L 不放大、N=1 为 1、`leftenv`/`rightenv`
+  以 `length(envs)` 为周期取模、mult/compress 输出量长度 = 环境单胞。
+
 ## 2026-09-29 重叠通道局部映射回归 `_mapAC`/`_mapC`；删严格 `mult(W, ψ)`；`calc_galerkin` 改名；`_compression_sweep!` 移入 envs.jl
 
 - 删除 `Overlap_AC_Hamiltonian`/`Overlap_C_Hamiltonian` 及其装配入口
