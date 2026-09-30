@@ -35,7 +35,7 @@ Each iteration (MPSKit template):
 end
 
 """
-    IDMRG(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_eigsolve,
+    IDMRG(; D = Defaults.D, tol, maxiter, verbosity, alg_environments, alg_eigsolve,
           alg_orth, finalize)
 
 Single-site infinite DMRG (mirrors MPSKit's `IDMRG`). `D` (Int, default
@@ -59,15 +59,19 @@ Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 `InfiniteMPS(mps.AR)`) and the environments are recomputed.
 
 `alg_orth`（正交分解 `leftorth`/`rightorth` 的因式化算法）随 `alg` 传入各
-IDMRG 引擎；`finalize(iter, ψ, operator, envs) -> (ψ, envs)` 为逐迭代回调
+IDMRG 引擎；`alg_environments`（环境求解算法，`fixedpoint` 分派，同
+`VUMPS`/`VOMPS` 的同名字段）提供扫掠的初始/收尾环境求解容差——收尾的 AR
+混合规范重建是规范操作，用固定的紧容差（`Defaults.tolgauge`，对标 MPSKit
+`InfiniteMPS(mps.AR)`），且 IDMRG 扫掠内无规范固定步，故不设 `alg_gauge`；
+`finalize(iter, ψ, operator, envs) -> (ψ, envs)` 为逐迭代回调
 （默认恒等，`Defaults._finalize`，同 `VUMPS`/`TDVP`）。
 """
-@kwdef struct IDMRG{A,G,O,F} <: Algorithm
+@kwdef struct IDMRG{A,N,O,F} <: Algorithm
     D::Int = Defaults.D
     tol::Float64 = Defaults.tol
     maxiter::Int = Defaults.maxiter
     verbosity::Int = Defaults.verbosity
-    alg_gauge::G = Defaults.alg_gauge()
+    alg_environments::N = Defaults.alg_environments()
     alg_eigsolve::A = Defaults.alg_eigsolve()
     alg_orth::O = Defaults.alg_orth()
     finalize::F = Defaults._finalize

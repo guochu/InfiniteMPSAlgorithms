@@ -430,7 +430,7 @@ function _zip_idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
     N = length(ket1)
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点，扫掠中只做增量 transfer 与重标定
-    envs = HadamardCache(x, ket1, ket2, Defaults.alg_environments())
+    envs = HadamardCache(x, ket1, ket2, alg.alg_environments)
     # 通道标量类型提升（见 mult.jl `_vomps_sweeps` 注释）
     T = promote_type(scalartype(ket1), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
@@ -469,10 +469,9 @@ function _zip_idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
             break
         end
     end
-    # 规范恢复：从 AR 重建混合规范，环境对终态重解
-    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
-    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
-    envs = HadamardCache(x, ket1, ket2, Defaults.alg_environments())
+    # 规范恢复：从 AR 重建混合规范（固定紧容差——重建是规范操作），环境对终态重解
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
+    envs = HadamardCache(x, ket1, ket2, alg.alg_environments)
     _global_normalize!(x)
     return x, envs, IterativeConvergenceInfo(iter, losses, converged)
 end

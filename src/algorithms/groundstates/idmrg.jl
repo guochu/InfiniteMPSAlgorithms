@@ -310,11 +310,11 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG
             break
         end
     end
-    # 规范恢复：从 AR 重建（对标 MPSKit 的 `InfiniteMPS(mps.AR)`）
+    # 规范恢复：从 AR 重建（对标 MPSKit 的 `InfiniteMPS(mps.AR)`，固定紧容差
+    # ——重建是规范操作，不随 alg_environments 松紧）
     N = length(ψ)
-    alg_gauge = updatetol(alg.alg_gauge, iter, ϵ)
     ψ′ = CanonicalIMPS([ψ.AR[ℓ] for ℓ in 1:N];
-                           tol = alg_gauge.tol, maxiter = alg_gauge.maxiter)
+                           tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
     recalculate!(envs, ψ′, operator)
     return ψ′, envs, IterativeConvergenceInfo(iter, losses, converged)
 end

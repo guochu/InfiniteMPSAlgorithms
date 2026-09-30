@@ -417,7 +417,7 @@ template of [`_vomps_sweeps`](@ref)):
 4. convergence: `ϵ = ‖C[0]_new − C[0]_old‖` (boundary center-matrix drift).
 
 Afterwards the mixed-canonical state is rebuilt from the `AR` string (MPSKit
-`MultilineMPS(ψ.AR)` at the dynamically adapted `alg.alg_gauge` tolerance) and
+`MultilineMPS(ψ.AR)` at the fixed tight `Defaults.tolgauge` tolerance) and
 the environments are recomputed for the final state. （compress 的无算符版本见
 overlap.jl 的 `_overlap_idmrg_sweeps`。）Returns the optimized state, its final
 environments and the [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、
@@ -431,7 +431,7 @@ function _idmrg_sweeps(operator::CanonicalIMPO,
     x = copy(x0)
     # 初始环境：由初态解一次左右不动点（MPSKit environments(ψ, toapprox...)），
     # 扫掠中只做增量 transfer 与重标定，不再整体重解（MPSKit IDMRG 语义）
-    envs = MultCache(x, operator, ket, Defaults.alg_environments())
+    envs = MultCache(x, operator, ket, alg.alg_environments)
     # 通道标量类型（MPSKit 对齐，见 _vomps_sweeps 注释）
     T = promote_type(scalartype(ket), eltype(leftenv(envs, 1)))
     x = _promote_scalar(T, x)
@@ -470,11 +470,10 @@ function _idmrg_sweeps(operator::CanonicalIMPO,
             break
         end
     end
-    # 规范恢复：从 AR 重建混合规范（MPSKit MultilineMPS(ψ.AR; alg_gauge...)），
-    # 环境对终态重解（MPSKit recalculate!(envs, ψ, toapprox)）
-    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
-    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
-    envs = MultCache(x, operator, ket, Defaults.alg_environments())
+    # 规范恢复：从 AR 重建混合规范（MPSKit MultilineMPS(ψ.AR)，固定紧容差——
+    # 重建是规范操作，不随 alg_environments 松紧），环境对终态重解
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
+    envs = MultCache(x, operator, ket, alg.alg_environments)
     _global_normalize!(x)
     return x, envs, IterativeConvergenceInfo(iter, losses, converged)
 end
