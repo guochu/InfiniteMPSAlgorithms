@@ -28,22 +28,26 @@
 
 """
     MultCache(operator, bra, ket, lefts, rights)
-    MultCache(below, operator::Union{DenseIMPO,CanonicalIMPO}, above, [alg]) -> MultCache
-    MultCache(below, W1::CanonicalIMPO, W2::CanonicalIMPO, [alg]) -> MultCache
+    MultCache(below, operator::AbstractInfiniteMPO, above, [alg]) -> MultCache
+    MultCache(below, W1::AbstractInfiniteMPO, W2::AbstractInfiniteMPO, [alg]) -> MultCache
 
 Environments of the MPO-application channel: the left/right fixed points of
 `⟨below|operator|above⟩`, used by `mult` (iterative MPO multiplication).
 Two channels share the same cache format (rank-3 environment tensors):
 
-- MPO application (`operator::DenseIMPO`, `above::CanonicalIMPS`): the
-  `⟨below|W|ψ⟩` channel; the operator is canonicalized into an `CanonicalIMPO`
-  on storage; `lefts[ℓ]` = `(below bond, w, above bond)`,
+- MPO application (`operator`, `above::AbstractInfiniteMPS`): the
+  `⟨below|W|ψ⟩` channel; `lefts[ℓ]` = `(below bond, w, above bond)`,
   `rights[ℓ]` = `(above bond, w, below bond)` (MPSKit convention);
-- MPO composition (`W1::CanonicalIMPO`, `W2::CanonicalIMPO`; the operator slot
+- MPO composition (`W1`, `W2::AbstractInfiniteMPO`; the operator slot
   holds W1 and the ket slot holds W2): the `⟨below|W1·W2⟩` channel with the
   product's fused tensors never materialized; the same leg layout reads
   `lefts[ℓ]` = `(below bond, wl1, wl2)`, `rights[ℓ]` = `(wr2, wr1, below bond)`
   (the two factor bond legs kept separate).
+
+`operator`/`above`/`W1`/`W2` 槽接受 `DenseIMPO`/`CanonicalIMPO`/
+`DenseIMPS`/`CanonicalIMPS`（[`AbstractInfiniteMPO`](@ref)/
+[`AbstractInfiniteMPS`](@ref)——dense 类型经 `getproperty` 的 `AL`/`AR`/`AC`
+周期视图与 `C` 单位矩阵视图直接参与，存储不做任何规范转换）。
 
 Both channels obtain the fixed points from the :LM eigenpairs of the fused
 transfer matrix (`mixed_fixedpoints`, shared by the two channels); normalization mirrors MPSKit's
@@ -51,9 +55,9 @@ transfer matrix (`mixed_fixedpoints`, shared by the two channels); normalization
 then per site `λℓ = ⟨below.C[ℓ], C_map(ℓ)⟩` scales `GLs[ℓ+1]`, so that the
 local contraction of every site is exactly 1 (identity-MPO expectation = N).
 """
-struct MultCache{O<:CanonicalIMPO,
+struct MultCache{O<:AbstractInfiniteMPO,
                  B<:Union{CanonicalIMPS,CanonicalIMPO},
-                 K<:Union{CanonicalIMPS,CanonicalIMPO},T} <: CompressionEnvironments
+                 K<:Union{AbstractInfiniteMPS,AbstractInfiniteMPO},T} <: CompressionEnvironments
     operator::O
     bra::B
     ket::K
@@ -76,8 +80,8 @@ the eigsolves with the previous environments: for block-degenerate targets the
 fixed-point space is multi-dimensional and a continuous initial guess keeps the
 ALS iteration stable."
 function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
-                              operator::CanonicalIMPO,
-                              above::Union{CanonicalIMPS,CanonicalIMPO},
+                              operator::AbstractInfiniteMPO,
+                              above::Union{AbstractInfiniteMPS,AbstractInfiniteMPO},
                               alg = Defaults.alg_environments();
                               GL0::Union{Nothing,AbstractArray} = nothing,
                               GR0::Union{Nothing,AbstractArray} = nothing)
@@ -149,25 +153,22 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
     return GLs, GRs
 end
 
-function MultCache(below::CanonicalIMPS, operator::Union{DenseIMPO,CanonicalIMPO},
-                   above::CanonicalIMPS, alg = Defaults.alg_environments();
+function MultCache(below::CanonicalIMPS, operator::AbstractInfiniteMPO,
+                   above::AbstractInfiniteMPS, alg = Defaults.alg_environments();
                    GL0::Union{Nothing,AbstractArray} = nothing,
                    GR0::Union{Nothing,AbstractArray} = nothing)
-    # 环境核 mixed_fixedpoints 的 operator 槽统一为 CanonicalIMPO：DenseIMPO 先
-    # 规范化，envs/局部映射/C 通道全程消费同一规范化算符
-    Wc = operator isa CanonicalIMPO ? operator : CanonicalIMPO(collect(operator.Ws))
-    GLs, GRs = mixed_fixedpoints(below, Wc, above, alg; GL0, GR0)
+    GLs, GRs = mixed_fixedpoints(below, operator, above, alg; GL0, GR0)
     # 槽位提升到通道标量类型（环境 eltype）：[`compression_sweeps!`](@ref) 对缓存
-    # bra 的原地演化恒在同型算术上进行
+    # bra 的原地演化恒在同型算术上进行（dense/canonical 槽各自原类型提升）
     T = eltype(GLs[1])
-    return MultCache(_promote_scalar(T, Wc), _promote_scalar(T, below),
+    return MultCache(_promote_scalar(T, operator), _promote_scalar(T, below),
                      _promote_scalar(T, above), GLs, GRs)
 end
 
 "双 MPO 组合通道（mpo·mpo）：bra 槽 = 变分链（CanonicalIMPO，原生 MPO 形态）、
 operator 槽 = W1、ket 槽 = W2，环境 rank-3
 `(below, wl1, wl2)`/`(wr2, wr1, below)`（两个因子的键腿分开存放）。"
-function MultCache(below::CanonicalIMPO, W1::CanonicalIMPO, W2::CanonicalIMPO,
+function MultCache(below::CanonicalIMPO, W1::AbstractInfiniteMPO, W2::AbstractInfiniteMPO,
                    alg = Defaults.alg_environments();
                    GL0::Union{Nothing,AbstractArray} = nothing,
                    GR0::Union{Nothing,AbstractArray} = nothing)
@@ -452,6 +453,18 @@ function _promote_scalar(::Type{T}, W::CanonicalIMPO) where {T}
     return CanonicalIMPO{T}(cast(W.AL), cast(W.AR), cast(W.C), cast(W.AC))
 end
 
+"`_promote_scalar` 的 DenseIMPO/DenseIMPS 版：按原类型逐张量提升（不转换规范
+形态）。"
+function _promote_scalar(::Type{T}, W::DenseIMPO) where {T}
+    scalartype(W) == T && return W
+    return DenseIMPO([T.(w) for w in W.Ws])
+end
+
+function _promote_scalar(::Type{T}, ψ::DenseIMPS) where {T}
+    scalartype(ψ) == T && return ψ
+    return DenseIMPS([T.(a) for a in ψ.As])
+end
+
 "Uniform norm normalization（CanonicalIMPO：AC 与 C 同除，保持 `AC = AL·C` 一致）。"
 function _global_normalize!(W::CanonicalIMPO)
     n = norm(W)
@@ -491,8 +504,10 @@ bond-first contractions (the fused tensors are never formed). Intermediate
 memory is O(single site) in both cases. Applying a time-evolution MPO is
 `ψ′ = first(mult(make_time_mpo(H, dt, WII()), ψ, alg))`.
 
-- `W`: an `DenseIMPO`, an `SparseIMPO` (densified into an `DenseIMPO`
-  before application), or an `CanonicalIMPO`;
+- `W`/`ψ`/`W2`：`AbstractInfiniteMPO`/`AbstractInfiniteMPS`——`DenseIMPO`/
+  `CanonicalIMPO` 与 `DenseIMPS`/`CanonicalIMPS` 皆可直接输入（dense 类型经
+  `getproperty` 家族视图直接参与环境与局部映射，不做规范转换）；输出类型恒为
+  `CanonicalIMPS`/`CanonicalIMPO`;
 - `alg.D::Int`: target bond dimension of the variational compression
   (deterministic `svdguess_mult` initial state);
 - both `alg` types share the same fixed point;
@@ -509,29 +524,24 @@ The second return is the engine's final environments（mpo·mps / mpo·mpo 通�
 规范差但同射线）; the third return is the [`IterativeConvergenceInfo`](@ref)
 （`niter` 扫掠轮数、`losses` 逐轮残差/漂移、`converged` 收敛标志）。
 """
-function mult(W, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
-    Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    (length(ψ) % length(Wm) == 0) ||
+function mult(W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG})
+    (length(ψ) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     # MPO-channel VOMPS/IDMRG (compute-on-the-fly, no naive target family)：
     # 初态 = [`svdguess_mult`](@ref)，扫掠经 [`compression_sweeps!`](@ref)
-    envs = MultCache(svdguess_mult(Wm, ψ, alg.D), Wm, ψ, alg.alg_environments)
+    envs = MultCache(svdguess_mult(W, ψ, alg.D), W, ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     # 引擎收尾已保证 envs.bra 处于混合规范且按包约定归一化，直接返回其本体
     return envs.bra, envs, info
 end
 
-function mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, alg::Union{VOMPS,IDMRG})
-    Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
-    (length(W2m) % length(Wm) == 0) ||
+function mult(W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG})
+    (length(W2) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
     # 双 MPO 组合通道：bra = 变分链（CanonicalIMPO，原生 MPO 形态）、
-    # operator/ket 槽 = (W1c, W2c)——乘积张量从不物化（键优先分步 GEMM），
-    # 因子各自保持规范 ⇒ 无需 gauge twist。
-    W1c = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
-    W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
-    envs = MultCache(devectorize(svdguess_mult(Wm, W2m, alg.D)), W1c, W2c,
+    # operator/ket 槽 = (W1, W2)——乘积张量从不物化（键优先分步 GEMM），
+    # 因子按输入类型直接进入环境（dense 经 getproperty 家族视图）。
+    envs = MultCache(devectorize(svdguess_mult(W, W2, alg.D)), W, W2,
                      alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
@@ -559,9 +569,9 @@ of rank-4 MPO tensors and rank-3 MPS tensors, e.g. `ψ.AL` / `ψ.AR` of a
 low-level entry point for downstream packages; the `CanonicalIMPS` methods
 are thin wrappers that re-canonicalize its output.
 """
-function svdguess_mult(W, ψ::CanonicalIMPS, D::Int)
+function svdguess_mult(W, ψ::AbstractInfiniteMPS, D::Int)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    return CanonicalIMPS(svdguess_mult(PeriodicVector(Wm.Ws), ψ.AL, D))
+    return CanonicalIMPS(svdguess_mult(Wm.Ws, ψ.AL, D))
 end
 
 function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
@@ -583,10 +593,10 @@ function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
     return _lazy_svd_guess(site, length(ALs), D)
 end
 
-function svdguess_mult(W, W2::Union{DenseIMPO,CanonicalIMPO}, D::Int)
+function svdguess_mult(W, W2::AbstractInfiniteMPO, D::Int)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
-    return CanonicalIMPS(svdguess_mult(PeriodicVector(Wm.Ws), PeriodicVector(W2m.Ws), D))
+    return CanonicalIMPS(svdguess_mult(Wm.Ws, W2m.Ws, D))
 end
 
 function svdguess_mult(Ws1::PeriodicVector{<:Array{T,4}},
@@ -635,34 +645,22 @@ optimized as the initial guess; its bond profile is first brought to uniform
 into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境、`info` 为
 [`IterativeConvergenceInfo`](@ref)（`out` 写回后与 envs 的规范代表同射线）。
 """
-function mult!(out::CanonicalIMPS, W, ψ::CanonicalIMPS,
+function mult!(out::CanonicalIMPS, W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS,
                alg::Union{VOMPS,IDMRG})
-    Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    (length(ψ) % length(Wm) == 0) ||
+    (length(ψ) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     changebond!(out; D = alg.D)
-    envs = MultCache(out, Wm, ψ, alg.alg_environments)
+    envs = MultCache(out, W, ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
-"Raw-ket variant: `mult!` of a strict-algebra input (`W * DenseIMPS`, not yet
-canonicalized) — the input is canonicalized and the standard `mult!` runs."
-function mult!(out::CanonicalIMPS, W, ψ::DenseIMPS,
-               alg::Union{VOMPS,IDMRG}; kwargs...)
-    return mult!(out, W, CanonicalIMPS(collect(ψ.As)), alg; kwargs...)
-end
-
-function mult!(out::CanonicalIMPO, W, W2::Union{DenseIMPO,CanonicalIMPO},
+function mult!(out::CanonicalIMPO, W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO,
                alg::Union{VOMPS,IDMRG})
-    Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
-    (length(W2m) % length(Wm) == 0) ||
+    (length(W2) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
-    W1c = W isa CanonicalIMPO ? W : CanonicalIMPO(collect(Wm.Ws))
-    W2c = W2 isa CanonicalIMPO ? W2 : CanonicalIMPO(collect(W2m.Ws))
     changebond!(out; D = alg.D)
-    envs = MultCache(out, W1c, W2c, alg.alg_environments)
+    envs = MultCache(out, W, W2, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end

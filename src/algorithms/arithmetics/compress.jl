@@ -33,6 +33,12 @@ function svdguess_compress(x::CanonicalIMPO, D::Int)
     return svdguess_compress(vectorize(x), D)
 end
 
+"`svdguess_compress` 的 [`AbstractInfiniteMPS`](@ref) 泛型入口（`DenseIMPS` 等
+非规范链：对 `.AL` 家族视图做流式 SVD 截断后混合规范化——初态恒为
+`CanonicalIMPS`）。"
+svdguess_compress(x::AbstractInfiniteMPS, D::Int) =
+    CanonicalIMPS(svdguess_compress(x.AL, D))
+
 "Low-level tensor-string entry: streaming SVD truncation of a bare `AL`/`AR`
 string to bond cap `D` (wrap bond Schmidt-truncated at site 1). The carry
 (the previous site's truncated left basis) is absorbed into the next site
@@ -51,14 +57,16 @@ function svdguess_compress(ALs::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
 end
 
 """
-    compress(x::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPS, envs, info)
-    compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPO, envs, info)
-    compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPO, envs, info)
+    compress(x::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPS, envs, info)
+    compress(W::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG}) -> (x′::CanonicalIMPO, envs, info)
 
 Bond-dimension-`alg.D` variational approximation of a single chain (mirroring
 MPSKit's `approximate`: maximize the overlap between the compressed chain and
 the input chain, fixed point = the best rank-`D` approximation in the
-ring-trace fidelity sense). The default initial guess is
+ring-trace fidelity sense). `DenseIMPS`/`CanonicalIMPS`（及 `DenseIMPO`/
+`CanonicalIMPO`）皆可直接输入——dense 类型经 `getproperty` 家族视图直接作为
+压缩目标（不做规范转换），输出类型恒为 `CanonicalIMPS`/`CanonicalIMPO`.
+The default initial guess is
 [`svdguess_compress`](@ref) (the input's own SVD truncation to `alg.D`). The
 positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or [`IDMRG`](@ref)
 (MPSKit sequential Gauss–Seidel sweeps with on-the-fly environment transfer),
@@ -70,49 +78,40 @@ The second return is the engine's final environments（纯重叠通道的
 [`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
 `converged` 收敛标志）。
 """
-function compress(ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
+function compress(ψ::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG})
     envs = OverlapCache(svdguess_compress(ψ, alg.D), ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
-function compress(W::CanonicalIMPO, alg::Union{VOMPS,IDMRG})
+function compress(W::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG})
     # 目标 MPS 的 ray 必须取 **AL 家族**（左正则串）：其周期 trace 才是算符串的
     # wavefunction（相似变换不变）；AC 家族在张量间携带 C 加权
     # （AC[ℓ] = AL[ℓ]·C[ℓ]），周期 trace 是规范依赖的加权量，作为压缩目标会
     # 定义另一个变分问题（与 `mult!` 的因子化目标不等价）。
-    # `vectorize` 逐家族携带规范数据，其 AL 家族正是该 ray 的左正则串。
+    # `vectorize`：CanonicalIMPO 逐家族携带规范数据（其 AL 家族正是该 ray 的
+    # 左正则串）；DenseIMPO 为纯融合视图（不做规范转换）。
     ket = vectorize(W)
-    envs = OverlapCache(svdguess_compress(W, alg.D), ket, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
-    return devectorize(envs.bra), envs, info
-end
-
-function compress(W::DenseIMPO, alg::Union{VOMPS,IDMRG})
-    ket = CanonicalIMPS(vectorize(W).As)
     envs = OverlapCache(svdguess_compress(ket, alg.D), ket, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return devectorize(envs.bra), envs, info
 end
 
-"Variational compression of a raw strict-algebra result
-(`DenseIMPO * DenseIMPS`, not yet canonicalized)."
-compress(ψ::DenseIMPS, alg::Union{VOMPS,IDMRG}) =
-    compress(CanonicalIMPS(collect(ψ.As)), alg)
-
 # ---------------- compress! (in-place) ----------------
 
 """
-    compress!(out, ψ::CanonicalIMPS, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
-    compress!(out, W::CanonicalIMPO, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
+    compress!(out, ψ::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
+    compress!(out, W::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
 
 In-place [`compress`](@ref): `out` is the user-provided chain to be optimized
 as the initial guess; its bond profile is first brought to uniform
-`D = alg.D` with [`changebond!`](@ref). The optimized result is written back
+`D = alg.D` with [`changebond!`](@ref). The target accepts `DenseIMPS`/
+`CanonicalIMPS`（及 `DenseIMPO`/`CanonicalIMPO`，dense 类型经 `getproperty`
+家族视图直接参与，不做规范转换）. The optimized result is written back
 into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境（bra = 压缩
 链）、`info` 为 [`IterativeConvergenceInfo`](@ref)。
 """
-function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS,
+function compress!(out::CanonicalIMPS, ψ::AbstractInfiniteMPS,
                    alg::Union{VOMPS,IDMRG})
     changebond!(out; D = alg.D)
     envs = OverlapCache(out, ψ, alg.alg_environments)
@@ -120,25 +119,12 @@ function compress!(out::CanonicalIMPS, ψ::CanonicalIMPS,
     return _copyinto!(out, envs.bra), envs, info
 end
 
-function compress!(out::CanonicalIMPO, W::CanonicalIMPO,
+function compress!(out::CanonicalIMPO, W::AbstractInfiniteMPO,
                    alg::Union{VOMPS,IDMRG})
     changebond!(out; D = alg.D)
     envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, devectorize(envs.bra)), envs, info
-end
-
-"Raw-target variants: `compress!` of a strict-algebra result
-(`DenseIMPO * DenseIMPS` / `DenseIMPO * DenseIMPO`, not yet canonicalized) —
-the input is canonicalized and the standard `compress!` pipeline runs."
-function compress!(out::CanonicalIMPS, ψ::DenseIMPS,
-                   alg::Union{VOMPS,IDMRG})
-    return compress!(out, CanonicalIMPS(collect(ψ.As)), alg)
-end
-
-function compress!(out::CanonicalIMPO, W::DenseIMPO,
-                   alg::Union{VOMPS,IDMRG})
-    return compress!(out, CanonicalIMPO(collect(W.Ws)), alg)
 end
 
 # ---- lazy (on-the-fly) naive-SVD initial guess (shared by mult / hadamard) ----
@@ -207,9 +193,6 @@ function _copyinto!(out::CanonicalIMPO, y::CanonicalIMPO)
     return out
 end
 
-"DenseIMPO 结果写回 `CanonicalIMPO` 缓存：先转规范形式再逐家族复制。"
-_copyinto!(out::CanonicalIMPO, y::DenseIMPO) = _copyinto!(out, CanonicalIMPO(collect(y.Ws)))
-
 # ---------------- 纯重叠通道：OverlapCache 与 compress 的 VOMPS / IDMRG 引擎 ----------------
 #
 # ⟨below|above⟩（identity 通道，无算符）的环境缓存与变分扫掠——本文件的压缩
@@ -244,7 +227,7 @@ compression sweeps of `compress` ([`compression_sweeps!`](@ref)).
   mirrors MPSKit (unit-Frobenius GRs, GLs scaled by the local C-channel
   overlap λ).
 """
-struct OverlapCache{B<:CanonicalIMPS,K<:CanonicalIMPS,T} <: CompressionEnvironments
+struct OverlapCache{B<:CanonicalIMPS,K<:AbstractInfiniteMPS,T} <: CompressionEnvironments
     bra::B
     ket::K
     lefts::Vector{Array{T,2}}
@@ -271,7 +254,7 @@ function _mapC(GL::AbstractMatrix{Tg}, GR::AbstractMatrix{Tgr},
 end
 
 "Identity channel: in the AL/AR gauges the fixed points are identity matrices."
-function OverlapCache(ψ::CanonicalIMPS; kwargs...)
+function OverlapCache(ψ::AbstractInfiniteMPS; kwargs...)
     N = length(ψ)
     T = scalartype(ψ)
     lefts = Vector{Matrix{T}}(undef, N)
@@ -288,7 +271,7 @@ end
 左右不动点由 :LM 主本征对经 [`fixedpoint`](@ref) 解出（`alg` 分派 `tol`/`maxiter`：
 NamedTuple / DynamicTol / KrylovKit 算法皆可），复环境按解的实际 eltype 存放；
 本函数是三元通道的无算符分支，环境为 rank-2 矩阵）。"
-function overlap_fixedpoints(below::CanonicalIMPS, above::CanonicalIMPS,
+function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
                              alg = Defaults.alg_environments();
                              GL0::Union{Nothing,AbstractArray} = nothing,
                              GR0::Union{Nothing,AbstractArray} = nothing)
@@ -347,11 +330,12 @@ end
 
 "Ternary overlap channel: left/right fixed points of ⟨below|above⟩（
 [`overlap_fixedpoints`](@ref) 的 `alg` 分派 `tol`/`maxiter`）。"
-function OverlapCache(below::CanonicalIMPS, above::CanonicalIMPS,
+function OverlapCache(below::CanonicalIMPS, above::AbstractInfiniteMPS,
                       alg = Defaults.alg_environments();
                       GL0 = nothing, GR0 = nothing)
     GLs, GRs = overlap_fixedpoints(below, above, alg; GL0, GR0)
-    # bra/ket 提升到环境标量类型：缓存内所有 fields 同一浮点类型
+    # bra/ket 提升到环境标量类型：缓存内所有 fields 同一浮点类型（dense/canonical
+    # 槽各自原类型提升，不做规范转换）
     T = eltype(GLs[1])
     return OverlapCache(_promote_scalar(T, below), _promote_scalar(T, above),
                         GLs, GRs)

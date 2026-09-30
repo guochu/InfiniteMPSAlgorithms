@@ -296,6 +296,68 @@ end
     @test length(yc) == length(envsC) == 2
 end
 
+@testset "AbstractInfiniteMPS/MPO 家族接口（getproperty：AL/AR/AC/C 与 BondView）" begin
+    T = ComplexF64
+    Random.seed!(26)
+    # 继承关系
+    @test DenseIMPS <: AbstractInfiniteMPS && CanonicalIMPS <: AbstractInfiniteMPS
+    @test DenseIMPO <: AbstractInfiniteMPO && CanonicalIMPO <: AbstractInfiniteMPO
+    @test SparseIMPO <: AbstractInfiniteMPO
+
+    # DenseIMPS：AL/AR/AC 即原始张量串本体（PeriodicVector 周期存储、无拷贝），
+    # C 为 BondView 单位矩阵视图（维度与键匹配、周期取模）
+    ψd = DenseIMPS([randn(T, 3, 2, 3), randn(T, 3, 2, 3)])
+    @test ψd.As isa PeriodicVector
+    @test ψd.AL === ψd.As && ψd.AR === ψd.As && ψd.AC === ψd.As
+    @test ψd.AL[3] === ψd.As[1] && ψd.AL[0] === ψd.As[2]
+    @test ψd.C isa BondView && length(ψd.C) == 2 && size(ψd.C) == (2,)
+    @test ψd.C[1] == Matrix{T}(I, 3, 3) && ψd.C[3] == ψd.C[1]
+    # DenseIMPO 同理（rank-4 张量串）
+    Wd = DenseIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
+    @test Wd.AL === Wd.Ws && Wd.AL[0] === Wd.Ws[2] && Wd.AC[1] === Wd.Ws[1]
+    @test Wd.C[2] == Matrix{T}(I, 2, 2)
+    # SparseIMPO：家族按站稠密化（tompotensor），C 单位矩阵（Schur 层数）
+    H1 = tfim_hamiltonian(T = T)
+    @test H1.AL[1] == tompotensor(H1[1]) && H1.AR[2] == tompotensor(H1[2])
+    @test H1.AC[1] == tompotensor(H1[1]) && H1.C[1] == Matrix{T}(I, 3, 3)
+    @test H1.C[2] == Matrix{T}(I, 3, 3)
+    # 家族接口使 dense 链可与 canonical 同款消费（length/phydims/周期下标）
+    ψc = CanonicalIMPS(collect(ψd.As); tol = 1e-12)
+    @test length(ψd) == length(ψc) && phydims(ψd) == phydims(ψc)
+    @test eachsite(ψd) == 1:2
+
+    # randomimps / CanonicalIMPS(::DenseIMPS) 的 kwargs 透传（→ gaugefix!）
+    ψkw = randomimps(T, [2, 2]; D = 4, tol = 1e-12)
+    @test ψkw isa CanonicalIMPS && ismixedcanonical(ψkw)
+    ψck = CanonicalIMPS(ψd; tol = 1e-12)
+    @test ψck isa CanonicalIMPS
+    @test fidelity(DenseIMPS(ψck), ψd) > 1 - 1e-10
+end
+
+@testset "严格代数的 lcm 单胞：DenseIMPO * DenseIMPS 与严格 hadamard" begin
+    T = ComplexF64
+    Random.seed!(27)
+    ψ2 = DenseIMPS([randn(T, 2, 2, 2), randn(T, 2, 2, 2)])
+    ψ3 = DenseIMPS([randn(T, 3, 2, 3), randn(T, 3, 2, 3), randn(T, 3, 2, 3)])
+    W3 = randomimpo(T, [2, 2, 2]; D = 2)
+    # W（L = 3）× ψ（N = 2）⇒ 输出单胞 lcm = 6、键维 = 因子乘积
+    Wψ = W3 * ψ2
+    @test Wψ isa DenseIMPS && length(Wψ) == 6
+    @test bonddim(Wψ, 1) == 4
+    # 逐周期平铺语义：site ℓ = fuse(W[mod1(ℓ,3)], ψ[mod1(ℓ,2)])
+    @test Wψ[5] == fuse(W3[2], ψ2[1])
+    # 严格 hadamard：(N₁ = 2, N₂ = 3) ⇒ 6，键维 = 乘积
+    h32 = hadamard(ψ2, ψ3)
+    @test h32 isa DenseIMPS && length(h32) == 6 && bonddim(h32, 1) == 6
+    # 逐周期平铺语义
+    @test h32[4] == InfiniteMPSAlgorithms._naive_hadamard_tensor(ψ2[2], ψ3[1])
+    # 同单胞输入行为不变（lcm = N）
+    @test length(W3 * DenseIMPS(collect(ψ3.As))) == 3
+    # 逐站物理维不匹配仍抛错
+    @test_throws DimensionMismatch hadamard(ψ2, DenseIMPS([randn(T, 2, 3, 2),
+                                                           randn(T, 2, 3, 2)]))
+end
+
 @testset "DenseIMPO 构造、周期下标与标量代数" begin
     T = ComplexF64
     Random.seed!(31)

@@ -12,8 +12,9 @@
 不变的态幅（`DenseIMPO(W::CanonicalIMPO) = DenseIMPO(W.AL)` 的 MPS 对应）。"
 DenseIMPS(ψ::CanonicalIMPS) = DenseIMPS(ψ.AL)
 
-"`CanonicalIMPS(ψ)`: 混合规范化的副本（`CanonicalIMPS(ψ.As)` 的显式转换）。"
-CanonicalIMPS(ψ::DenseIMPS) = CanonicalIMPS(ψ.As)
+"`CanonicalIMPS(ψ; kwargs...)`: 混合规范化的副本（`CanonicalIMPS(ψ.As;
+kwargs...)` 的显式转换，`kwargs` 透传 `gaugefix!`）。"
+CanonicalIMPS(ψ::DenseIMPS; kwargs...) = CanonicalIMPS(ψ.As; kwargs...)
 
 function Base.:*(α::Number, ψ::DenseIMPS)
     out = [copy(a) for a in ψ.As]
@@ -85,19 +86,22 @@ end
 Strict (compression-free) Hadamard/Schur product — the naive exact
 construction as a typed operator: per-site zipped virtual legs with a shared
 physical leg, `A12[(a,c), s, (b,e)] = ψ1[a,s,b]·ψ2[c,s,e]` (kernel
-[`_naive_hadamard_tensor`](@ref)). Requires equal lengths and equal per-site
-physical dimensions; the physical dimension is unchanged and the bond
-dimension is the product of the two. The factorizing periodic trace yields the
-**elementwise waveform product**, `dense(hadamard(a,b)) = dense(a) .* dense(b)`.
+[`_naive_hadamard_tensor`](@ref)). The output unit-cell length is the
+**least common multiple** of the two inputs（两输入单胞不同时逐周期平铺做
+zip）；per-site physical dimensions must agree. The physical dimension is
+unchanged and the bond dimension is the product of the two. The factorizing
+periodic trace yields the **elementwise waveform product**,
+`dense(hadamard(a,b)) = dense(a) .* dense(b)`.
 No canonicalization or normalization is performed — the raw zipped tensor
 string is returned. For the variational compression use `hadamard(ψ1, ψ2, alg)`.
 """
 function hadamard(ψ1::DenseIMPS, ψ2::DenseIMPS)
-    (length(ψ1) == length(ψ2)) ||
-        throw(DimensionMismatch("hadamard requires equal lengths"))
-    all(size(ψ1[ℓ], 2) == size(ψ2[ℓ], 2) for ℓ in 1:length(ψ1)) ||
+    N1, N2 = length(ψ1), length(ψ2)
+    L = lcm(N1, N2)
+    all(size(ψ1[_mod1(ℓ, N1)], 2) == size(ψ2[_mod1(ℓ, N2)], 2) for ℓ in 1:L) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
-    return DenseIMPS([_naive_hadamard_tensor(ψ1[ℓ], ψ2[ℓ]) for ℓ in 1:length(ψ1)])
+    return DenseIMPS([_naive_hadamard_tensor(ψ1[_mod1(ℓ, N1)], ψ2[_mod1(ℓ, N2)])
+                      for ℓ in 1:L])
 end
 
 # ---- overlaps (transfer-matrix dominant eigenvalues) ----

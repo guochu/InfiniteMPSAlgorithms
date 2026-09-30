@@ -28,27 +28,21 @@ level `k`; entries may be `Missing`, `Number`s, or `(d, d)` matrices.
 `models.jl` 的便捷构造（`tfim` / `heisenberg_xxz` / `mpohamiltonian(h1, …)`）
 因为只给一个 `h1`，产出的模型各站物理维相同。
 """
-struct SparseIMPO{TO<:SchurMPOTensor}
-    W::PeriodicVector{TO}
-    SparseIMPO{TO}(W::PeriodicVector{TO}) where {TO} = new{TO}(W)
+struct SparseIMPO{T<:Number} <: AbstractInfiniteMPO{T}
+    Ws::PeriodicVector{SchurMPOTensor{T}}
 end
 
-Base.length(H::SparseIMPO) = length(H.W)
-Base.getindex(H::SparseIMPO, i::Int) = getindex(H.W, i)
+Base.length(H::SparseIMPO) = length(H.Ws)
+Base.getindex(H::SparseIMPO, i::Int) = getindex(H.Ws, i)
 Base.getindex(H::SparseIMPO, i::Int, j::Int, k::Int) = H[i][j, k]
-Base.firstindex(H::SparseIMPO) = firstindex(H.W)
-Base.lastindex(H::SparseIMPO) = lastindex(H.W)
-Base.parent(H::SparseIMPO) = H.W
-Base.copy(H::SparseIMPO) = SparseIMPO(map(copy, parent(H)))
-Base.iterate(H::SparseIMPO, args...) = iterate(H.W, args...)
-Base.eltype(::Type{SparseIMPO{TO}}) where {TO} = TO
+Base.firstindex(H::SparseIMPO) = firstindex(H.Ws)
+Base.lastindex(H::SparseIMPO) = lastindex(H.Ws)
+Base.copy(H::SparseIMPO) = SparseIMPO(PeriodicVector([copy(w) for w in H.Ws]))
+Base.iterate(H::SparseIMPO, args...) = iterate(H.Ws, args...)
+Base.eltype(::Type{SparseIMPO{T}}) where {T} = SchurMPOTensor{T}
 
-function SparseIMPO(Ws::PeriodicVector{TO}) where {TO<:SchurMPOTensor}
-    return SparseIMPO{TO}(Ws)
-end
-function SparseIMPO(Ws::Vector{TO}) where {TO<:SchurMPOTensor}
-    return SparseIMPO{TO}(PeriodicVector(Ws))
-end
+SparseIMPO(Ws::PeriodicVector{SchurMPOTensor{T}}) where {T} = SparseIMPO{T}(Ws)
+SparseIMPO(Ws::Vector{SchurMPOTensor{T}}) where {T} = SparseIMPO{T}(PeriodicVector(Ws))
 function SparseIMPO(Ws::Vector{<:Matrix})
     for W in Ws
         (size(W, 1) == size(W, 2)) || throw(ArgumentError("level matrices of an infinite Hamiltonian must be square"))
@@ -67,23 +61,19 @@ block structure plus periodic closure require identical levels across sites,
 guaranteed by the constructors)."
 bonddim(H::SparseIMPO) = nlvls(H[1])
 
-scalartype(::Type{SparseIMPO{TO}}) where {TO} = scalartype(TO)
-scalartype(H::SparseIMPO) = scalartype(typeof(H))
-
 "`phydim(H, i)`: site `i` 的物理维（unit cell 内允许逐站不同）。"
 phydim(H::SparseIMPO, i::Integer) = size(H[i].A, 2)
 phydims(H::SparseIMPO) = [size(H[ℓ].A, 2) for ℓ in 1:length(H)]
 
-# MPSKit-style A/B/C/D block access (returns the corresponding block arrays per site)
+# AbstractInfiniteMPO 家族接口（AL/AR/AC/C）：Schur 块访问走 `H[i][j, k]`
+# （getindex）；`.C` 为家族接口的单位矩阵视图（BondView，键维 = nlvls）。
 function Base.getproperty(H::SparseIMPO, sym::Symbol)
-    if sym === :A
-        return [getfield(W, :A) for W in parent(H)]
-    elseif sym === :B
-        return [getfield(W, :B) for W in parent(H)]
+    if sym === :AL || sym === :AR || sym === :AC
+        # 家族接口：Schur 张量逐站稠密化（rank-4，键在槽 1/3）
+        return PeriodicVector([tompotensor(W) for W in getfield(H, :Ws)])
     elseif sym === :C
-        return [getfield(W, :C) for W in parent(H)]
-    elseif sym === :D
-        return [getfield(W, :D) for W in parent(H)]
+        # 家族接口的单位矩阵视图（[`BondView`](@ref)，Schur 层数为键维）
+        return BondView(H)
     end
     return getfield(H, sym)
 end
@@ -98,7 +88,7 @@ require the `(i,i)` diagonal block to be the identity on every site.
 function isidentitylevel(H::SparseIMPO, i::Int)
     n = bonddim(H)
     (i == 1 || i == n) && return true
-    return all(parent(H)) do W
+    return all(H.Ws) do W
         block = W.A[i - 1, :, i - 1, :]
         return isapprox(block, Matrix{eltype(block)}(I, size(block)); atol = 1e-14)
     end
@@ -117,7 +107,7 @@ a strictly nearest-neighbor MPO) do not count as empty.
 function isemptylevel(H::SparseIMPO, i::Int)
     n = bonddim(H)
     (i == 1 || i == n) && return false
-    return all(parent(H)) do W
+    return all(H.Ws) do W
         return iszero(W.A[i - 1, :, i - 1, :]) &&
                iszero(W.C[:, i - 1, :]) &&
                iszero(W.B[i - 1, :, :])
@@ -129,7 +119,7 @@ end
 function Base.:+(H₁::SparseIMPO, H₂::SparseIMPO)
     (length(H₁) == length(H₂)) || throw(DimensionMismatch("unit-cell lengths do not match"))
     W = [H₁[i] + H₂[i] for i in 1:length(H₁)]
-    return SparseIMPO(typeof(H₁.W)(W))
+    return SparseIMPO(PeriodicVector(W))
 end
 
 """

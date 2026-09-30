@@ -177,9 +177,10 @@ end
         @test abs(dot(Hc, H12c)) > 1 - 1e-8
     end
 
-    # 长度 / 逐 site 物理维不匹配
-    @test_throws DimensionMismatch hadamard(DenseIMPS(collect(ψ1.AL)),
-                                            DenseIMPS(collect(randomimps(T, [2, 2, 2]; D = 2).AL)))
+    # 长度不同 ⇒ lcm 单胞（逐周期平铺 zip）；逐 site 物理维不匹配仍抛错
+    h23 = hadamard(DenseIMPS(collect(ψ1.AL)),
+                   DenseIMPS(collect(randomimps(T, [2, 2, 2]; D = 2).AL)))
+    @test h23 isa DenseIMPS && length(h23) == 6        # lcm(2, 3) = 6
     @test_throws DimensionMismatch hadamard(DenseIMPS(collect(ψ1.AL)),
                                             DenseIMPS(collect(randomimps(T, [3, 2]; D = 3).AL)))
 
@@ -277,5 +278,62 @@ end
         v2 = vec(_dense_mps_repr(y2))
         ls = dot(v2, v1) / dot(v2, v2)
         @test norm(v1 .- ls .* v2) / norm(v1) < 1e-8
+    end
+end
+
+@testset "dense ≡ canonical 输入（compress/mult/hadamard 直接吃 AbstractInfinite*）" begin
+    # dense 类型经 getproperty 家族视图（AL/AR/AC 周期视图 + C 单位矩阵视图）
+    # 直接进入环境与局部映射（不做任何规范转换）：同一射线的 dense/canonical
+    # 输入定义同一变分问题，输出类型恒为 CanonicalIMPS/CanonicalIMPO，终态在
+    # 收敛精度内一致（不同初猜的轨迹差只余 round-off）。
+    T = ComplexF64
+    Random.seed!(55)
+    ψraw = [randn(T, 4, 2, 4), randn(T, 4, 2, 4)]
+    ψc = CanonicalIMPS(ψraw)
+    ψd = DenseIMPS(collect(ψc.AR))             # 同射线的 dense 表示
+    ψ2raw = [randn(T, 3, 2, 3), randn(T, 3, 2, 3)]
+    ψ2c = CanonicalIMPS(ψ2raw)
+    ψ2d = DenseIMPS(collect(ψ2c.AR))
+    Wd = randomimpo(T, [2, 2]; D = 3)
+    Wc = CanonicalIMPO(collect(Wd.Ws))
+    W2d = randomimpo(T, [2, 2]; D = 2)
+    W2c = CanonicalIMPO(collect(W2d.Ws))
+
+    "两结果的 ray 残差（dense 周期 trace 表示，规范与尺度不变）。"
+    function _rayres(x, y)
+        vx = vec(_dense_mps_repr(x))
+        vy = vec(_dense_mps_repr(y))
+        ls = dot(vy, vx) / dot(vy, vy)
+        return norm(vx .- ls .* vy) / norm(vx)
+    end
+
+    for alg in (VOMPS(D = 3, tol = 1e-12, maxiter = 300),
+                IDMRG(D = 3, tol = 1e-12, maxiter = 300))
+        # compress（MPS 目标）
+        yc, _, ic = compress(ψc, alg)
+        yd, _, id = compress(ψd, alg)
+        @test yc isa CanonicalIMPS && yd isa CanonicalIMPS
+        @test ic.converged && id.converged
+        @test _rayres(yc, yd) < 1e-8
+        # compress（MPO 目标：dense 为纯融合视图目标，canonical 携带规范）
+        zc, _, _ = compress(Wc, alg)
+        zd, _, _ = compress(Wd, alg)
+        @test zc isa CanonicalIMPO && zd isa CanonicalIMPO
+        @test _rayres(vectorize(zc), vectorize(zd)) < 1e-6
+        # mult（mpo·mps）：输出恒 CanonicalIMPS
+        m1c, _, _ = mult(Wc, ψc, alg)
+        m1d, _, _ = mult(Wd, ψd, alg)
+        @test m1c isa CanonicalIMPS && m1d isa CanonicalIMPS
+        @test _rayres(m1c, m1d) < 1e-6
+        # mult（mpo·mpo）：输出恒 CanonicalIMPO
+        m2c, _, _ = mult(Wc, W2c, alg)
+        m2d, _, _ = mult(Wd, W2d, alg)
+        @test m2c isa CanonicalIMPO && m2d isa CanonicalIMPO
+        @test _rayres(vectorize(m2c), vectorize(m2d)) < 1e-6
+        # hadamard：输出恒 CanonicalIMPS
+        hc, _, _ = hadamard(ψc, ψ2c, alg)
+        hd, _, _ = hadamard(ψd, ψ2d, alg)
+        @test hc isa CanonicalIMPS && hd isa CanonicalIMPS
+        @test _rayres(hc, hd) < 1e-6
     end
 end

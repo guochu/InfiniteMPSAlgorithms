@@ -269,7 +269,7 @@ end
     @test gv isa Vector{<:Array{T,3}}
     @test all(size(A, 1) ≤ 4 && size(A, 3) ≤ 4 for A in gv)
     @test fidelity(CanonicalIMPS(gv), gd) ≈ 1 atol = 1e-10
-    gmv = svdguess_mult(PeriodicVector(W.Ws), ψ1.AL, 4)
+    gmv = svdguess_mult(W.Ws, ψ1.AL, 4)
     @test fidelity(CanonicalIMPS(gmv), gm) ≈ 1 atol = 1e-10
     W3 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     nvm = CanonicalIMPS([fuse(W3[ℓ], ψa.AL[ℓ]) for ℓ in 1:2])

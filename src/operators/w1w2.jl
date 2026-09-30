@@ -123,7 +123,7 @@ MPSKit's `make_time_mpo`; with `imaginary_evolution = true` it is
 `exp(-H·dt)`). Internally implements the W^I/W^II block-exponential schemes;
 for an `SparseIMPO`, the Schur tensor of **every site** in the unit cell
 is evolved separately (mirroring MPSKit's
-`tmap(parent(H)) do W ... end` + `DenseIMPO(PeriodicArray(O))`), supporting
+`tmap(H.Ws) do W ... end` + `DenseIMPO(PeriodicArray(O))`), supporting
 arbitrary unit-cell lengths.
 """
 function make_time_mpo(bulk::SchurMPOTensor, dt::Number, alg::Union{WI,WII};
@@ -137,6 +137,6 @@ function make_time_mpo(H::SparseIMPO, dt::Number, alg::Union{WI,WII};
     δ = imaginary_evolution ? -dt : -im * dt
     # mirroring MPSKit: evolve the Schur tensor of every site in the unit cell
     # (supports arbitrary unit-cell lengths)
-    O = [_timempo_dense(W, δ, alg) for W in parent(H)]
+    O = [_timempo_dense(W, δ, alg) for W in H.Ws]
     return DenseIMPO(O)
 end

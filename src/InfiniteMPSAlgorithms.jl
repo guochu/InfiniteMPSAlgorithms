@@ -111,6 +111,8 @@ export
     # environment caches (concrete types live in their algorithm files)
     Environments, CompressionEnvironments, OverlapCache, MultCache, DMRGCache,
     recalculate!, leftenv, rightenv,
+    # infinite chain/operator abstract types and family views
+    AbstractInfiniteMPS, AbstractInfiniteMPO, BondView,
     AC_hamiltonian, C_hamiltonian, calc_galerkin,
     # ground-state and time-evolution algorithms
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS, IterativeConvergenceInfo,

@@ -1,5 +1,48 @@
 # 变更记录（接口）
 
+## 2026-09-30 `AbstractInfiniteMPS`/`AbstractInfiniteMPO` 家族接口；dense 类型直入变分通道；严格代数 lcm 单胞
+
+- 新增抽象类型 **`AbstractInfiniteMPS{T<:Number}`**（`CanonicalIMPS`/`DenseIMPS`
+  继承）与 **`AbstractInfiniteMPO{T<:Number}`**（`CanonicalIMPO`/`DenseIMPO`/
+  `SparseIMPO` 继承）+ **`BondView{P,T} <: AbstractVector{Matrix{T}}`**，均已
+  导出。**`scalartype` 泛型定义在抽象类型上**
+  （`scalartype(::Type{<:AbstractInfiniteMPS{T}}) = T` 及 MPO 同款）——五个具体
+  类型的 `scalartype` 定义随之删除；`BondView` 的 `parent` 字段持有**链/算符
+  本身**，`getindex` 经 `parent.AL` 推断键维（`C[ℓ]` 为 `(site ℓ 右键维,
+  site ℓ+1 左键维)` 的恒等方阵，周期取模下标，只读）；
+- `DenseIMPS`/`DenseIMPO`/`SparseIMPO` 经 `getproperty` 增加 **`AL`/`AR`/`AC`/`C`
+  家族访问**（规则同 [`CanonicalIMPS`](@ref)）：`AL`/`AR`/`AC` 即原始张量串
+  本体（`SparseIMPO` 按站稠密化 `tompotensor`），`C` 返回 `BondView` 单位矩阵
+  视图——三个类从此可与 `CanonicalIMPS`/`CanonicalIMPO` 同款消费（`ψ.AL[ℓ]`/
+  `ψ.C[ℓ]` 周期下标）。**数据存储改为 `PeriodicVector`**（`DenseIMPS.As`/
+  `DenseIMPO.Ws` 原 `Vector`，构造器收 `Vector`/`PeriodicVector` 皆可）；
+  **行为变更**：`SparseIMPO` 的 `.C` 从「Schur C 块数组」改为该单位矩阵视图，
+  且**单类型参数化** `SparseIMPO{T}`（field `Ws::PeriodicVector{SchurMPOTensor{T}}`，
+  原 `SparseIMPO{TO}`）——`Base.parent(H)`/`.A`/`.B`/`.D` 属性删除，内部与
+  块访问一律走 `H.Ws`/`H[i][j, k]`；
+- `compress`/`compress!`/`mult`/`mult!`/`hadamard`/`hadamard!` 的输入放宽为
+  `AbstractInfiniteMPO`/`AbstractInfiniteMPS`：`DenseIMPO`/`CanonicalIMPO` 与
+  `DenseIMPS`/`CanonicalIMPS` 皆可直接输入，dense 类型经家族视图直接参与环境
+  与局部映射（**不再强制转换**），**输出类型恒为 `CanonicalIMPO`/
+  `CanonicalIMPS`**；缓存槽位（`MultCache` 的 operator/ket、`OverlapCache` 的
+  ket、`HadamardCache` 的 ket1/ket2）同步放宽并在原类型上做标量提升
+  （`_promote_scalar` 新增 Dense 方法）；原先的「raw 目标先规范化」包装方法
+  （`compress(::DenseIMPS)`、`compress!(out, ::DenseIMPS/::DenseIMPO)`、
+  `mult!(out, W, ::DenseIMPS)`）随之删除（泛型方法直接覆盖）；
+  `svdguess_mult`/`svdguess_hadamard`/`svdguess_compress` 同步接受抽象类型
+  （初态恒为 `CanonicalIMPS`）；`mult`/`hadamard` 的等长/整除检查不变；
+- **kwargs 透传**：`randomimps(...; kwargs...)` 与
+  `CanonicalIMPS(ψ::DenseIMPS; kwargs...)`（`CanonicalIMPO(W::DenseIMPO;
+  kwargs...)` 已有）把 kwargs 透传末端 `gaugefix!`（如 `tol`/`maxiter`），
+  不再强制默认参数；
+- **严格代数的 lcm 单胞**：`DenseIMPO * DenseIMPS` 与严格
+  `hadamard(::DenseIMPS, ::DenseIMPS)` 的输出单胞长度 = 两输入单胞的**最小
+  公倍数**（逐周期平铺收缩；逐站物理维仍须一致）；同单胞输入行为不变；
+  `DenseIMPO * DenseIMPO` 维持整除要求不变；
+- 测试：家族接口/继承关系/BondView 单位矩阵/kwargs 透传（api.jl）、lcm 单胞
+  与逐周期平铺语义（api.jl）、compress/mult/hadamard 的 dense ≡ canonical
+  等价性（同射线输入 → 同变分结果、输出类型恒 Canonical，arithmetics.jl）。
+
 ## 2026-09-30 扫掠引擎改名 `compression_sweeps!`；`Environments` 的 `length` 契约
 
 - `_compression_sweep!` 改名 **`compression_sweeps!`**（无下划线前缀；两个泛型

@@ -49,8 +49,9 @@ construction as a typed operator, mirroring MPSKit's naive `*`:
 `DenseIMPO * DenseIMPO` composes with kernel
 [`_naive_mul_tensor`](@ref) (bond dimension = product of the two bond
 dimensions), `DenseIMPO * DenseIMPS` applies with kernel
-[`fuse`](@ref) (bond dimension = W bond × ψ bond). Unit-cell lengths must be
-compatible (`length(target) % length(W) == 0`). No canonicalization or
+[`fuse`](@ref) (bond dimension = W bond × ψ bond). The `*` output unit-cell
+length is the **least common multiple** of the two inputs（单胞不同时逐周期
+平铺收缩）; per-site physical dimensions must agree. No canonicalization or
 normalization is performed — the raw fused tensor string is returned
 (`DenseIMPO`/`DenseIMPS`). For the canonicalized representative use
 `CanonicalIMPO(W * W2)` / `CanonicalIMPS(collect(W * ψ))`; for the variational
@@ -64,9 +65,11 @@ function Base.:*(W::DenseIMPO, W2::DenseIMPO)
 end
 
 function Base.:*(W::DenseIMPO, ψ::DenseIMPS)
-    (length(ψ) % length(W) == 0) ||
-        throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    return DenseIMPS([fuse(W[_mod1(ℓ, length(W))], ψ[ℓ]) for ℓ in 1:length(ψ)])
+    L, N = length(W), length(ψ)
+    P = lcm(L, N)
+    all(size(W[_mod1(ℓ, L)], 4) == size(ψ[_mod1(ℓ, N)], 2) for ℓ in 1:P) ||
+        throw(DimensionMismatch("incompatible per-site physical dimensions of MPS and MPO"))
+    return DenseIMPS([fuse(W[_mod1(ℓ, L)], ψ[_mod1(ℓ, N)]) for ℓ in 1:P])
 end
 
 # ---------------- 标量代数 ----------------

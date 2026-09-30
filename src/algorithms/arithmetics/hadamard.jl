@@ -27,7 +27,7 @@ The second return is the engine's final environments（zip 通道的
 [`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
 `converged` 收敛标志）。
 """
-function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG})
+function hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG})
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
@@ -35,7 +35,8 @@ function hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, alg::Union{VOMPS,IDMRG
     # 因子化 zip target（compute-on-the-fly）：融合 zip 张量从不物化，环境与
     # 局部映射直接消费 (ψ1, ψ2) 因子对（先与环境收缩——键优先的显式分步 GEMM，
     # 见 `_zip_push_left`/`_mapAC_zip`）；C 的融合序 = `kron(C2, C1)` 与 zip
-    # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。
+    # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。dense 输入经 getproperty 家族视图
+    # 直接参与（不做规范转换），输出类型恒为 CanonicalIMPS。
     envs = HadamardCache(svdguess_hadamard(ψ1, ψ2, alg.D), ψ1, ψ2,
                          alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
@@ -63,7 +64,7 @@ The bare-tensor method takes the site-tensor strings directly (e.g. `ψ.AL` /
 string — the low-level entry point for downstream packages; the
 `CanonicalIMPS` method is a thin wrapper that re-canonicalizes its output.
 """
-function svdguess_hadamard(ψ1::CanonicalIMPS, ψ2::CanonicalIMPS, D::Int)
+function svdguess_hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, D::Int)
     return CanonicalIMPS(svdguess_hadamard(ψ1.AL, ψ2.AL, D))
 end
 
@@ -106,7 +107,7 @@ as the initial guess; its bond profile is first brought to uniform
 into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境（bra = 乘积
 链）、`info` 为 [`IterativeConvergenceInfo`](@ref)。
 """
-function hadamard!(out::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
+function hadamard!(out::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS,
                    alg::Union{VOMPS,IDMRG})
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
@@ -225,7 +226,7 @@ zip（Hadamard/Schur 乘积）通道 `⟨below|zip(ψ1, ψ2)⟩` 的环境缓存
 解出（`alg` 提供 `tol`/`maxiter`），归一化同 MPSKit（GR Frobenius 归一、GL 按
 局部 C 通道 overlap λ 缩放；`kron(C2, C1)` 从不物化）。
 """
-struct HadamardCache{B<:CanonicalIMPS,K1<:CanonicalIMPS,K2<:CanonicalIMPS,T} <: CompressionEnvironments
+struct HadamardCache{B<:CanonicalIMPS,K1<:AbstractInfiniteMPS,K2<:AbstractInfiniteMPS,T} <: CompressionEnvironments
     bra::B
     ket1::K1   # ψ1（次指标因子）
     ket2::K2   # ψ2（主指标因子）
@@ -233,7 +234,7 @@ struct HadamardCache{B<:CanonicalIMPS,K1<:CanonicalIMPS,K2<:CanonicalIMPS,T} <: 
     rights::Vector{Array{T,3}}
 end
 
-function HadamardCache(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
+function HadamardCache(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS,
                        alg = Defaults.alg_environments();
                        GL0::Union{Nothing,AbstractArray} = nothing,
                        GR0::Union{Nothing,AbstractArray} = nothing)
@@ -268,7 +269,7 @@ end
 [`mixed_fixedpoints`](@ref) 统一——左右不动点由 :LM 主本征对经 [`fixedpoint`](@ref)
 解出（`alg` 分派 `tol`/`maxiter`：NamedTuple / DynamicTol / KrylovKit 算法皆可），
 复环境按解的实际 eltype 存放，`kron(C2, C1)` 从不物化）。"
-function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::CanonicalIMPS, ψ2::CanonicalIMPS,
+function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS,
                               alg = Defaults.alg_environments();
                               GL0::Union{Nothing,AbstractArray} = nothing,
                               GR0::Union{Nothing,AbstractArray} = nothing)

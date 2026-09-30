@@ -52,6 +52,62 @@ Base.iterate(p::PeriodicArray, args...) = iterate(p.data, args...)
 Base.copy(p::PeriodicArray) = PeriodicArray(copy(p.data))
 _parent(p::PeriodicArray) = p.data
 
+# ---------------- infinite chain / operator abstract types ----------------
+
+"""
+    AbstractInfiniteMPS{T<:Number}
+
+Abstract supertype of the infinite (periodically tiled) MPS representations:
+[`CanonicalIMPS`](@ref)（混合规范存储）与 [`DenseIMPS`](@ref)（原始张量串）。
+两者共享 `AL`/`AR`/`AC`/`C` 的家族访问接口（`DenseIMPS` 经 `getproperty` 视图
+提供：`AL`/`AR`/`AC` 返回数据的周期视图、`C` 返回 [`BondView`](@ref) 单位矩阵
+视图），因此以 `ψ.AL[ℓ]` / `ψ.C[ℓ]`（周期下标）消费家族数据的算法对两者皆可用。
+"""
+abstract type AbstractInfiniteMPS{T<:Number} end
+
+"""
+    AbstractInfiniteMPO{T<:Number}
+
+Abstract supertype of the infinite MPO representations: [`CanonicalIMPO`](@ref)
+（混合规范存储）、[`DenseIMPO`](@ref)（原始张量串）与 [`SparseIMPO`](@ref)
+（Schur 稀疏形式）。家族访问接口同 [`AbstractInfiniteMPS`](@ref)——
+`AL`/`AR`/`AC` 周期视图 + `C` 单位矩阵视图（`SparseIMPO` 的家族按站稠密化
+[`tompotensor`](@ref)、`C` 的键维取 Schur 层数 `nlvls`）。
+"""
+abstract type AbstractInfiniteMPO{T<:Number} end
+
+"`scalartype`（家族标量类型）：由抽象类型的标量参数直接给出——五个具体
+链/算符类型（`DenseIMPS`/`CanonicalIMPS`/`DenseIMPO`/`CanonicalIMPO`/
+`SparseIMPO`）共用，子类无需再各自定义。"
+scalartype(::Type{<:AbstractInfiniteMPS{T}}) where {T} = T
+scalartype(::Type{<:AbstractInfiniteMPO{T}}) where {T} = T
+
+"""
+    BondView(parent) <: AbstractVector{Matrix{scalartype(parent)}}
+
+`C` 家族的单位矩阵视图（[`DenseIMPS`](@ref)/[`DenseIMPO`](@ref)/[`SparseIMPO`](@ref)
+的 `getproperty` 接口用）：无中心矩阵数据的链上，`C[ℓ]` 按约定取**单位矩阵**，
+维度由 `parent.AL` 的键维推断（`C[ℓ]` 作用在键 ℓ 上，为
+`(site ℓ 右键维, site ℓ+1 左键维)` 的恒等方阵）。只读视图：`getindex` 以
+`length(parent)` 为周期取模（与 `PeriodicVector` 一致），`parent` 字段持有
+链/算符本身。
+"""
+struct BondView{P,T<:Number} <: AbstractVector{Matrix{T}}
+    parent::P
+end
+BondView(parent::Union{AbstractInfiniteMPS,AbstractInfiniteMPO}) =
+    BondView{typeof(parent),scalartype(parent)}(parent)
+
+Base.size(v::BondView) = (length(v.parent),)
+Base.length(v::BondView) = length(v.parent)
+function Base.getindex(v::BondView{P,T}, i::Integer) where {P,T}
+    N = length(v.parent)
+    ℓ = _mod1(i, N)
+    dr = size(v.parent.AL[ℓ], 3)
+    dl = size(v.parent.AL[_mod1(ℓ + 1, N)], 1)
+    return Matrix{T}(I, dr, dl)
+end
+
 # ---------------- algorithm abstractions and default parameters ----------------
 
 """

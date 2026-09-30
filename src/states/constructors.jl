@@ -1,23 +1,24 @@
 # ---------------- MPS constructors ----------------
 
 """
-    randomimps([T=Float64,] phydims; D, rng=Random.default_rng()) -> CanonicalIMPS
-    randomimps([T=Float64,] L; d=2, D, rng=Random.default_rng()) -> CanonicalIMPS
+    randomimps([T=Float64,] phydims; D, rng=Random.default_rng(), kwargs...) -> CanonicalIMPS
+    randomimps([T=Float64,] L; d=2, D, rng=Random.default_rng(), kwargs...) -> CanonicalIMPS
 
 Random MPS with uniform bond dimension `D`, canonicalized into the mixed
-canonical form upon construction. `phydims` gives the per-site physical
-dimensions (or a uniform `d` over `L` sites). **`D` 必须由用户显式给出**
-（无默认值）。
+canonical form upon construction (`kwargs` 透传末端的
+`CanonicalIMPS(As; kwargs...)` → `gaugefix!`，如 `tol`/`maxiter`).
+`phydims` gives the per-site physical dimensions (or a uniform `d` over `L`
+sites). **`D` 必须由用户显式给出**（无默认值）。
 """
 function randomimps(::Type{T}, phydims::AbstractVector{Int}; D::Int,
-                    rng::AbstractRNG = Random.default_rng()) where {T<:Number}
+                    rng::AbstractRNG = Random.default_rng(), kwargs...) where {T<:Number}
     N = length(phydims)
     (N >= 1) || throw(ArgumentError("at least one site is required"))
     As = Vector{Array{T,3}}(undef, N)
     for ℓ in 1:N
         As[ℓ] = randn(rng, T, D, phydims[ℓ], D)
     end
-    return CanonicalIMPS(As)
+    return CanonicalIMPS(As; kwargs...)
 end
 randomimps(phydims::AbstractVector{Int}; kwargs...) = randomimps(Float64, phydims; kwargs...)
 randomimps(::Type{T}, L::Integer; d::Int = 2, kwargs...) where {T<:Number} =

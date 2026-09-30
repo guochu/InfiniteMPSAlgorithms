@@ -14,7 +14,7 @@ layout mirrors MPSKit's `InfiniteMPS`:
 Convention (same as MPSKit): `AL[i] * C[i] = AC[i] = C[i-1] * AR[i]`.
 All indices wrap around with period N.
 """
-struct CanonicalIMPS{T}
+struct CanonicalIMPS{T<:Number} <: AbstractInfiniteMPS{T}
     AL::PeriodicVector{Array{T,3}}
     AR::PeriodicVector{Array{T,3}}
     C::PeriodicVector{Array{T,2}}
@@ -201,8 +201,6 @@ function Base.circshift(ψ::CanonicalIMPS, n)
     return CanonicalIMPS(circshift(ψ.AL, n), circshift(ψ.AR, n),
                                 circshift(ψ.C, n), circshift(ψ.AC, n))
 end
-
-scalartype(::Type{CanonicalIMPS{T}}) where {T} = T
 
 "phydim(ψ, i): site `i` 的物理维度（unit cell 内允许逐站不同）。"
 phydim(ψ::CanonicalIMPS, i::Integer) = size(ψ.AL[i], 2)

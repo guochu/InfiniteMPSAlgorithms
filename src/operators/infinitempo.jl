@@ -9,10 +9,10 @@ Infinite (periodically tiled) MPO storing a single string of rank-4 tensors:
 
 The identity MPO has bond dimension 1: `Ws[ℓ][1, u, 1, d] = δ(u, d)`.
 """
-struct DenseIMPO{T}
-    Ws::Vector{Array{T,4}}
+struct DenseIMPO{T<:Number} <: AbstractInfiniteMPO{T}
+    Ws::PeriodicVector{Array{T,4}}
 
-    function DenseIMPO{T}(Ws::Vector{Array{T,4}}) where {T}
+    function DenseIMPO{T}(Ws::PeriodicVector{Array{T,4}}) where {T}
         N = length(Ws)
         N > 0 || throw(DimensionMismatch("Ws must not be empty"))
         for ℓ in 1:N
@@ -27,8 +27,22 @@ struct DenseIMPO{T}
     end
 end
 
-DenseIMPO(Ws::Vector{Array{T,4}}) where {T} = DenseIMPO{T}(Ws)
-DenseIMPO(Ws::PeriodicVector{<:Array{T,4}}) where {T} = DenseIMPO(collect(Ws))
+DenseIMPO(Ws::PeriodicVector{Array{T,4}}) where {T} = DenseIMPO{T}(Ws)
+DenseIMPO(Ws::Vector{Array{T,4}}) where {T} = DenseIMPO{T}(PeriodicVector(Ws))
+
+Base.propertynames(::DenseIMPO) = (:Ws, :AL, :AR, :AC, :C)
+"`DenseIMPO` 的家族访问（[`AbstractInfiniteMPO`](@ref) 接口）：`AL`/`AR`/`AC`
+即原始张量串本体（`PeriodicVector` 周期存储、无拷贝），`C` 返回
+[`BondView`](@ref) 单位矩阵视图——使其可像 [`CanonicalIMPO`](@ref) 一样以
+`W.AL[ℓ]` / `W.C[ℓ]`（周期下标）消费。"
+function Base.getproperty(W::DenseIMPO, sym::Symbol)
+    if sym === :AL || sym === :AR || sym === :AC
+        return getfield(W, :Ws)
+    elseif sym === :C
+        return BondView(W)
+    end
+    return getfield(W, sym)
+end
 
 Base.length(W::DenseIMPO) = length(W.Ws)
 Base.getindex(W::DenseIMPO, ℓ::Integer) = W.Ws[_mod1(ℓ, length(W))]
@@ -38,11 +52,8 @@ Base.lastindex(W::DenseIMPO) = length(W)
 Base.iterate(W::DenseIMPO, args...) = iterate(W.Ws, args...)
 
 function Base.copy(W::DenseIMPO)
-    return DenseIMPO([copy(w) for w in W.Ws])
+    return DenseIMPO(PeriodicVector([copy(w) for w in W.Ws]))
 end
-
-scalartype(::Type{DenseIMPO{T}}) where {T} = T
-scalartype(W::DenseIMPO) = scalartype(typeof(W))
 
 "`phydim(W, i)`: site `i` 的上物理维 `du`（unit cell 内允许逐站不同）。"
 phydim(W::DenseIMPO, i::Integer) = size(W[i], 2)
@@ -53,7 +64,7 @@ max_bonddim(W::DenseIMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 
 "`dag(W)`: elementwise conjugation of every tensor (for overlap-type
 contractions; not the operator-adjoint network)."
-dag(W::DenseIMPO) = DenseIMPO(conj.(W.Ws))
+dag(W::DenseIMPO) = DenseIMPO(PeriodicVector([conj.(w) for w in W.Ws]))
 
 """
     Base.transpose(W::DenseIMPO) -> DenseIMPO

@@ -23,7 +23,7 @@ representation (`tr(C⁻¹·X·C) = tr(X)`), so the operator's periodic
 contraction is preserved up to the forced normalization scale of the MPS
 view (`‖AC[1]‖ = 1` is not part of the gauge freedom) — the ray is exact.
 """
-struct CanonicalIMPO{T}
+struct CanonicalIMPO{T<:Number} <: AbstractInfiniteMPO{T}
     AL::PeriodicVector{Array{T,4}}
     AR::PeriodicVector{Array{T,4}}
     C::PeriodicVector{Array{T,2}}
@@ -100,8 +100,6 @@ function Base.circshift(W::CanonicalIMPO, n)
                                    circshift(W.C, n), circshift(W.AC, n))
 end
 
-scalartype(::Type{CanonicalIMPO{T}}) where {T} = T
-
 "phydim(W, i): site `i` 的物理维（unit cell 内允许逐站不同；包内约定并强制
 方算符 `du == dd`）。"
 phydim(W::CanonicalIMPO, i::Integer) = size(W.AL[i], 2)
@@ -139,7 +137,7 @@ end
 Internal reshape kernel of [`vectorize`](@ref): MPS view of an MPO tensor
 string, `(wl, u, wr, d)` → `(wl, u*d, wr)`.
 """
-function asmps_view(Ws::Vector{<:Array{T,4}}) where {T}
+function asmps_view(Ws::AbstractVector{<:Array{T,4}}) where {T}
     out = Vector{Array{T,3}}(undef, length(Ws))
     for (ℓ, W) in enumerate(Ws)
         wl, u, wr, d = size(W)
