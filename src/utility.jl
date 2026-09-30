@@ -294,8 +294,8 @@ function _eigsolve(f, x₀, howmany::Integer, which::Symbol;
                                           eager = eager, kwargs...)
     if warn && info.converged < howmany
         @warn "KrylovKit.eigsolve 未完全收敛" nconv = info.converged howmany =
-              Int(howmany) residual_norms = info.residual_norms numiter = info.numiter tol =
-              tol maxiter = maxiter krylovdim = krylovdim
+              Int(howmany) normres = info.normres numiter = info.numiter tol = tol maxiter =
+              maxiter krylovdim = krylovdim
     end
     return vals, vecs, info
 end
