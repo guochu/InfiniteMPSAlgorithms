@@ -1,5 +1,41 @@
 # 变更记录（接口）
 
+## 2026-09-29 环境机制文件归位；`AC_hamiltonian`/`C_hamiltonian` 固化 `DMRGCache`
+
+- `DMRGCache` 的定义与两个构造器（`DenseIMPO` 转移矩阵主本征向量版、
+  `SparseIMPO` 逐 level 线性解版）及 `recalculate!` 从
+  `algorithms/groundstates/idmrg.jl` 移到 `algorithms/groundstates/envs.jl`
+  （与同属该缓存的 `_left/right_cyclethrough!`、`normalize_envs!`、
+  `transfer_leftenv!/transfer_rightenv!` 同处）；
+  `envs.jl` 中 `normalize_envs!`/`transfer_leftenv!`/`transfer_rightenv!`
+  的 `envs::Environments` 固化为 `envs::DMRGCache`（operator 槽相应收窄为
+  `Union{DenseIMPO,SparseIMPO}`，恒等分支删除）；
+- `effective.jl` 从 `src/` 移到 `src/algorithms/groundstates/`，主文件在其
+  紧跟 `envs.jl` 之后 include；`AC_hamiltonian`/`C_hamiltonian` 的
+  `envs::Environments` 固化为 `envs::DMRGCache`（恒等通道的 rank-2 环境升维
+  入口 `_to3` 随之删除）；恒等有效哈密顿量测试改用恒等 MPO 张量 +
+  手工恒等矩阵环境的 `DMRGCache` 表达；
+- 文件布局不变式：groundstates/ 现在承载「环境求解原语 + DMRGCache +
+  有效哈密顿量 + VUMPS/IDMRG」，idmrg.jl 只剩 IDMRG 算法本体。
+
+## 2026-09-29 IDMRG 加回 `alg_gauge`；`MPO_AC_Hamiltonian` 不再接受 `nothing`
+
+### IDMRG 参数对象
+
+`IDMRG` 新增 `alg_gauge` 字段（默认 `Defaults.alg_gauge()`，动态容差），**专用**
+于收尾的 AR 混合规范重建（`updatetol(alg_gauge, iter, ϵ)` 适配，对标 MPSKit
+`InfiniteMPS(mps.AR)`）——IDMRG 扫掠内无规范固定步，`alg_gauge` 不参与迭代。
+`alg_environments` 保持上一条的语义：提供四个 IDMRG 引擎（groundstate
+`find_groundstate`、mult/zip/overlap 通道 IDMRG 扫掠）的初始/收尾环境求解。
+
+### 有效哈密顿量
+
+`MPO_AC_Hamiltonian` 的 `operator` 槽不再允许 `nothing`
+（`O<:Union{MPOTensor,SchurMPOTensor}`）：`AC_hamiltonian` 要求传入真实算符
+（`SparseIMPO` Schur 张量照旧在构造时稠密化）。恒等通道的有效哈密顿量改用
+恒等 MPO 表达：`AC_hamiltonian(site, ψ, identityimpo(T, cell), ψ, envs)`。
+`MPO_C_Hamiltonian` 与 `C_hamiltonian`（5 参，`operator` 忽略）不变。
+
 ## 2026-09-29 变分压缩接口统一为三元输出 `(result, envs, info)`
 
 ### 变更内容

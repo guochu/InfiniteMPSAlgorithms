@@ -469,8 +469,9 @@ function _zip_idmrg_sweeps(ket2::CanonicalIMPS, ket1::CanonicalIMPS,
             break
         end
     end
-    # 规范恢复：从 AR 重建混合规范（固定紧容差——重建是规范操作），环境对终态重解
-    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
+    # 规范恢复：从 AR 重建混合规范（容差取 alg_gauge 的动态适配），环境对终态重解
+    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
     envs = HadamardCache(x, ket1, ket2, alg.alg_environments)
     _global_normalize!(x)
     return x, envs, IterativeConvergenceInfo(iter, losses, converged)

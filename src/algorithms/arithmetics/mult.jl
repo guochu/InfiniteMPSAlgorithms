@@ -417,7 +417,7 @@ template of [`_vomps_sweeps`](@ref)):
 4. convergence: `ϵ = ‖C[0]_new − C[0]_old‖` (boundary center-matrix drift).
 
 Afterwards the mixed-canonical state is rebuilt from the `AR` string (MPSKit
-`MultilineMPS(ψ.AR)` at the fixed tight `Defaults.tolgauge` tolerance) and
+`MultilineMPS(ψ.AR)` at the dynamically adapted `alg.alg_gauge` tolerance) and
 the environments are recomputed for the final state. （compress 的无算符版本见
 overlap.jl 的 `_overlap_idmrg_sweeps`。）Returns the optimized state, its final
 environments and the [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、
@@ -470,9 +470,10 @@ function _idmrg_sweeps(operator::CanonicalIMPO,
             break
         end
     end
-    # 规范恢复：从 AR 重建混合规范（MPSKit MultilineMPS(ψ.AR)，固定紧容差——
-    # 重建是规范操作，不随 alg_environments 松紧），环境对终态重解
-    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = Defaults.tolgauge, maxiter = Defaults.maxiter)
+    # 规范恢复：从 AR 重建混合规范（MPSKit MultilineMPS(ψ.AR; alg_gauge...)，
+    # 容差取 alg_gauge 的动态适配），环境对终态重解（MPSKit recalculate!）
+    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
     envs = MultCache(x, operator, ket, alg.alg_environments)
     _global_normalize!(x)
     return x, envs, IterativeConvergenceInfo(iter, losses, converged)

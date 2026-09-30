@@ -222,10 +222,12 @@ end
     transfer_rightenv!(envst, ψ2, H2, ψ2, 1)
     @test rightenv(envst, 1) ≈ Rref atol = 1e-12
 
-    # 恒等有效哈密顿量：H_AC(x) = x
+    # 恒等有效哈密顿量：恒等 MPO 张量 + 恒等矩阵环境 ⇒ H_AC(x) = x
     Random.seed!(24)
     x3 = randn(T, 4, 2, 4)
-    hac0 = AC_hamiltonian(1, ψ, nothing, ψ, envs0)
+    envsI = DMRGCache(identityimpo(T, [2]), ψ, [reshape(I4, 4, 1, 4)],
+                      [reshape(I4, 4, 1, 4)])
+    hac0 = AC_hamiltonian(1, ψ, identityimpo(T, [2]), ψ, envsI)
     @test hac0(x3) ≈ x3
 
     # H_AC / H_C 厄米性：⟨x,H y⟩ = ⟨H x, y⟩

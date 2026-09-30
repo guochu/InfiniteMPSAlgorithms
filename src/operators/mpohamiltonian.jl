@@ -12,7 +12,7 @@
 #
 # The first/last virtual levels are unit levels (identity channels);
 # `isidentitylevel`/`isemptylevel` support the per-level linear solves of the
-# DMRGCache (see algorithms/idmrg.jl).
+# DMRGCache (see algorithms/groundstates/envs.jl).
 
 """
     SparseIMPO(Ws) -> SparseIMPO

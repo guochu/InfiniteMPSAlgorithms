@@ -289,9 +289,10 @@ function _overlap_idmrg_sweeps(ket::CanonicalIMPS, x0::CanonicalIMPS, alg::IDMRG
             break
         end
     end
-    # 规范恢复：从 AR 重建混合规范（固定紧容差——重建是规范操作），环境对终态重解
-    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = Defaults.tolgauge,
-                      maxiter = Defaults.maxiter)
+    # 规范恢复：从 AR 重建混合规范（容差取 alg_gauge 的动态适配），环境对终态重解
+    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
+    x = CanonicalIMPS([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
+                      maxiter = alg_g.maxiter)
     envs = OverlapCache(x, ket, alg.alg_environments)
     _global_normalize!(x)
     return x, envs, IterativeConvergenceInfo(iter, losses, converged)

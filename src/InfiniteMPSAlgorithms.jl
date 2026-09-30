@@ -53,20 +53,21 @@ include("operators/w1w2.jl")
 # ---- transfer matrices ----
 include("transfermatrix.jl")
 
-# ---- environment machinery (abstract type and shared kernels; concrete
-#      caches are defined inside their algorithm files) ----
+# ---- environment machinery (abstract type; the DMRGCache concrete cache and
+#      the effective Hamiltonians live in algorithms/groundstates/) ----
 include("environments.jl")
-include("effective.jl")
 
 # ---- algorithms ----
 # algdefs: VUMPS / IDMRG / VOMPS parameter objects;
-# groundstates/: VUMPS / IDMRG ground-state searches;
+# groundstates/: environment solvers + DMRGCache + effective Hamiltonians and
+#                the VUMPS / IDMRG ground-state searches;
 # timeevo/: TDVP and TEBD time evolution;
 # arithmetics/: iterative MPO algebra (mult / hadamard / compress) sharing the
 #               VOMPS / IDMRG compression engines, and the exact_* debug
 #               constructors;
 include("algorithms/algdefs.jl")
 include("algorithms/groundstates/envs.jl")
+include("algorithms/groundstates/effective.jl")
 include("algorithms/groundstates/vumps.jl")
 include("algorithms/groundstates/idmrg.jl")
 include("algorithms/timeevo/tdvp.jl")
