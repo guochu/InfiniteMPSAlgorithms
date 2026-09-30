@@ -4,7 +4,11 @@
 # 定义与构造器见 groundstates/envs.jl——本文件只剩 IDMRG 算法本体。
 
 "MPSKit's `_localupdate_sweep_idmrg!`: forward + backward sweep; returns
-`(ψ, envs, C_old, E)`."
+`(ψ, envs, C_old, E)`. 与 MPSKit 逐位对齐的两处扫描语义：分裂因子正对角化
+（`alg_orth = QRpos`，同 `left_orth!/right_orth!(; positive = true)`）；分裂后
+把 `AC[pos]` 原地覆盖为对应的 `AL`/`AR`（MPSKit 的 `left_orth!`/`right_orth!`
+原地语义）——这决定下一站 `:SR` eigsolve 的初值（前向末站/反向首站保留 AC，
+同 MPSKit 的非原地特例），动态容差松紧下初值差异会直接进入迭代轨迹。"
 function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve, alg_orth)
     N = length(ψ)
     local E
@@ -14,6 +18,7 @@ function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve, alg_orth)
         h = AC_hamiltonian(pos, ψ, H, ψ, envs)
         _, ψ.AC[pos] = fixedpoint(h, ψ.AC[pos], :SR, alg_eigsolve)
         ψ.AL[pos], ψ.C[pos] = _leftsplit(ψ.AC[pos], alg_orth)
+        pos == N || copyto!(ψ.AC[pos], ψ.AL[pos])
         transfer_leftenv!(envs, ψ, H, ψ, pos + 1)
     end
     # right to left sweep
@@ -21,6 +26,7 @@ function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve, alg_orth)
         h = AC_hamiltonian(pos, ψ, H, ψ, envs)
         E, ψ.AC[pos] = fixedpoint(h, ψ.AC[pos], :SR, alg_eigsolve)
         ψ.C[pos - 1], ψ.AR[pos] = _rightsplit(ψ.AC[pos], alg_orth)
+        pos == 1 || copyto!(ψ.AC[pos], ψ.AR[pos])
         transfer_rightenv!(envs, ψ, H, ψ, pos - 1)
     end
     return ψ, envs, C_old, E

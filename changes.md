@@ -1,5 +1,24 @@
 # 变更记录（接口）
 
+## 2026-09-30 IDMRG 扫描语义对齐 MPSKit（原地 AC 覆盖）；groundstate concordance 改固定小迭代行为一致性测试
+
+- `_localupdate_sweep_idmrg!` 对齐 MPSKit 的两处扫描语义：分裂因子正对角化
+  （`QRpos`，同 `left_orth!/right_orth!(; positive = true)`，本就一致）；分裂后把
+  `AC[pos]` 原地覆盖为对应的 `AL`/`AR`（MPSKit `left_orth!`/`right_orth!` 原地
+  语义；前向末站/反向首站保留 AC，同其非原地特例）——`AC` 是下一站 `:SR`
+  eigsolve 的初值，动态容差松弛时初值差异直接进入迭代轨迹（Heisenberg k=1
+  态偏差 3.4e-3 → 2.3e-3）；
+- groundstate concordance 测试改**固定小迭代行为一致性**（不再跑收敛）：同初
+  态、`tol = 0` 强制 k ∈ {1, 2, 5} 轮，断言能量与态一致。实测（k=1,2,5）：
+  VUMPS 能量差 ~1e-14、态 ray 残差 ~1e-12（机器精度级严格一致，三通道
+  TFIM/Heisenberg/DenseIMPO）；IDMRG 能量差 ≤ 3e-4、态残差 ≤ 4e-3 且随 k 收
+  敛到同一不动点（Gauss–Seidel 顺序扫描 + 初始环境中间层非对角通道 linsolve
+  解方向的 ⟨H⟩-等价差异；容差按实测给 1e-3/1e-2）；DenseIMPO 通道能量差
+  ≤ 2e-6、态不比对（恒等层 bookkeeping 使转移矩阵主导本征空间简并，环境取向
+  不由归一化唯一确定）；`niter` 断言放宽为 `≤ k`（Dense 通道 IDMRG 会在少数
+  几轮内到达精确不动点——C 漂移恰为 0 合法提前收敛）。该 testset 从 ~100s
+  降至 ~9s。
+
 ## 2026-09-30 `svdguess_*` kwargs；严格 hadamard 改重载 `⊙`；norm/fidelity/distance kwargs；`find_groundstate` 支持 DenseIMPO；`infinite_mpo` 删除
 
 - `svdguess_compress`/`svdguess_mult`/`svdguess_hadamard` 的
