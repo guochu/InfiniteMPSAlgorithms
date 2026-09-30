@@ -316,11 +316,9 @@ end
     Wd = DenseIMPO([randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)])
     @test Wd.AL === Wd.Ws && Wd.AL[0] === Wd.Ws[2] && Wd.AC[1] === Wd.Ws[1]
     @test Wd.C[2] == Matrix{T}(I, 2, 2)
-    # SparseIMPO：家族按站稠密化（tompotensor），C 单位矩阵（Schur 层数）
-    H1 = tfim_hamiltonian(T = T)
-    @test H1.AL[1] == tompotensor(H1[1]) && H1.AR[2] == tompotensor(H1[2])
-    @test H1.AC[1] == tompotensor(H1[1]) && H1.C[1] == Matrix{T}(I, 3, 3)
-    @test H1.C[2] == Matrix{T}(I, 3, 3)
+    # SparseIMPO：Schur 哈密顿量容器——不提供 AL/AR/AC/C 家族视图（Schur 块访问
+    # 走 H[i][j, k]，不参与 compress/mult/hadamard 变分通道）
+    @test_throws ErrorException tfim_hamiltonian(T = T).AL
     # 家族接口使 dense 链可与 canonical 同款消费（length/phydims/周期下标）
     ψc = CanonicalIMPS(collect(ψd.As); tol = 1e-12)
     @test length(ψd) == length(ψc) && phydims(ψd) == phydims(ψc)

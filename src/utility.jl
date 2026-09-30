@@ -70,9 +70,11 @@ abstract type AbstractInfiniteMPS{T<:Number} end
 
 Abstract supertype of the infinite MPO representations: [`CanonicalIMPO`](@ref)
 （混合规范存储）、[`DenseIMPO`](@ref)（原始张量串）与 [`SparseIMPO`](@ref)
-（Schur 稀疏形式）。家族访问接口同 [`AbstractInfiniteMPS`](@ref)——
-`AL`/`AR`/`AC` 周期视图 + `C` 单位矩阵视图（`SparseIMPO` 的家族按站稠密化
-[`tompotensor`](@ref)、`C` 的键维取 Schur 层数 `nlvls`）。
+（Schur 稀疏哈密顿量容器）。`AL`/`AR`/`AC` 周期视图 + `C` 单位矩阵视图的家族
+接口由 `DenseIMPO`/`CanonicalIMPO` 提供（变分算术通道 compress/mult/hadamard
+据此直接消费两类输入）；`SparseIMPO` 不提供家族视图、不参与这些通道（需要
+dense/canonical 表示时显式 `DenseIMPO(H)`/`CanonicalIMPO(...)` 转换，或走其
+Schur 专用通道：DMRGCache/expectationvalue/make_time_mpo）。
 """
 abstract type AbstractInfiniteMPO{T<:Number} end
 

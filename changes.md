@@ -1,5 +1,16 @@
 # 变更记录（接口）
 
+## 2026-09-30 SparseIMPO 撤下家族视图（AL/AR/AC/C）
+
+- 删除 `SparseIMPO` 的 `getproperty` 家族接口：`.AL`/`.AR`/`.AC` 不再按站稠密化
+  （`tompotensor`），`.C` 不再提供 BondView 单位矩阵视图——Schur 块访问一律走
+  `H[i][j, k]`（getindex）、内部遍历一律走 `H.Ws`；变分算术通道
+  （compress/mult/hadamard）不支持 `SparseIMPO` 输入（需要 dense/canonical
+  表示时显式 `DenseIMPO(H)`/`CanonicalIMPO(...)` 转换，或走其 Schur 专用通道：
+  DMRGCache/expectationvalue/make_time_mpo）；`AbstractInfiniteMPO` 的 docstring
+  同步（家族接口由 DenseIMPO/CanonicalIMPO 提供）；api.jl 家族接口测试相应调整
+  （`H.AL` 现按 `TypeError` 断言）。
+
 ## 2026-09-30 `AbstractInfiniteMPS`/`AbstractInfiniteMPO` 家族接口；dense 类型直入变分通道；严格代数 lcm 单胞
 
 - 新增抽象类型 **`AbstractInfiniteMPS{T<:Number}`**（`CanonicalIMPS`/`DenseIMPS`

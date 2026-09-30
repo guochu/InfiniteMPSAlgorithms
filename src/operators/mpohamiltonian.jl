@@ -65,19 +65,6 @@ bonddim(H::SparseIMPO) = nlvls(H[1])
 phydim(H::SparseIMPO, i::Integer) = size(H[i].A, 2)
 phydims(H::SparseIMPO) = [size(H[ℓ].A, 2) for ℓ in 1:length(H)]
 
-# AbstractInfiniteMPO 家族接口（AL/AR/AC/C）：Schur 块访问走 `H[i][j, k]`
-# （getindex）；`.C` 为家族接口的单位矩阵视图（BondView，键维 = nlvls）。
-function Base.getproperty(H::SparseIMPO, sym::Symbol)
-    if sym === :AL || sym === :AR || sym === :AC
-        # 家族接口：Schur 张量逐站稠密化（rank-4，键在槽 1/3）
-        return PeriodicVector([tompotensor(W) for W in getfield(H, :Ws)])
-    elseif sym === :C
-        # 家族接口的单位矩阵视图（[`BondView`](@ref)，Schur 层数为键维）
-        return BondView(H)
-    end
-    return getfield(H, sym)
-end
-
 """
     isidentitylevel(H, i) -> Bool
 
