@@ -147,29 +147,6 @@ transfer-matrix dominant-eigenvector path.
 """
 DenseIMPO(H::SparseIMPO) = DenseIMPO(tompotensors(H))
 
-"""
-    infinite_mpo(bulk::SchurMPOTensor) -> DenseIMPO
-
-Schur tensor of a periodic bulk → `DenseIMPO` (bond state 1 = the identity
-channel; the on-site term `D` is merged into the identity→identity channel):
-
-- `W[1, ·, 1, ·] = I + D` (on-site term merged into identity→identity);
-- `W[1, ·, j+1, ·] = C[:, j, :]`, `W[j+1, ·, 1, ·] = B[j, :, :]`,
-  `W[i+1, ·, j+1, ·] = A[i, :, j, :]`.
-"""
-function infinite_mpo(bulk::SchurMPOTensor)
-    T = scalartype(bulk)
-    d = size(bulk.A, 2)
-    a = size(bulk.A, 1)
-    nb = a + 1                       # number of bond states: identity + middle operators
-    W = zeros(T, nb, d, nb, d)
-    W[1, :, 1, :] = Matrix{T}(I, d, d) + bulk.D
-    for j in 1:a
-        W[1, :, j+1, :] = bulk.C[:, j, :]           # aⱼ (channel opening)
-        W[j+1, :, 1, :] = bulk.B[j, :, :]           # bⱼ (channel closing)
-        for i in 1:a
-            W[j+1, :, i+1, :] = bulk.A[j, :, i, :]  # channel propagation
-        end
-    end
-    return DenseIMPO([W])
-end
+# 单个 Schur bulk 的周期 DenseIMPO 表示：`DenseIMPO([tompotensor(bulk)])`
+# （原 infinite_mpo 的「D 并入恒等通道」变体删除——与 tompotensor 的 Schur
+# 布局重复，且在含 NN 项的 bulk 上语义不同）。

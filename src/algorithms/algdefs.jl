@@ -93,7 +93,7 @@ with MPSKit). The driver functions (`mult`, `compress`,
 `out` and ignore `alg.D`. The strict compression-free constructions live as
 the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
 `Base.:*(::DenseIMPO, ::DenseIMPS)` and
-`hadamard(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
+`⊙(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
 `operators/linalg.jl`).
 
 `alg_gauge`/`alg_environments`（动态容差规范固定 / 环境重解，MPSKit

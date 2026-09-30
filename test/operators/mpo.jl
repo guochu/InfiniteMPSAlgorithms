@@ -1,22 +1,23 @@
-@testset "SparseIMPO 与 infinite_mpo" begin
+@testset "SparseIMPO 与模型构造" begin
     T = ComplexF64
 
     # bulk → DenseIMPO 构造
     Hm, bulk = heisenberg_xxz(T = T)
     @test Hm isa DenseIMPO
     @test length(Hm) == 1
-    @test bonddim(Hm, 1) == 4   # identity + 3 个通道（SxSx/SySy/SzSz 共 3 个 NN 项）
+    @test bonddim(Hm, 1) == 5   # 2 单位层 + 3 个通道（SxSx/SySy/SzSz 共 3 个 NN 项）
 
-    # `find_groundstate` 只支持 SparseIMPO（DenseIMPO 的周期 trace 期望不是能量，
-    # 见 DMRGCache 的 DenseIMPO 版说明）⇒ 传 DenseIMPO 显式报 ArgumentError
-    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2]; D = 10), Hm,
-                                               VUMPS(D = 10, maxiter = 10, tol = 1e-9,
-                                                     verbosity = 0))
-    @test_throws ArgumentError find_groundstate(randomimps(T, [2, 2]; D = 10),
-                                               DenseIMPO(tfim_hamiltonian(T = T)),
-                                               IDMRG(D = 10, maxiter = 10, tol = 1e-9))
-    @test_throws ArgumentError find_groundstate(DenseIMPO(tfim_hamiltonian(T = T)),
-                                               VUMPS(D = 10, maxiter = 10, tol = 1e-9))
+    # DenseIMPO 通道（MPSKit InfiniteMPO 通道的对标实现）：VUMPS/IDMRG 可直接
+    # 求基态——该通道的「能量」为周期 trace 收缩（含恒等层 bookkeeping，见
+    # DMRGCache 的 DenseIMPO 版说明）；恒等层结构的收敛较慢，这里只断言可跑且
+    # 期望有限，与 MPSKit 的一致性由 concordance 测试固化（同参数收敛能量对比）
+    Hd = DenseIMPO(tfim_hamiltonian(T = T))
+    ψd, envsd, _ = find_groundstate(randomimps(T, [2, 2]; D = 10), Hd,
+                                    VUMPS(D = 10, maxiter = 300, tol = 1e-9,
+                                          verbosity = 0))
+    @test isfinite(real(expectationvalue(ψd, Hd, envsd)))
+    ψd2, envsd2, _ = find_groundstate(Hd, IDMRG(D = 10, maxiter = 300, tol = 1e-9))
+    @test isfinite(real(expectationvalue(ψd2, Hd, envsd2)))
     # 同一模型的 SparseIMPO 形式可正常求基态
     Hs = heisenberg_hamiltonian(T = T)
     ψs, envss, _ = find_groundstate(randomimps(T, [2, 2]; D = 10), Hs,

@@ -27,16 +27,17 @@ function _localupdate_sweep_idmrg!(ψ, H, envs, alg_eigsolve, alg_orth)
 end
 
 """
-    find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG, [envs])
-        -> (ψ, envs, info)
+    find_groundstate(ψ₀::CanonicalIMPS, operator::Union{SparseIMPO,DenseIMPO},
+                     alg::IDMRG, [envs]) -> (ψ, envs, info)
 
-IDMRG ground-state search. `operator` **必须是 `SparseIMPO`**（同
-[`find_groundstate`](@ref) 的 VUMPS 版说明：`DenseIMPO` 的周期 trace 期望不是
-能量，传入会报 `ArgumentError`）。The third return is the
-[`IterativeConvergenceInfo`](@ref)（`niter` 迭代轮数、`losses` = [初始 Galerkin
-残差, 逐轮 bond-0 中心矩阵漂移...]、`converged` 收敛标志）。
+IDMRG ground-state search（`operator` 的两种形式同
+[`find_groundstate`](@ref) 的 VUMPS 版说明：`SparseIMPO` 闭列公式求能量、
+`DenseIMPO` 周期 trace 收缩对标 MPSKit 的 `InfiniteMPO` 通道）。The third
+return is the [`IterativeConvergenceInfo`](@ref)（`niter` 迭代轮数、`losses` =
+[初始 Galerkin 残差, 逐轮 bond-0 中心矩阵漂移...]、`converged` 收敛标志）。
 """
-function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::IDMRG,
+function find_groundstate(ψ₀::CanonicalIMPS, operator::Union{SparseIMPO,DenseIMPO},
+                          alg::IDMRG,
                           envs::Environments = DMRGCache(ψ₀, operator))
     ψ = copy(ψ₀)
     ϵ = calc_galerkin(ψ, operator, envs)

@@ -32,17 +32,24 @@ function gauge_step!(ψ::CanonicalIMPS, ALs::Vector, C₀; tol::Real, maxiter::I
 end
 
 """
-    find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS, [envs]; which = :SR)
-        -> (ψ, envs, info)
+    find_groundstate(ψ₀::CanonicalIMPS, operator::Union{SparseIMPO,DenseIMPO},
+                     alg::VUMPS, [envs]; which = :SR) -> (ψ, envs, info)
 
-VUMPS ground-state search. `operator` **必须是 `SparseIMPO`**（哈密顿量的 Schur
-形式）：只有它才给出能量泛函的正确收缩（闭列公式 + 非齐次线性解的环境）。
-`DenseIMPO` 的周期 trace 期望不是能量（见 [`DMRGCache`](@ref) 的 `DenseIMPO`
-版说明），传入会直接报 `ArgumentError`。The third return is the
-[`IterativeConvergenceInfo`](@ref)（`niter` 迭代轮数、`losses` = [初始 Galerkin
-残差, 逐轮 Galerkin 残差...]、`converged` 收敛标志）。
+VUMPS ground-state search. `operator` 两种形式皆可（对标 MPSKit 的
+VUMPS 同时接受 `InfiniteMPOHamiltonian`/`InfiniteMPO`）：
+
+- `SparseIMPO`（哈密顿量的 Schur 形式）：闭列公式 + 非齐次线性解的环境——
+  **能量泛函的正确收缩，求能量用它**；
+- `DenseIMPO`：周期 trace 完整收缩（转移矩阵主本征向量环境，MPSKit
+  `InfiniteMPO` 通道的对标实现）——Hamiltonian 型 MPO 的该期望含恒等层
+  bookkeeping，不是真实能量（见 [`DMRGCache`](@ref) 的 `DenseIMPO` 版说明；
+  与 MPSKit `expectation_value(ψ, ::InfiniteMPO)` 逐位同约定）。
+
+The third return is the [`IterativeConvergenceInfo`](@ref)（`niter` 迭代轮数、
+`losses` = [初始 Galerkin 残差, 逐轮 Galerkin 残差...]、`converged` 收敛标志）。
 """
-function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS,
+function find_groundstate(ψ₀::CanonicalIMPS, operator::Union{SparseIMPO,DenseIMPO},
+                          alg::VUMPS,
                           envs::Environments = DMRGCache(ψ₀, operator);
                           which::Symbol = :SR)
     ψ = copy(ψ₀)
@@ -79,34 +86,20 @@ function find_groundstate(ψ₀::CanonicalIMPS, operator::SparseIMPO, alg::VUMPS
 end
 
 """
-    find_groundstate(operator::SparseIMPO, alg::Union{VUMPS,IDMRG}, [envs]) -> (ψ, envs, info)
+    find_groundstate(operator::Union{SparseIMPO,DenseIMPO},
+                     alg::Union{VUMPS,IDMRG}, [envs]) -> (ψ, envs, info)
 
 Convenience method without an explicit initial state: `ψ₀` is generated
 randomly (`randomimps`) with bond dimension `alg.D`, taking the physical
 dimensions and scalar type from `operator`.
 """
-function find_groundstate(operator::SparseIMPO, alg::Union{VUMPS,IDMRG},
+function find_groundstate(operator::Union{SparseIMPO,DenseIMPO},
+                          alg::Union{VUMPS,IDMRG},
                           envs::Union{Nothing,Environments} = nothing)
     ψ₀ = randomimps(scalartype(operator), phydims(operator); D = alg.D)
     envs0 = envs === nothing ? DMRGCache(ψ₀, operator) : envs
     return find_groundstate(ψ₀, operator, alg, envs0)
 end
-
-"基态搜索只接受 `SparseIMPO`：`DenseIMPO` 通道的周期 trace 期望不是能量（见
-[`DMRGCache`](@ref) 的 `DenseIMPO` 版说明，MPSKit 亦另设专用哈密顿量方法）。
-请改用 `SparseIMPO`（如 `tfim_hamiltonian` / `heisenberg_hamiltonian` /
-`mpohamiltonian`，或 `tfim()/heisenberg_xxz()` 返回的 `hamiltonian` 字段）。"
-_dense_groundstate_error() = throw(ArgumentError(
-    "find_groundstate 只支持 SparseIMPO：DenseIMPO 的周期 trace 期望不是能量" *
-    "（详见 DMRGCache 的 DenseIMPO 版 docstring）。请改用 SparseIMPO，" *
-    "例如 tfim_hamiltonian / heisenberg_hamiltonian / mpohamiltonian 或 " *
-    "tfim()/heisenberg_xxz() 的 hamiltonian 字段。"))
-
-### NOTE: 这两个方法只用于给出清晰的报错（比缺方法的 MethodError 好读）
-find_groundstate(ψ₀::CanonicalIMPS, operator::DenseIMPO, alg::Union{VUMPS,IDMRG},
-                 envs = nothing) = _dense_groundstate_error()
-find_groundstate(operator::DenseIMPO, alg::Union{VUMPS,IDMRG},
-                 envs = nothing) = _dense_groundstate_error()
 
 """
     calc_galerkin(ψ, operator, envs) -> Float64

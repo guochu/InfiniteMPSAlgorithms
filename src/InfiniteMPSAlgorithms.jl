@@ -29,7 +29,7 @@ using FiniteMPSAlgorithms
 # 方法扩展：distance/distance2 扩展 FiniteMPSAlgorithms 的同名函数（保持其
 # 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
 # TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。
-import FiniteMPSAlgorithms: distance, distance2
+import FiniteMPSAlgorithms: distance, distance2, ⊙
 import TensorOperations: scalartype
 
 include("utility.jl")
@@ -117,7 +117,7 @@ export
     # ground-state and time-evolution algorithms
     Algorithm, VUMPS, IDMRG, TDVP, VOMPS, IterativeConvergenceInfo,
     find_groundstate, timestep, time_evolve, integrate,
-    mult, hadamard,
+    mult, hadamard, ⊙,
     fuse, copyphyims,
     compress, mult!, hadamard!, compress!,
     changebond!, svdguess_mult, svdguess_hadamard, svdguess_compress,
@@ -130,7 +130,7 @@ export
     SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,
     isidentitylevel, isemptylevel, nlvls,
-    tompotensors, tompotensor, infinite_mpo,
+    tompotensors, tompotensor,
     WI, WII, make_time_mpo,
     # observables
     expectationvalue, correlator, entropy, entanglement_spectrum,

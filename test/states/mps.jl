@@ -242,13 +242,13 @@ end
           1e-9 * max(d2sc, 1)
     @test distance(d1, d2) ≈ sqrt(d2sc) atol = 1e-10 * max(distance(d1, d2), 1)
 
-    # hadamard：物理维不变、键维 = 4·4，波形逐点乘积（原始串严格成立）
-    h = hadamard(d1, d2)
+    # ⊙（严格 hadamard）：物理维不变、键维 = 4·4，波形逐点乘积（原始串严格成立）
+    h = d1 ⊙ d2
     @test h isa DenseIMPS && phydims(h) == [2, 3] && max_bonddim(h) == 16
     w1 = _dense_trace(collect(d1.As))
     w2 = _dense_trace(collect(d2.As))
     @test _dense_trace(collect(h.As)) ≈ w1 .* w2 atol = 1e-10 * max(abs(w1[1] * w2[1]), 1)
     # 不支持 Canonical 输入
-    @test_throws MethodError hadamard(ψ1, ψ2)
+    @test_throws MethodError ψ1 ⊙ ψ2
 end
 

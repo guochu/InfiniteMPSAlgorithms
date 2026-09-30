@@ -256,11 +256,12 @@ end
 Invariant under independent overall phases **and** normalizations of the two
 states, so it compares rays rather than representatives — the natural accuracy
 measure for variational algebra results (which are only defined up to a global
-phase). `infidelity = 1 − fidelity`.
+phase). `kwargs` 透传 `dot`（如 `krylovdim`）. `infidelity = 1 − fidelity`.
 """
-fidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS) =
-    abs(dot(ψ₁, ψ₂)) / (norm(ψ₁) * norm(ψ₂))
-infidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS) = 1 - fidelity(ψ₁, ψ₂)
+fidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS; kwargs...) =
+    abs(dot(ψ₁, ψ₂; kwargs...)) / (norm(ψ₁) * norm(ψ₂))
+infidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS; kwargs...) =
+    1 - fidelity(ψ₁, ψ₂; kwargs...)
 
 # ---------------- mixed-canonical diagnostics (after InfiniteTEMPO's ismixedcanonical) ----------------
 

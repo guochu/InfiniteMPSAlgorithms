@@ -7,7 +7,7 @@
 # （[`compression_sweeps!`](@ref)，arithmetics/envs.jl）
 # ——乘积因子 (ψ1, ψ2) 直接进入环境/局部映射收缩，融合 zip 张量
 # 从不物化）。The strict compression-free Hadamard
-# product lives in states/linalg.jl (`hadamard(::DenseIMPS, ::DenseIMPS)`);
+# product lives in states/linalg.jl (`⊙(::DenseIMPS, ::DenseIMPS)`);
 # there is no `CanonicalIMPS` method — convert explicitly first.
 
 """
@@ -62,10 +62,12 @@ site 1. Every output bond is ≤ `D`.
 The bare-tensor method takes the site-tensor strings directly (e.g. `ψ.AL` /
 `ψ.AR` of a [`CanonicalIMPS`](@ref)) and returns the right-gauge tensor
 string — the low-level entry point for downstream packages; the
-`CanonicalIMPS` method is a thin wrapper that re-canonicalizes its output.
+`CanonicalIMPS` method is a thin wrapper that re-canonicalizes its output
+（`kwargs` 透传末端 `CanonicalIMPS` 构造器 → `gaugefix!`）.
 """
-function svdguess_hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, D::Int)
-    return CanonicalIMPS(svdguess_hadamard(ψ1.AL, ψ2.AL, D))
+function svdguess_hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, D::Int;
+                           kwargs...)
+    return CanonicalIMPS(svdguess_hadamard(ψ1.AL, ψ2.AL, D); kwargs...)
 end
 
 function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},

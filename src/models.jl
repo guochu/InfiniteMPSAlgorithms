@@ -114,7 +114,7 @@ periodic `DenseIMPO` (的周期 trace 完整收缩适合做**时间演化生成�
 """
 function heisenberg_xxz(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0, T::Type = ComplexF64)
     bulk = bulk_mpo(-h * Sz(T), [(J, Sx(T), Sx(T)), (J, Sy(T), Sy(T)), (J * Δ, Sz(T), Sz(T))])
-    return (; mpo = infinite_mpo(bulk), bulk = bulk,
+    return (; mpo = DenseIMPO([tompotensor(bulk)]), bulk = bulk,
             hamiltonian = heisenberg_hamiltonian(; J = J, Δ = Δ, h = h, T = T))
 end
 
@@ -129,7 +129,7 @@ ground-state energy density is `−4/π`. `mpo` 是周期 `DenseIMPO`（适合�
 """
 function tfim(; J::Real = 1.0, h::Real = 1.0, T::Type = ComplexF64)
     bulk = bulk_mpo(-h * σz(T), [(-J, σx(T), σx(T))])
-    return (; mpo = infinite_mpo(bulk), bulk = bulk,
+    return (; mpo = DenseIMPO([tompotensor(bulk)]), bulk = bulk,
             hamiltonian = tfim_hamiltonian(; J = J, h = h, T = T))
 end
 
@@ -153,6 +153,6 @@ function fermi_hubbard(; t::Real = 1.0, U::Real = 0.0, μ::Real = 0.0, T::Type =
     h1 = U * n_updn - μ * n
     pairs = [(-t, a_up, c_up), (-t, a_dn, c_dn)]
     bulk = bulk_mpo(h1, pairs)
-    return (; mpo = infinite_mpo(bulk), bulk = bulk,
+    return (; mpo = DenseIMPO([tompotensor(bulk)]), bulk = bulk,
             hamiltonian = SparseIMPO([mpohamiltonian(h1, pairs)]))
 end

@@ -344,16 +344,16 @@ end
     @test bonddim(Wψ, 1) == 4
     # 逐周期平铺语义：site ℓ = fuse(W[mod1(ℓ,3)], ψ[mod1(ℓ,2)])
     @test Wψ[5] == fuse(W3[2], ψ2[1])
-    # 严格 hadamard：(N₁ = 2, N₂ = 3) ⇒ 6，键维 = 乘积
-    h32 = hadamard(ψ2, ψ3)
+    # 严格 hadamard（⊙）：(N₁ = 2, N₂ = 3) ⇒ 6，键维 = 乘积
+    h32 = ψ2 ⊙ ψ3
     @test h32 isa DenseIMPS && length(h32) == 6 && bonddim(h32, 1) == 6
     # 逐周期平铺语义
     @test h32[4] == InfiniteMPSAlgorithms._naive_hadamard_tensor(ψ2[2], ψ3[1])
     # 同单胞输入行为不变（lcm = N）
     @test length(W3 * DenseIMPS(collect(ψ3.As))) == 3
     # 逐站物理维不匹配仍抛错
-    @test_throws DimensionMismatch hadamard(ψ2, DenseIMPS([randn(T, 2, 3, 2),
-                                                           randn(T, 2, 3, 2)]))
+    @test_throws DimensionMismatch (ψ2 ⊙ DenseIMPS([randn(T, 2, 3, 2),
+                                                    randn(T, 2, 3, 2)]))
 end
 
 @testset "DenseIMPO 构造、周期下标与标量代数" begin
@@ -448,7 +448,7 @@ end
 
     # 无 on-site、无最近邻项的 bulk 只有恒等通道（2-site 单胞期望 = 2）
     empty_bulk = bulk_mpo(zeros(T, 2, 2), Tuple{Float64,Matrix{T},Matrix{T}}[])
-    W0 = infinite_mpo(empty_bulk)
+    W0 = DenseIMPO([tompotensor(empty_bulk)])
     ρ = prodimps(T, [2, 2], [1, 1])
     @test abs(expectationvalue(ρ, W0) - 2) < 1e-12
 end

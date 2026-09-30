@@ -227,10 +227,13 @@ Hilbert–Schmidt fidelity of two operators stored as [`CanonicalIMPO`](@ref):
 `|⟨W₁, W₂⟩_HS| / (‖W₁‖·‖W₂‖) ∈ [0, 1]`, computed as the
 [`fidelity`](@ref) of the vectorized states (the ring overlap of the MPS
 views is the C-weighted operator inner product). Invariant under overall
-phases and scalings; `infidelity = 1 − fidelity`.
+phases and scalings; `kwargs` 透传 vectorized 态的 `dot`（如 `krylovdim`）;
+`infidelity = 1 − fidelity`.
 """
-fidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = fidelity(vectorize(W₁), vectorize(W₂))
-infidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO) = 1 - fidelity(W₁, W₂)
+fidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO; kwargs...) =
+    fidelity(vectorize(W₁), vectorize(W₂); kwargs...)
+infidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO; kwargs...) =
+    1 - fidelity(W₁, W₂; kwargs...)
 
 """
     mixedcanonical_error(W) -> (ϵ_left, ϵ_right, ϵ_mixed)

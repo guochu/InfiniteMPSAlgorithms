@@ -567,11 +567,12 @@ The bare-tensor methods take the site-tensor strings directly (`PeriodicVector`
 of rank-4 MPO tensors and rank-3 MPS tensors, e.g. `ψ.AL` / `ψ.AR` of a
 [`CanonicalIMPS`](@ref)) and return the right-gauge tensor string — the
 low-level entry point for downstream packages; the `CanonicalIMPS` methods
-are thin wrappers that re-canonicalize its output.
+are thin wrappers that re-canonicalize its output（`kwargs` 透传末端
+`CanonicalIMPS` 构造器 → `gaugefix!`）.
 """
-function svdguess_mult(W, ψ::AbstractInfiniteMPS, D::Int)
+function svdguess_mult(W, ψ::AbstractInfiniteMPS, D::Int; kwargs...)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
-    return CanonicalIMPS(svdguess_mult(Wm.Ws, ψ.AL, D))
+    return CanonicalIMPS(svdguess_mult(Wm.Ws, ψ.AL, D); kwargs...)
 end
 
 function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
@@ -593,10 +594,10 @@ function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
     return _lazy_svd_guess(site, length(ALs), D)
 end
 
-function svdguess_mult(W, W2::AbstractInfiniteMPO, D::Int)
+function svdguess_mult(W, W2::AbstractInfiniteMPO, D::Int; kwargs...)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
-    return CanonicalIMPS(svdguess_mult(Wm.Ws, W2m.Ws, D))
+    return CanonicalIMPS(svdguess_mult(Wm.Ws, W2m.Ws, D); kwargs...)
 end
 
 function svdguess_mult(Ws1::PeriodicVector{<:Array{T,4}},

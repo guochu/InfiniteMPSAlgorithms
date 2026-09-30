@@ -1,5 +1,27 @@
 # 变更记录（接口）
 
+## 2026-09-30 `svdguess_*` kwargs；严格 hadamard 改重载 `⊙`；norm/fidelity/distance kwargs；`find_groundstate` 支持 DenseIMPO；`infinite_mpo` 删除
+
+- `svdguess_compress`/`svdguess_mult`/`svdguess_hadamard` 的
+  `CanonicalIMPS`/`CanonicalIMPO` 方法补 `kwargs...`（透传末端 `CanonicalIMPS`
+  构造器 → `gaugefix!`，如 `tol`/`maxiter`）；bare-tensor 张量串方法不变；
+- 严格 hadamard 运算 `hadamard(::DenseIMPS, ::DenseIMPS)` 改为重载
+  FiniteMPSAlgorithms 的 unicode 算符 **`⊙(::DenseIMPS, ::DenseIMPS)`**（已
+  再导出；lcm 单胞语义不变）；`hadamard` 名字保留给三参数变分压缩
+  `hadamard(ψ1, ψ2, alg)`；
+- `norm`（DenseIMPS）/`fidelity`/`infidelity`（DenseIMPS/CanonicalIMPS/
+  CanonicalIMPO）/`distance`/`distance2`（DenseIMPS）补 `kwargs...`（透传内部
+  `dot`，如 `krylovdim`）；
+- `find_groundstate` 支持 `DenseIMPO` 哈密顿量输入（VUMPS/IDMRG，对标 MPSKit
+  同样接受 `InfiniteMPO` 的设计：周期 trace 收缩 + 转移矩阵主本征向量环境；
+  该通道的期望含恒等层 bookkeeping、非真实能量，求能量仍用 `SparseIMPO` 闭列
+  公式）；原 ArgumentError 报错桩删除；与 MPSKit InfiniteMPO 通道的能量一致性
+  由 concordance 测试固化（TFIM 稠密哈密顿量，VUMPS/IDMRG 双算法）；
+- `infinite_mpo` 删除：单个 Schur bulk 的周期 DenseIMPO 用
+  `DenseIMPO([tompotensor(bulk)])` 表达（原「D 并入恒等通道」布局与
+  tompotensor 的 Schur 布局在含 NN 项的 bulk 上语义不同）；`models.jl` 三个
+  模型的 `mpo` 字段与测试改用 tompotensor 表示。
+
 ## 2026-09-30 SparseIMPO 撤下家族视图（AL/AR/AC/C）
 
 - 删除 `SparseIMPO` 的 `getproperty` 家族接口：`.AL`/`.AR`/`.AC` 不再按站稠密化

@@ -10,7 +10,7 @@ No canonicalization or normalization is performed — the raw tensor string is
 stored exactly as given (the uncanonicalized counterpart of
 [`CanonicalIMPS`](@ref), mirroring the [`DenseIMPO`](@ref) /
 [`CanonicalIMPO`](@ref) split). The strict algebra operations
-(`DenseIMPO * DenseIMPS`, `hadamard(::DenseIMPS, ::DenseIMPS)`) return this
+(`DenseIMPO * DenseIMPS`, `⊙(::DenseIMPS, ::DenseIMPS)`) return this
 type.
 """
 struct DenseIMPS{T<:Number} <: AbstractInfiniteMPS{T}

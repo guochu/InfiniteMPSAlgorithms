@@ -58,4 +58,17 @@ end
                             MPSKit.InfiniteMPOHamiltonian(lattice2, (1, 2) => hh, (2, 3) => hh),
                             ψ_heis, 12; e_exact = 0.25 - log(2))
     end
+
+    # ---- DenseIMPO 哈密顿量通道（MPSKit 的 InfiniteMPO 通道） ----
+    # 同一 TFIM 哈密顿量的稠密形式（Schur 稠密化，含恒等层 bookkeeping）：双方
+    # 包的 dense 通道用同一收缩约定（周期 trace + 转移矩阵主本征向量环境），
+    # VUMPS/IDMRG 的收敛能量应一致。恒等层结构下 Galerkin 残差收敛较慢
+    # （300 轮后 ~1e-6 平台），能量容差相应放宽到 1e-5
+    Random.seed!(1234)
+    ψ_dense = CanonicalIMPS([randn(T, 8, d, 8)])
+    @testset "DenseIMPO（InfiniteMPO 通道）" begin
+        compare_groundstate(DenseIMPO(tfim_hamiltonian(J = 1.0, h = 1.0, T = T)),
+                            to_mpskit(DenseIMPO(tfim_hamiltonian(J = 1.0, h = 1.0, T = T))),
+                            ψ_dense, 8; tol = 1.0e-5)
+    end
 end

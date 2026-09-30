@@ -22,22 +22,23 @@ The bare-tensor method accepts the site-tensor string directly (e.g.
 tensor string truncated to `D` (wrap bond Schmidt-truncated at site 1,
 [`_lazy_svd_guess`](@ref)) — the low-level entry point for downstream
 packages; the `CanonicalIMPS`/`CanonicalIMPO` methods are thin wrappers that
-re-canonicalize its output.
+re-canonicalize its output（`kwargs` 透传末端 `CanonicalIMPS` 构造器 →
+`gaugefix!`，如 `tol`/`maxiter`）.
 """
-function svdguess_compress(x::CanonicalIMPS, D::Int)
+function svdguess_compress(x::CanonicalIMPS, D::Int; kwargs...)
     max_bonddim(x) ≤ D && return copy(x)
-    return CanonicalIMPS(svdguess_compress(x.AL, D))
+    return CanonicalIMPS(svdguess_compress(x.AL, D); kwargs...)
 end
 
-function svdguess_compress(x::CanonicalIMPO, D::Int)
-    return svdguess_compress(vectorize(x), D)
+function svdguess_compress(x::CanonicalIMPO, D::Int; kwargs...)
+    return svdguess_compress(vectorize(x), D; kwargs...)
 end
 
 "`svdguess_compress` 的 [`AbstractInfiniteMPS`](@ref) 泛型入口（`DenseIMPS` 等
 非规范链：对 `.AL` 家族视图做流式 SVD 截断后混合规范化——初态恒为
-`CanonicalIMPS`）。"
-svdguess_compress(x::AbstractInfiniteMPS, D::Int) =
-    CanonicalIMPS(svdguess_compress(x.AL, D))
+`CanonicalIMPS`；`kwargs` 透传其构造器）。"
+svdguess_compress(x::AbstractInfiniteMPS, D::Int; kwargs...) =
+    CanonicalIMPS(svdguess_compress(x.AL, D); kwargs...)
 
 "Low-level tensor-string entry: streaming SVD truncation of a bare `AL`/`AR`
 string to bond cap `D` (wrap bond Schmidt-truncated at site 1). The carry

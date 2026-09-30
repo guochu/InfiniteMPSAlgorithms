@@ -33,7 +33,7 @@ Reinterpret the MPS `ψ` as an operator chain on the same bond dimension
 `A[aL, p, aR]` becomes the physical-space diagonal `W[aL, po, aR, pi] =
 A[aL, po, aR]·δ_{po,pi}`, i.e. the physical dimensions are copied to both the
 bra and the ket side. Applying the result to another MPS reproduces the
-element-wise (Hadamard) product, so `copyphyims(ψ1) * ψ2 ≡ hadamard(ψ1, ψ2)`
+element-wise (Hadamard) product, so `copyphyims(ψ1) * ψ2 ≡ ψ1 ⊙ ψ2`
 (the alignment of `mult` and `hadamard`).
 """
 function copyphyims(ψ::DenseIMPS)
@@ -81,9 +81,10 @@ function _naive_hadamard_tensor(A1::AbstractArray{T,3}, A2::AbstractArray{T,3}) 
 end
 
 """
-    hadamard(ψ1::DenseIMPS, ψ2::DenseIMPS) -> DenseIMPS
+    ⊙(ψ1::DenseIMPS, ψ2::DenseIMPS) -> DenseIMPS
 
-Strict (compression-free) Hadamard/Schur product — the naive exact
+Strict (compression-free) Hadamard/Schur product（重载 FiniteMPSAlgorithms 的
+unicode 算符 `⊙`，与其 `CanonicalMPS` 版本同语义）— the naive exact
 construction as a typed operator: per-site zipped virtual legs with a shared
 physical leg, `A12[(a,c), s, (b,e)] = ψ1[a,s,b]·ψ2[c,s,e]` (kernel
 [`_naive_hadamard_tensor`](@ref)). The output unit-cell length is the
@@ -91,15 +92,15 @@ physical leg, `A12[(a,c), s, (b,e)] = ψ1[a,s,b]·ψ2[c,s,e]` (kernel
 zip）；per-site physical dimensions must agree. The physical dimension is
 unchanged and the bond dimension is the product of the two. The factorizing
 periodic trace yields the **elementwise waveform product**,
-`dense(hadamard(a,b)) = dense(a) .* dense(b)`.
+`dense(a ⊙ b) = dense(a) .* dense(b)`.
 No canonicalization or normalization is performed — the raw zipped tensor
 string is returned. For the variational compression use `hadamard(ψ1, ψ2, alg)`.
 """
-function hadamard(ψ1::DenseIMPS, ψ2::DenseIMPS)
+function ⊙(ψ1::DenseIMPS, ψ2::DenseIMPS)
     N1, N2 = length(ψ1), length(ψ2)
     L = lcm(N1, N2)
     all(size(ψ1[_mod1(ℓ, N1)], 2) == size(ψ2[_mod1(ℓ, N2)], 2) for ℓ in 1:L) ||
-        throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
+        throw(DimensionMismatch("⊙ requires equal per-site physical dimensions"))
     return DenseIMPS([_naive_hadamard_tensor(ψ1[_mod1(ℓ, N1)], ψ2[_mod1(ℓ, N2)])
                       for ℓ in 1:L])
 end
@@ -123,22 +124,23 @@ function LinearAlgebra.dot(ψ1::DenseIMPS, ψ2::DenseIMPS;
     return λ isa Number ? λ : only(λ)
 end
 
-"`LinearAlgebra.norm(ψ::DenseIMPS) = sqrt(|⟨ψ, ψ⟩|)`."
-function LinearAlgebra.norm(ψ::DenseIMPS)
-    return sqrt(abs(dot(ψ, ψ)))
+"`LinearAlgebra.norm(ψ::DenseIMPS; kwargs...) = sqrt(|⟨ψ, ψ⟩|)`（`kwargs` 透传
+`dot`，如 `krylovdim`）。"
+function LinearAlgebra.norm(ψ::DenseIMPS; kwargs...)
+    return sqrt(abs(dot(ψ, ψ; kwargs...)))
 end
 
 """
-    fidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) -> Real
-    infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) -> Real
+    fidelity(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) -> Real
+    infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) -> Real
 
 `fidelity = |⟨ψ1|ψ2⟩| / (‖ψ1‖·‖ψ2‖) ∈ [0, 1]`: the normalized ring overlap —
 invariant under independent overall phases and normalizations of the two
-states. `infidelity = 1 − fidelity`.
+states（`kwargs` 透传 `dot`，如 `krylovdim`）. `infidelity = 1 − fidelity`.
 """
-fidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) =
-    abs(dot(ψ1, ψ2)) / (norm(ψ1) * norm(ψ2))
-infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) = 1 - fidelity(ψ1, ψ2)
+fidelity(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) =
+    abs(dot(ψ1, ψ2; kwargs...)) / (norm(ψ1) * norm(ψ2))
+infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) = 1 - fidelity(ψ1, ψ2; kwargs...)
 
 """
     distance2(ψ1::DenseIMPS, ψ2::DenseIMPS) -> Real
@@ -146,15 +148,16 @@ infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS) = 1 - fidelity(ψ1, ψ2)
 
 `‖ψ1 − ψ2‖² = ‖ψ1‖² + ‖ψ2‖² − 2·Re⟨ψ1|ψ2⟩` (the absolute value guards against
 negative rounding; semantics aligned with FiniteMPSAlgorithms'
-`distance(::CanonicalMPS, ::CanonicalMPS)`). `distance = sqrt(distance2)`.
+`distance(::CanonicalMPS, ::CanonicalMPS)`); `distance = sqrt(distance2)`.
+`kwargs` 透传 `dot`（如 `krylovdim`）.
 
 Extends the `distance`/`distance2` imported from FiniteMPSAlgorithms（`import`
 集中在主文件）——其 plain-array 方法必须与本包 DenseIMPS 方法在同一函数对象上。
 """
-function distance2(ψ1::DenseIMPS, ψ2::DenseIMPS)
-    sA = real(dot(ψ1, ψ1))
-    sB = real(dot(ψ2, ψ2))
-    c = dot(ψ1, ψ2)
+function distance2(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...)
+    sA = real(dot(ψ1, ψ1; kwargs...))
+    sB = real(dot(ψ2, ψ2; kwargs...))
+    c = dot(ψ1, ψ2; kwargs...)
     return abs(sA + sB - 2 * real(c))
 end
-distance(ψ1::DenseIMPS, ψ2::DenseIMPS) = sqrt(distance2(ψ1, ψ2))
+distance(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) = sqrt(distance2(ψ1, ψ2; kwargs...))

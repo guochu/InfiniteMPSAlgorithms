@@ -1,19 +1,19 @@
 # =====================================================================
-# 算术运算测试：严格运算（DenseIMPO * / hadamard(DenseIMPS)）+ 迭代压缩 +
+# 算术运算测试：严格运算（DenseIMPO * / ⊙(DenseIMPS)）+ 迭代压缩 +
 # mult!/compress!/hadamard! 的完全对齐
 #
-# - DenseIMPO * DenseIMPO / DenseIMPO * DenseIMPS / hadamard(DenseIMPS)：
+# - DenseIMPO * DenseIMPO / DenseIMPO * DenseIMPS / ⊙(DenseIMPS)：
 #   严格运算（不压缩、不正则化），周期 trace 表示下验证算符乘积 / 波形作用 /
 #   逐点乘积结构；
 # - copyphyims：DenseIMPS→DenseIMPO 的物理腿复制（对齐 FiniteMPSAlgorithms
-#   的 copyphydims），hadamard ≡ mult(copyphyims(ψ1), ψ2)；
+#   的 copyphydims），⊙ ≡ mult(copyphyims(ψ1), ψ2)；
 # - mult! ≡ compress!（同初态+同参数：同迭代数、终态一致）；
 # - 变分压缩（D::Int）验证 VOMPS 与 IDMRG 两条算法路径收敛到同一结果；
 # - 数值断言基于周期 trace 表示（_dense_mps_repr / _dense_mpo_repr，定义于
 #   testhelpers.jl；规范变换下望远相消，是纯规范不变的波形/算符表示）。
 # =====================================================================
 
-@testset "严格运算：DenseIMPO * / hadamard(DenseIMPS)（debug 基准）" begin
+@testset "严格运算：DenseIMPO * / ⊙(DenseIMPS)（debug 基准）" begin
     T = ComplexF64
     Random.seed!(47)
     W1 = randomimpo(T, [2, 2]; D = 2)
@@ -39,12 +39,12 @@
     @test norm(M * dψ .- ls .* cψf) / norm(M * dψ) < 1e-10
 end
 
-@testset "hadamard(DenseIMPS)：波形逐点乘积（debug 基准）" begin
+@testset "⊙(DenseIMPS)：波形逐点乘积（debug 基准）" begin
     T = ComplexF64
     Random.seed!(49)
     ψ1 = randomimps(T, [2, 2]; D = 3)
     ψ2 = randomimps(T, [2, 2]; D = 4)
-    K = hadamard(DenseIMPS(collect(ψ1.AL)), DenseIMPS(collect(ψ2.AL)))
+    K = DenseIMPS(collect(ψ1.AL)) ⊙ DenseIMPS(collect(ψ2.AL))
     @test K isa DenseIMPS
     @test size(K[1]) == (12, 2, 12)   # 物理维不变，键维 = 3·4
     # 原始 zip 张量串的周期 trace 严格逐点：两条虚拟链独立 → trace 因子化
@@ -160,7 +160,7 @@ end
 
     # 严格路径（DenseIMPS）：原始 zip 张量串的周期 trace 严格逐点，物理维不变、
     # 键维 = 3·3（严格运算不支持 CanonicalIMPS——需要规范代表时显式转换）
-    H12 = hadamard(DenseIMPS(collect(ψ1.AL)), DenseIMPS(collect(ψ2.AL)))
+    H12 = DenseIMPS(collect(ψ1.AL)) ⊙ DenseIMPS(collect(ψ2.AL))
     @test H12 isa DenseIMPS
     @test phydims(H12) == [2, 2]
     @test max_bonddim(H12) == 9
@@ -178,15 +178,15 @@ end
     end
 
     # 长度不同 ⇒ lcm 单胞（逐周期平铺 zip）；逐 site 物理维不匹配仍抛错
-    h23 = hadamard(DenseIMPS(collect(ψ1.AL)),
-                   DenseIMPS(collect(randomimps(T, [2, 2, 2]; D = 2).AL)))
+    h23 = DenseIMPS(collect(ψ1.AL)) ⊙
+          DenseIMPS(collect(randomimps(T, [2, 2, 2]; D = 2).AL))
     @test h23 isa DenseIMPS && length(h23) == 6        # lcm(2, 3) = 6
-    @test_throws DimensionMismatch hadamard(DenseIMPS(collect(ψ1.AL)),
-                                            DenseIMPS(collect(randomimps(T, [3, 2]; D = 3).AL)))
+    @test_throws DimensionMismatch (DenseIMPS(collect(ψ1.AL)) ⊙
+                                    DenseIMPS(collect(randomimps(T, [3, 2]; D = 3).AL)))
 
     # 语义注记：ψ2 = dag(ψ1) 时 c12 ∝ |c1|² 为逐点模方（非负实波形），
     # 而不是密度矩阵；密度矩阵需 u/d 双腿的 MPO 表示（另一类构造）
-    Habs = hadamard(DenseIMPS(collect(ψ1.AL)), DenseIMPS(collect(dag(ψ1).AL)))
+    Habs = DenseIMPS(collect(ψ1.AL)) ⊙ DenseIMPS(collect(dag(ψ1).AL))
     dHabs = vec(_dense_mps_repr(Habs))
     tgtabs = vec(abs2.(c1))
     lsabs = real(dot(dHabs, tgtabs)) / real(dot(dHabs, dHabs))
@@ -259,8 +259,8 @@ end
     ψ2 = randomimps(T, [2, 2]; D = 4)
     W1 = copyphyims(DenseIMPS(collect(ψ1.AL)))
 
-    # 严格层面：copyphyims(ψ1) * ψ2 与 hadamard(DenseIMPS) 波形一致
-    hd = hadamard(DenseIMPS(collect(ψ1.AL)), DenseIMPS(collect(ψ2.AL)))
+    # 严格层面：copyphyims(ψ1) * ψ2 与 ⊙(DenseIMPS) 波形一致
+    hd = DenseIMPS(collect(ψ1.AL)) ⊙ DenseIMPS(collect(ψ2.AL))
     mp = W1 * DenseIMPS(collect(ψ2.AL))
     @test _dense_trace(collect(hd)) ≈ _dense_trace(collect(mp)) atol = 1e-10
 
