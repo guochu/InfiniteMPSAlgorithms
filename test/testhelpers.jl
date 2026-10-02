@@ -40,6 +40,19 @@ function _dense_mpo_repr(W)
     return O
 end
 
+"""
+    rand_denseimpo([T=Float64,] phydims; D, rng=Random.default_rng()) -> DenseIMPO
+
+原始（未规范化、未定规范）DenseIMPO 随机 fixture：`randomimpo` 返回
+`CanonicalIMPO`（构造即混合规范），需要原始张量串的测试（严格 `*` / `⊙`、
+dense-vs-canonical 对照、稠密表示索引访问）用此构造。
+"""
+rand_denseimpo(::Type{T}, phydims::AbstractVector{Int}; D::Int,
+               rng::AbstractRNG = Random.default_rng()) where {T<:Number} =
+    DenseIMPO([randn(rng, T, D, phydims[ℓ], D, phydims[ℓ]) for ℓ in eachindex(phydims)])
+rand_denseimpo(phydims::AbstractVector{Int}; kwargs...) =
+    rand_denseimpo(Float64, phydims; kwargs...)
+
 # ---- 非均匀键 profile 的辅助（unit cell > 1 且各 bond 键维不同）----
 
 "在维度 `dim` 的尾部插入 `m` 维零块。"

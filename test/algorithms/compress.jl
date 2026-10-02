@@ -140,11 +140,11 @@ end
 
     # MPO 版：CanonicalIMPO 与 DenseIMPO（随机谱平缓，两者均为重叠最大化
     # 收敛停点，断言一致到收敛差异内）；DenseIMPO 输入同样返回 CanonicalIMPO
-    W = randomimpo(T, [2, 2]; D = 6)
-    Wc = CanonicalIMPO(collect(W.Ws))
+    Wd = rand_denseimpo(T, [2, 2]; D = 6)
+    Wc = CanonicalIMPO(collect(Wd.Ws))
     Vc, _, _ = compress(Wc, VOMPS(D = 3))
     @test max_bonddim(Vc) == 3 && ismixedcanonical(Vc)
-    Vd, _, _ = compress(W, VOMPS(D = 3))
+    Vd, _, _ = compress(Wd, VOMPS(D = 3))
     @test Vd isa CanonicalIMPO && max_bonddim(Vd) == 3 && ismixedcanonical(Vd)
     @test fidelity(Vc, Vd) > 0.9
 end
@@ -153,7 +153,7 @@ end
     # 确认点 1：naive 兜底 / 短路不得直接透出 DenseIMPO——MPO 结果一律混合正则
     T = ComplexF64
     Random.seed!(81)
-    Wr = randomimpo(T, [2, 2]; D = 3)
+    Wr = rand_denseimpo(T, [2, 2]; D = 3)
     # 压缩路径：DenseIMPO 输入 → CanonicalIMPO
     y2, _, _ = compress(Wr, VOMPS(D = 2))
     @test y2 isa CanonicalIMPO && max_bonddim(y2) == 2 && ismixedcanonical(y2)
@@ -170,7 +170,7 @@ end
     @test norm(dw .- ls .* dr) / norm(dw) < 1e-9
     # 实数输入：正则性成立；标量类型随通道转移的实际 eltype（ALS 期间融合
     # 转移可为复主导，通道按 MPSKit 对齐提升为复，故不断言实性）
-    Wf = randomimpo(Float64, [2, 2]; D = 3)
+    Wf = rand_denseimpo(Float64, [2, 2]; D = 3)
     yf, _, _ = compress(Wf, VOMPS(D = 2))
     @test yf isa CanonicalIMPO && ismixedcanonical(yf)
 end

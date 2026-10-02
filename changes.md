@@ -1,5 +1,14 @@
 # 变更记录（接口）
 
+## 2026-10-02 `randomimpo` 返回 `CanonicalIMPO`（与 `randomimps` 对齐）
+
+- `randomimpo` 与 `randomimps` 同款：随机张量串构造后立即经 `CanonicalIMPO`
+  构造器规范存储，返回类型由 `DenseIMPO` 改为 **`CanonicalIMPO`**（构造即混合
+  规范）；`kwargs...` 透传 `gaugefix`（如 `tol`/`maxiter`）；
+- 需要原始（未规范化、未定规范）张量串的测试改用新增测试助手
+  **`rand_denseimpo`**（test/testhelpers.jl）；严格代数（`*`）、getindex、
+  `_dense_mpo_repr` 等只有 Dense 表示参与的测试点相应改用该助手。
+
 ## 2026-09-30 IDMRG 扫描语义对齐 MPSKit（原地 AC 覆盖）；groundstate concordance 改固定小迭代行为一致性测试
 
 - `_localupdate_sweep_idmrg!` 对齐 MPSKit 的两处扫描语义：分裂因子正对角化

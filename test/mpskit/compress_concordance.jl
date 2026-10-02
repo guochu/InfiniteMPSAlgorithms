@@ -133,7 +133,7 @@ end
 # ---- MPO 压缩（MPSKit 无 MPO 目标 approximate ⇒ 走 vectorize 的 MPS 视图）----
 
 @testset "compress(MPO) ≡ MPSKit approximate（MPS 视图，VOMPS/IDMRG）" begin
-    W = randomimpo(T, fill(d, N); D = 4)
+    W = rand_denseimpo(T, fill(d, N); D = 4)
     Wview = vectorize(W).As
     x0w = randomimps(T, fill(size(Wview[1], 2), N); D = D0)
     Wmk = MPSKit.InfiniteMPS([mkmpstensor(a) for a in Wview])

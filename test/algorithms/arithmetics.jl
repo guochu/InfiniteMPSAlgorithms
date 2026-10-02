@@ -16,8 +16,8 @@
 @testset "严格运算：DenseIMPO * / ⊙(DenseIMPS)（debug 基准）" begin
     T = ComplexF64
     Random.seed!(47)
-    W1 = randomimpo(T, [2, 2]; D = 2)
-    W2 = randomimpo(T, [2, 2]; D = 3)
+    W1 = rand_denseimpo(T, [2, 2]; D = 2)
+    W2 = rand_denseimpo(T, [2, 2]; D = 3)
     ψ1 = randomimps(T, [2, 2]; D = 3)
 
     # mpo*mpo：键维 = 两键维乘积，稠密算符 = 矩阵乘积，返回原始 DenseIMPO
@@ -56,8 +56,8 @@ end
 @testset "mult：MPO 乘法（朴素精确对照 + 压缩）" begin
     T = ComplexF64
     Random.seed!(44)
-    W1 = randomimpo(T, [2, 2]; D = 2)
-    W2 = randomimpo(T, [2, 2]; D = 3)
+    W1 = rand_denseimpo(T, [2, 2]; D = 2)
+    W2 = rand_denseimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
     # 严格乘法 = 稠密算符矩阵乘法，键维 = 两键维乘积
     P = W1 * W2
@@ -73,7 +73,7 @@ end
     ls1 = dot(dP1, dW1v) / dot(dP1, dP1)
     @test norm(dW1v .- ls1 .* dP1) / norm(dW1v) < 1e-8
     # 压缩路径：2·Wa·I（键 2）压到 D=1 精确（秩-1 目标），两算法。
-    wa = randomimpo(T, [2, 2]; D = 1)
+    wa = rand_denseimpo(T, [2, 2]; D = 1)
     dwa = _dense_mpo_repr(wa)
     tgt = 2 .* dwa
     s2 = DenseIMPO([cat(wa[ℓ], wa[ℓ]; dims = (1, 3)) for ℓ in 1:length(wa)])   # blockdiag(wa, wa)
@@ -96,8 +96,8 @@ apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
     # CanonicalIMPO 且 ismixedcanonical，不得透出 DenseIMPO
     T = ComplexF64
     Random.seed!(46)
-    W1 = randomimpo(T, [2, 2]; D = 2)
-    W2 = randomimpo(T, [2, 2]; D = 3)
+    W1 = rand_denseimpo(T, [2, 2]; D = 2)
+    W2 = rand_denseimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
     # 精确（无 alg）：严格 `*` + 规范化（mult 的两参数 mpo·mpo 版本已删除）
     Pe = InfiniteMPSAlgorithms._global_normalize!(CanonicalIMPO(W1 * W2))
@@ -209,9 +209,9 @@ end
     #   一个变分问题。）
     T = ComplexF64
     Random.seed!(50)
-    W = randomimpo(T, [2, 2]; D = 3)
+    W = rand_denseimpo(T, [2, 2]; D = 3)
     ψ = randomimps(T, [2, 2]; D = 4)
-    W2 = randomimpo(T, [2, 2]; D = 2)
+    W2 = rand_denseimpo(T, [2, 2]; D = 2)
     Wraw = W * W2
     D0 = 3
     ψraw = W * DenseIMPS(collect(ψ.AL))
@@ -232,7 +232,7 @@ end
         @test norm(v1 .- ls .* v2) / norm(v1) < 1e-10
 
         # mpo·mpo
-        m1 = CanonicalIMPO(collect(randomimpo(T, [2, 2]; D = D0).Ws))
+        m1 = randomimpo(T, [2, 2]; D = D0)
         m2 = copy(m1)
         p0 = m1
         z1, _, j1 = mult!(p0, W, W2, alg)
@@ -294,9 +294,9 @@ end
     ψ2raw = [randn(T, 3, 2, 3), randn(T, 3, 2, 3)]
     ψ2c = CanonicalIMPS(ψ2raw)
     ψ2d = DenseIMPS(collect(ψ2c.AR))
-    Wd = randomimpo(T, [2, 2]; D = 3)
+    Wd = rand_denseimpo(T, [2, 2]; D = 3)
     Wc = CanonicalIMPO(collect(Wd.Ws))
-    W2d = randomimpo(T, [2, 2]; D = 2)
+    W2d = rand_denseimpo(T, [2, 2]; D = 2)
     W2c = CanonicalIMPO(collect(W2d.Ws))
 
     "两结果的 ray 残差（dense 周期 trace 表示，规范与尺度不变）。"

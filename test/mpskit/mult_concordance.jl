@@ -17,8 +17,8 @@ Dψ = 4                   # ψ 键维
 Dw = 3                   # W 键维
 
 ψ = randomimps(T, fill(d, N); D = Dψ)
-W1 = randomimpo(T, fill(d, N); D = Dw)
-W2 = randomimpo(T, fill(d, N); D = 2)
+W1 = DenseIMPO(randomimpo(T, fill(d, N); D = Dw))
+W2 = DenseIMPO(randomimpo(T, fill(d, N); D = 2))
 
 @testset "* (DenseIMPO, DenseIMPO) ≡ MPSKit *(DenseIMPO, DenseIMPO)" begin
     P = W1 * W2

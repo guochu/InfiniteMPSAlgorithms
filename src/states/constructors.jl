@@ -67,22 +67,25 @@ end
 identityimpo(phydims::AbstractVector{Int}) = identityimpo(ComplexF64, phydims)
 
 """
-    randomimpo([T=Float64,] phydims; D, rng=Random.default_rng()) -> DenseIMPO
-    randomimpo([T=Float64,] L; d=2, D, rng=Random.default_rng()) -> DenseIMPO
+    randomimpo([T=Float64,] phydims; D, rng=Random.default_rng(), kwargs...) -> CanonicalIMPO
+    randomimpo([T=Float64,] L; d=2, D, rng=Random.default_rng(), kwargs...) -> CanonicalIMPO
 
-Random MPO with uniform bond dimension `D` (generically non-Hermitian; for
-physical models use the constructors in `models.jl`). `phydims` gives the
-per-site physical dimensions (or a uniform `d` over `L` sites).
+Random MPO with uniform bond dimension `D`, mixed-canonicalized upon
+construction（`kwargs` 透传末端的 `CanonicalIMPO(Ws; kwargs...)` → `gaugefix!`，
+与 [`randomimps`](@ref) 同款；需要原始未规范化张量串的测试可用
+`rand_denseimpo`）。Generically non-Hermitian; for physical models use the
+constructors in `models.jl`. `phydims` gives the per-site physical dimensions
+(or a uniform `d` over `L` sites).
 **`D` 必须由用户显式给出**（无默认值）。
 """
 function randomimpo(::Type{T}, phydims::AbstractVector{Int}; D::Int,
-                    rng::AbstractRNG = Random.default_rng()) where {T<:Number}
+                    rng::AbstractRNG = Random.default_rng(), kwargs...) where {T<:Number}
     N = length(phydims)
     Ws = Vector{Array{T,4}}(undef, N)
     for ℓ in 1:N
         Ws[ℓ] = randn(rng, T, D, phydims[ℓ], D, phydims[ℓ])
     end
-    return DenseIMPO(Ws)
+    return CanonicalIMPO(Ws; kwargs...)
 end
 randomimpo(phydims::AbstractVector{Int}; kwargs...) = randomimpo(Float64, phydims; kwargs...)
 randomimpo(::Type{T}, L::Integer; d::Int = 2, kwargs...) where {T<:Number} =

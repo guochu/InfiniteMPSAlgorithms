@@ -169,10 +169,12 @@ end
     @test phydim(ψ, 1) == 2 && phydim(ψ, 2) == 3 && phydim(ψ, 3) == 4
     @test phydim(ψ, 4) == 2                       # 周期下标
     @test phydims(ψ) == [2, 3, 4]
-    W = randomimpo(T, [2, 3]; D = 2)              # DenseIMPO：du
+    W = randomimpo(T, [2, 3]; D = 2)              # CanonicalIMPO：构造即混合规范
+    @test W isa CanonicalIMPO && ismixedcanonical(W)
     @test phydim(W, 1) == 2 && phydim(W, 2) == 3
     @test phydims(W) == [2, 3]
-    M = CanonicalIMPO(W)                          # CanonicalIMPO：phydim = du（方算符）
+    Wd = rand_denseimpo(T, [2, 3]; D = 2)
+    M = CanonicalIMPO(collect(Wd.Ws))             # DenseIMPO → CanonicalIMPO（方算符）
     @test phydim(M, 1) == 2 && phydim(M, 2) == 3
     @test phydims(M) == [2, 3]
     # 非方算符：内构造即拒绝（AC 的 u/d 检查）
@@ -184,9 +186,11 @@ end
     ψf2 = randomimps(3; d = 3, D = 4)
     @test ψf2 isa CanonicalIMPS{Float64} && size(ψf2.AL[1], 2) == 3
     Wf = randomimpo(2; D = 3)
-    @test Wf isa DenseIMPO{Float64} && size(Wf.Ws[1]) == (3, 2, 3, 2)
+    @test Wf isa CanonicalIMPO{Float64} && size(Wf.AL[1]) == (3, 2, 3, 2)
     Wf2 = randomimpo(2; d = 3, D = 3)
-    @test Wf2 isa DenseIMPO{Float64} && size(Wf2.Ws[1], 2) == 3
+    @test Wf2 isa CanonicalIMPO{Float64} && size(Wf2.AL[1], 2) == 3
+    Wkw = randomimpo(T, [2, 2]; D = 3, tol = 1e-12)   # kwargs 透传 CanonicalIMPO（gaugefix）
+    @test Wkw isa CanonicalIMPO && ismixedcanonical(Wkw)
 
     # rng 可复现
     g = MersenneTwister(42)

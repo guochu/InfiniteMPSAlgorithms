@@ -139,7 +139,7 @@ invariant under independent overall phases and normalizations of the two
 states（`kwargs` 透传 `dot`，如 `krylovdim`）. `infidelity = 1 − fidelity`.
 """
 fidelity(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) =
-    abs(dot(ψ1, ψ2; kwargs...)) / (norm(ψ1) * norm(ψ2))
+    abs(dot(ψ1, ψ2; kwargs...)) / (norm(ψ1; kwargs...) * norm(ψ2; kwargs...))
 infidelity(ψ1::DenseIMPS, ψ2::DenseIMPS; kwargs...) = 1 - fidelity(ψ1, ψ2; kwargs...)
 
 """

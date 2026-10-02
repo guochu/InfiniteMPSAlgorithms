@@ -337,7 +337,7 @@ end
     Random.seed!(27)
     ψ2 = DenseIMPS([randn(T, 2, 2, 2), randn(T, 2, 2, 2)])
     ψ3 = DenseIMPS([randn(T, 3, 2, 3), randn(T, 3, 2, 3), randn(T, 3, 2, 3)])
-    W3 = randomimpo(T, [2, 2, 2]; D = 2)
+    W3 = rand_denseimpo(T, [2, 2, 2]; D = 2)
     # W（L = 3）× ψ（N = 2）⇒ 输出单胞 lcm = 6、键维 = 因子乘积
     Wψ = W3 * ψ2
     @test Wψ isa DenseIMPS && length(Wψ) == 6
@@ -539,8 +539,8 @@ end
 @testset "CanonicalIMPO 结构" begin
     T = ComplexF64
     Random.seed!(61)
-    W = randomimpo(T, [2, 2]; D = 3)
-    M = CanonicalIMPO(W)
+    Wd = rand_denseimpo(T, [2, 2]; D = 3)
+    M = CanonicalIMPO(Wd)
     @test length(M) == 2 && eachsite(M) == 1:2
     @test M.AC[3] == M.AC[1] && M.AC[0] == M.AC[2]
     @test M.AC[3] === M.AC[1]
@@ -557,7 +557,7 @@ end
     # 构造经 MPS 规范化：DenseIMPO(M) 收集 AL，与输入 W 平行即可——
     # 整体相位/比例是规范自由度（λ 被 normalize!(C) 吸收），不作要求
     dM = _dense_mpo_repr(DenseIMPO(M))
-    dW = _dense_mpo_repr(W)
+    dW = _dense_mpo_repr(Wd)
     ls = dot(vec(dM), vec(dW)) / dot(vec(dM), vec(dM))
     @test norm(vec(dW) .- ls .* vec(dM)) / norm(vec(dW)) < 1e-8
     # dag / copy / normalize! 占位
