@@ -227,7 +227,7 @@ end
     @test max_bonddim(gm) ≤ 4 && ismixedcanonical(gm)
     W2 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
     gmm = svdguess_mult(W, W2, 5)
-    @test max_bonddim(gmm) ≤ 5 && ismixedcanonical(gmm)
+    @test gmm isa CanonicalIMPO && max_bonddim(gmm) ≤ 5 && ismixedcanonical(gmm)
 
     ψbig = randomimps(T, [2, 2]; D = 8)
     gc = svdguess_compress(ψbig, 4)

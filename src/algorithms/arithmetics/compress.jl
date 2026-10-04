@@ -109,8 +109,11 @@ as the initial guess; its bond profile is first brought to uniform
 `D = alg.D` with [`changebond!`](@ref). The target accepts `DenseIMPS`/
 `CanonicalIMPS`（及 `DenseIMPO`/`CanonicalIMPO`，dense 类型经 `getproperty`
 家族视图直接参与，不做规范转换）. The optimized result is written back
-into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境（bra = 压缩
-链）、`info` 为 [`IterativeConvergenceInfo`](@ref)。
+into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时（如实 `out` 遇复
+通道），结果无法原地表示，此时 `out` 不写回（仅 `changebond!` 预处理生效），
+第一个返回值为提升后的更新 bra（`envs.bra`）本身。Returns `(out, envs, info)`
+——`envs` 为引擎的最终环境（bra = 压缩链）、`info` 为
+[`IterativeConvergenceInfo`](@ref)。
 """
 function compress!(out::CanonicalIMPS, ψ::AbstractInfiniteMPS,
                    alg::Union{VOMPS,IDMRG})
@@ -177,8 +180,12 @@ function _lazy_svd_guess(site::F, L::Int, D::Int) where {F}
     return out
 end
 
-"Copy the tensor families of `y` into `out` (both mixed-canonical)."
+"把 `y` 写回 `out`（家族逐槽 `copy!`，返回 `out`）；类型守卫：`out` 的标量
+类型无法表示 `y` 时（实 `out` 遇复提升的通道解——复输入或 leading vector
+复化使通道算术类型为复），原地写回不可能，不修改 `out`、直接返回 `y` 本身
+（调用方 `mult!`/`compress!`/`hadamard!` 以返回值为第一个输出）。"
 function _copyinto!(out::CanonicalIMPS, y::CanonicalIMPS)
+    promote_type(scalartype(out), scalartype(y)) === scalartype(out) || return y
     copy!(out.AL, y.AL)
     copy!(out.AR, y.AR)
     copy!(out.C, y.C)
@@ -187,6 +194,7 @@ function _copyinto!(out::CanonicalIMPS, y::CanonicalIMPS)
 end
 
 function _copyinto!(out::CanonicalIMPO, y::CanonicalIMPO)
+    promote_type(scalartype(out), scalartype(y)) === scalartype(out) || return y
     copy!(out.AL, y.AL)
     copy!(out.AR, y.AR)
     copy!(out.C, y.C)

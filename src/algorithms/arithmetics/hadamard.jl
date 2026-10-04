@@ -106,8 +106,11 @@ end
 In-place [`hadamard`](@ref): `out` is the user-provided state to be optimized
 as the initial guess; its bond profile is first brought to uniform
 `D = alg.D` with [`changebond!`](@ref). The optimized result is written back
-into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境（bra = 乘积
-链）、`info` 为 [`IterativeConvergenceInfo`](@ref)。
+into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时（如实 `out` 遇复
+通道），结果无法原地表示，此时 `out` 不写回（仅 `changebond!` 预处理生效），
+第一个返回值为提升后的更新 bra（`envs.bra`）本身。Returns `(out, envs, info)`
+——`envs` 为引擎的最终环境（bra = 乘积链）、`info` 为
+[`IterativeConvergenceInfo`](@ref)。
 """
 function hadamard!(out::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS,
                    alg::Union{VOMPS,IDMRG})

@@ -541,7 +541,7 @@ function mult(W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO, alg::Union{VOMPS,
     # 双 MPO 组合通道：bra = 变分链（CanonicalIMPO，原生 MPO 形态）、
     # operator/ket 槽 = (W1, W2)——乘积张量从不物化（键优先分步 GEMM），
     # 因子按输入类型直接进入环境（dense 经 getproperty 家族视图）。
-    envs = MultCache(devectorize(svdguess_mult(W, W2, alg.D)), W, W2,
+    envs = MultCache(svdguess_mult(W, W2, alg.D), W, W2,
                      alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
@@ -551,7 +551,7 @@ end
 
 """
     svdguess_mult(W, ψ, D) -> CanonicalIMPS
-    svdguess_mult(W, W2, D) -> CanonicalIMPS
+    svdguess_mult(W, W2, D) -> CanonicalIMPO
     svdguess_mult(Ws, ALs, D) -> Vector{Array{T,3}}          # bare-tensor entry
     svdguess_mult(Ws1, Ws2, D) -> Vector{Array{T,3}}         # bare-tensor entry
 
@@ -566,9 +566,12 @@ ring's wrap bond is Schmidt-truncated at site 1. Every output bond is ≤ `D`.
 The bare-tensor methods take the site-tensor strings directly (`PeriodicVector`
 of rank-4 MPO tensors and rank-3 MPS tensors, e.g. `ψ.AL` / `ψ.AR` of a
 [`CanonicalIMPS`](@ref)) and return the right-gauge tensor string — the
-low-level entry point for downstream packages; the `CanonicalIMPS` methods
-are thin wrappers that re-canonicalize its output（`kwargs` 透传末端
-`CanonicalIMPS` 构造器 → `gaugefix!`）.
+low-level entry point for downstream packages; the wrapper methods
+re-canonicalize its output（`kwargs` 透传末端 `CanonicalIMPS` 构造器 →
+`gaugefix!`）：mpo·mps 的乘积是态，返回 `CanonicalIMPS`；mpo·mpo 的乘积是
+算符，流式构造在融合物理腿 (u·d) 的 rank-3 视图上进行，规范化后按
+[`devectorize`](@ref) 的互逆纯 reshape 拆回 (u, d)，原生 MPO 形态返回
+`CanonicalIMPO`（规范数据逐家族携带，混合正则性不变）。
 """
 function svdguess_mult(W, ψ::AbstractInfiniteMPS, D::Int; kwargs...)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
@@ -597,7 +600,8 @@ end
 function svdguess_mult(W, W2::AbstractInfiniteMPO, D::Int; kwargs...)
     Wm = W isa DenseIMPO ? W : DenseIMPO(W)
     W2m = W2 isa DenseIMPO ? W2 : DenseIMPO(W2)
-    return CanonicalIMPS(svdguess_mult(Wm.Ws, W2m.Ws, D); kwargs...)
+    # 乘积是算符：融合 (u·d) 视图上规范化后拆回 (u, d)，原生 MPO 形态返回
+    return devectorize(CanonicalIMPS(svdguess_mult(Wm.Ws, W2m.Ws, D); kwargs...))
 end
 
 function svdguess_mult(Ws1::PeriodicVector{<:Array{T,4}},
@@ -643,8 +647,12 @@ end
 In-place [`mult`](@ref): `out` is the user-provided state/operator to be
 optimized as the initial guess; its bond profile is first brought to uniform
 `D = alg.D` with [`changebond!`](@ref). The optimized result is written back
-into `out`. Returns `(out, envs, info)`——`envs` 为引擎的最终环境、`info` 为
-[`IterativeConvergenceInfo`](@ref)（`out` 写回后与 envs 的规范代表同射线）。
+into `out`——类型守卫：通道算术类型（构造时 bra 槽已提升到环境 eltype）宽于
+`out` 的标量类型时（如实 `out` 遇复通道：复输入或 leading vector 复化），结果
+无法原地表示，此时 `out` 不写回（仅 `changebond!` 预处理生效），第一个返回值
+为提升后的更新 bra（`envs.bra`）本身。Returns `(out, envs, info)`——`envs` 为
+引擎的最终环境、`info` 为 [`IterativeConvergenceInfo`](@ref)（首个返回值写回
+后与 envs 的规范代表同射线）。
 """
 function mult!(out::CanonicalIMPS, W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS,
                alg::Union{VOMPS,IDMRG})

@@ -337,3 +337,56 @@ end
         @test _rayres(hc, hd) < 1e-6
     end
 end
+
+@testset "inplace 类型提升兜底：实 out 无法表示复通道解 → 首个返回值为更新 bra" begin
+    # 通道算术类型 = 环境 eltype（缓存构造器把 bra 槽提升到该类型）：复输入使
+    # 通道为复，实 out 无法原地表示通道解——mult!/compress!/hadamard! 的第一个
+    # 返回值应为提升后的更新 bra（envs.bra）本身，out 不写回（仅 changebond!
+    # 预处理生效）。纯实输入下 leading vector 复化的场景走同一代码路径。
+    T = ComplexF64
+    Random.seed!(57)
+    W = rand_denseimpo(Float64, [2, 2]; D = 2)
+    W2 = rand_denseimpo(Float64, [2, 2]; D = 2)
+    ψc = randomimps(T, [2, 2]; D = 2)
+    ψr = randomimps(Float64, [2, 2]; D = 2)
+
+    # mult!（mpo·mps）：严格目标键维 4，D = 4 精确（VOMPS/IDMRG 双引擎）；
+    # 严格代数不接受混合 eltype，参考侧把 W 提升为复
+    Wc = DenseIMPO([ComplexF64.(w) for w in W.Ws])
+    yexact = apply_exact(Wc, ψc)
+    for alg in (VOMPS(D = 4, tol = 1e-12, maxiter = 200),
+                IDMRG(D = 4, tol = 1e-12, maxiter = 200))
+        out = randomimps(Float64, [2, 2]; D = 4)
+        y1, envs1, _ = mult!(out, W, ψc, alg)
+        @test y1 === envs1.bra && scalartype(y1) == T
+        @test eltype(out.AL[1]) == Float64
+        @test fidelity(y1, yexact) > 1 - 1e-8
+    end
+
+    # mult!（mpo·mpo）
+    m0 = randomimpo(Float64, [2, 2]; D = 4)
+    z1, envsz, _ = mult!(m0, W, W2, VOMPS(D = 4, tol = 1e-12, maxiter = 200))
+    @test z1 === envsz.bra && z1 isa CanonicalIMPO && scalartype(z1) == T
+    @test eltype(m0.AL[1]) == Float64
+    dz = vec(_dense_mpo_repr(DenseIMPO(z1)))
+    W2c = DenseIMPO([ComplexF64.(w) for w in W2.Ws])
+    dref = vec(_dense_mpo_repr(Wc * W2c))
+    ls = dot(dref, dz) / dot(dref, dref)
+    @test norm(dz .- ls .* dref) / norm(dref) < 1e-8
+
+    # compress!（复 ket 目标）
+    out2 = randomimps(Float64, [2, 2]; D = 2)
+    y2, envs2, _ = compress!(out2, ψc, VOMPS(D = 2, tol = 1e-12, maxiter = 200))
+    @test y2 === envs2.bra && scalartype(y2) == T
+    @test eltype(out2.AL[1]) == Float64
+    @test fidelity(y2, ψc) > 1 - 1e-8
+
+    # hadamard!（复因子）：精确参考 = ψr ⊙ ψc（严格 zip，键维 4）
+    out3 = randomimps(Float64, [2, 2]; D = 4)
+    y3, envs3, _ = hadamard!(out3, ψr, ψc, VOMPS(D = 4, tol = 1e-12, maxiter = 200))
+    @test y3 === envs3.bra && scalartype(y3) == T
+    @test eltype(out3.AL[1]) == Float64
+    hexact = DenseIMPS([ComplexF64.(a) for a in collect(ψr.AL)]) ⊙
+             DenseIMPS(collect(ψc.AL))
+    @test fidelity(DenseIMPS(y3), hexact) > 1 - 1e-8
+end

@@ -1,5 +1,28 @@
 # 变更记录（接口）
 
+## 2026-10-02 `svdguess_mult(W, W2, D)` 直接返回 `CanonicalIMPO`
+
+- 修正包装层返回类型与输入域的不一致：mpo·mpo 的乘积是算符，原实现却以
+  融合 (u·d) 物理腿的 `CanonicalIMPS`（vectorize 视图）返回，迫使调用方
+  （`mult`）再 `devectorize`。现 `devectorize` 收进 `svdguess_mult` 内部——
+  流式构造仍在融合视图上进行（键截断与 `gaugefix!` 都在该视图），规范化后
+  按 `devectorize` 的互逆纯 reshape 拆回 (u, d)，原生 MPO 形态返回
+  `CanonicalIMPO`（规范家族逐位携带，与旧表达式逐位相等）；`mult(W, W2, alg)`
+  调用点相应简化；mpo·mps 方法（返回态 `CanonicalIMPS`）与裸张量串方法不变。
+
+## 2026-10-02 `mult!`/`compress!`/`hadamard!` 类型提升兜底：通道解无法写回 `out` 时首个返回值为更新 bra
+
+- `_copyinto!`（写回家族）加类型守卫：`out` 的标量类型无法表示 `y` 时（实
+  `out` 遇复提升的通道解——复输入或 leading vector 复化使通道算术类型为复；
+  缓存构造器把 bra 槽提升到环境 eltype，引擎内部恒同型演化，写回前才发现
+  不可表示），不修改 `out`、直接返回 `y`（`envs.bra`）本身——
+  `mult!`/`compress!`（MPS/MPO 版）/`hadamard!` 的第一个返回值相应为提升后的
+  更新 bra（`envs.bra`），不再是原 `out`（`out` 仅保留 `changebond!` 预处理
+  效果）；docstring 同步；
+- 回归测试（arithmetics.jl）：实 out + 复通道的 `mult!`（mpo·mps 双引擎 /
+  mpo·mpo）、`compress!`、`hadamard!` 断言 `result === envs.bra`、结果为复、
+  `out` 存储保持实型、射线与严格参考一致。
+
 ## 2026-10-02 `randomimpo` 返回 `CanonicalIMPO`（与 `randomimps` 对齐）
 
 - `randomimpo` 与 `randomimps` 同款：随机张量串构造后立即经 `CanonicalIMPO`
