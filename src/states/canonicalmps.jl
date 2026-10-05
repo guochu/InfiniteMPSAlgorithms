@@ -314,3 +314,65 @@ function ismixedcanonical(ψ::CanonicalIMPS; tol::Real = 1.0e-8, verbosity::Int 
     end
     return max(ϵ_left, ϵ_right, ϵ_mixed) ≤ tol
 end
+
+# ---------------- truncate!（逐键 C 截断；语义对齐 InfiniteTEMPO 的 toiadt!） ----------------
+
+"""
+    truncate!(ψ::CanonicalIMPS; trunc = DefaultTruncation) -> (ψ, err)
+    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation) -> (W, err)
+
+In-place bond truncation of the mixed-canonical chain（语义对齐 InfiniteTEMPO
+的 `toiadt!`/`toipt!` finalize）：逐键对中心矩阵 `C[ℓ]` 做 SVD 截断（方案
+`trunc`：键维上限/谱下限等 [`TruncationScheme`](@ref)；默认
+[`DefaultTruncation`](@ref) = `Defaults.D` 封顶 + `Defaults.tolgauge` 相对
+阈值 + `add_back = 1`），中心矩阵取对角谱（"C 对角" 规范），相邻键的
+unitary 因子把 `AR` 旋转到与对角 `C` 一致，`AL`/`AC` 闭式装配：
+`AC[ℓ] = diag(s[ℓ-1])·AR'[ℓ]`（左键对角 ⇒ 行缩放）、`AL[ℓ] = AC[ℓ] / C'[ℓ]`
+（`CanonicalIMPO` 的 `AL` 在 MPS 视图 `(wl, u·d, wr)` 上右除）。四族逐槽写回
+（原地），不做重正则化/重建规范。
+
+正则性：截断丢弃的谱权重小时（相对阈值方案的谱清理——包括截掉秩亏的 ~0
+方向），装配的正则性偏差与丢弃权重同量级，`ismixedcanonical` 在相应容差下
+成立；真截断（丢有限权重）时偏差随之增大。返回值 `err` 即最大逐键 `tsvd`
+截断误差（丢弃权重的 2-范数），可直接作为正则性容差的参考。除压缩键维外，
+谱清理保证输出 `C` 满秩可逆（右除需要）——逐轮变分流程（XTRG 式
+mult/compress 管线）以上一轮输出为输入时，秩亏方向的清理是保住后续迭代
+条件数的关键（`DefaultTruncation` 的相对阈值会自动截掉 ~0 奇异值）。
+
+注意：秩亏链（`C` 有 ≈0 奇异值）请用带相对阈值的方案（`DefaultTruncation`/
+`truncrelerr`）；`NoTruncation()` 会原样保留零方向（此时右除 `AC/C` 未定义）。
+"""
+function truncate!(ψ::CanonicalIMPS; trunc::TruncationScheme = DefaultTruncation)
+    N = length(ψ)
+    T = scalartype(ψ)
+    # 逐键 SVD 截断 C：中心矩阵取对角谱，右因子（行正交的 V†）留作规范旋转
+    Cs = Vector{Matrix{T}}(undef, N)
+    Sb = Vector{Vector{Float64}}(undef, N)
+    Vs = Vector{Matrix{T}}(undef, N)
+    err = 0.0
+    for ℓ in 1:N
+        _, S, V, e = tsvd(ψ.C[ℓ], (1,), (2,); trunc)
+        Cs[ℓ] = Matrix{T}(Diagonal(S))
+        Sb[ℓ] = S
+        Vs[ℓ] = V
+        err = max(err, e)
+    end
+    # 相邻键的 unitary 因子把 AR 旋转到与对角 C 一致；AL/AC 闭式装配
+    ALs = Vector{Array{T,3}}(undef, N)
+    ARs = Vector{Array{T,3}}(undef, N)
+    ACs = Vector{Array{T,3}}(undef, N)
+    for ℓ in 1:N
+        @tensor Ar[a, s, c] := Vs[_mod1(ℓ - 1, N)][a, b] * ψ.AR[ℓ][b, s, d] *
+                              conj(Vs[ℓ][c, d])
+        AC = Ar .* reshape(Sb[_mod1(ℓ - 1, N)], :, 1, 1)   # AC = diag(s)·AR（行缩放）
+        Dl, d, Dr = size(AC)
+        ALs[ℓ] = reshape(reshape(AC, Dl * d, Dr) / Cs[ℓ], Dl, d, Dr)   # AL·C = AC
+        ARs[ℓ] = Ar
+        ACs[ℓ] = AC
+    end
+    copy!(ψ.AL, ALs)
+    copy!(ψ.AR, ARs)
+    copy!(ψ.C, Cs)
+    copy!(ψ.AC, ACs)
+    return ψ, err
+end

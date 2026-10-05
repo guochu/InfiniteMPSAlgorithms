@@ -256,3 +256,65 @@ end
     @test_throws MethodError ψ1 ⊙ ψ2
 end
 
+@testset "truncate!：逐键 C 截断（toiadt!/toipt! 语义）" begin
+    T = ComplexF64
+    Random.seed!(23)
+
+    # ---- CanonicalIMPS：默认方案（D 封顶 + 相对阈值）在良态链上近无操作 ----
+    ψ = randomimps(T, [2, 2]; D = 4)
+    ψ0 = copy(ψ)
+    y, err = truncate!(ψ)
+    @test y === ψ && err < 1e-12
+    @test ismixedcanonical(ψ)
+    @test bonddim(ψ, 1) == 4 && bonddim(ψ, 2) == 4   # 键 profile 不变
+    @test fidelity(ψ, ψ0) > 1 - 1e-10                # 射线不变
+    @test norm(ψ) ≈ norm(ψ0) atol = 1e-9             # 权重保留
+
+    # ---- CanonicalIMPS：相对阈值的秩亏清理（toiadt! 的 XTRG 用例）----
+    # 零块 (ψ2, 0) 链：键 4 但第二通道范数为零（不进入环形 winding），键谱
+    # {s1, s2, 0, 0}——相对阈值截掉零方向 → 键 profile 降到 [2, 2]，射线不变
+    A2 = [randn(T, 2, 2, 2), randn(T, 2, 2, 2)]
+    ψblk = CanonicalIMPS([cat(A2[ℓ], zeros(T, 2, 2, 2); dims = (1, 3)) for ℓ in 1:2])
+    ψblk0 = copy(ψblk)
+    @test max_bonddim(ψblk) == 4                     # 构造不做降键（键可行即保留）
+    _, errb = truncate!(ψblk; trunc = truncrelerr(ϵ = 1e-10))
+    @test bonddim(ψblk, 1) == 2 && bonddim(ψblk, 2) == 2
+    @test ismixedcanonical(ψblk) && errb < 1e-12
+    @test fidelity(ψblk, ψblk0) > 1 - 1e-10
+
+    # ---- CanonicalIMPS：truncdim(2) 强截断 ----
+    # 真截断（丢有限权重）：闭式装配的正则性偏差与丢弃权重同量级（受保留谱
+    # 条件数放大，实测 ~err）——丢弃权重小（谱清理）时严格正则；混合一致性
+    # （AL·C = AC，闭式装配）机器精确
+    Random.seed!(25)
+    ψ = randomimps(T, [2, 2]; D = 4)
+    ψ0 = copy(ψ)
+    _, err2 = truncate!(ψ; trunc = truncdim(2))
+    @test bonddim(ψ, 1) == 2 && bonddim(ψ, 2) == 2
+    @test ismixedcanonical(ψ; tol = 10 * err2)
+    @test mixedcanonical_error(ψ)[3] < 1e-12
+    @test 0 < fidelity(ψ, ψ0) < 1                    # 真截断：射线改变
+    @test err2 > 0
+
+    # ---- CanonicalIMPO：相对阈值的秩亏清理 ----
+    W2raw = [randn(T, 2, 2, 2, 2), randn(T, 2, 2, 2, 2)]
+    Wblk = CanonicalIMPO([cat(W2raw[ℓ], zeros(T, 2, 2, 2, 2); dims = (1, 3)) for ℓ in 1:2])
+    Wblk0 = copy(Wblk)
+    @test max_bonddim(Wblk) == 4
+    _, errw = truncate!(Wblk; trunc = truncrelerr(ϵ = 1e-10))
+    @test bonddim(Wblk, 1) == 2 && bonddim(Wblk, 2) == 2
+    @test ismixedcanonical(Wblk) && errw < 1e-12
+    @test fidelity(Wblk, Wblk0) > 1 - 1e-10          # Hilbert–Schmidt 保真度
+
+    # ---- CanonicalIMPO：truncdim(2) 强截断（正则性约定同 MPS 版）----
+    Random.seed!(26)
+    W = randomimpo(T, [2, 2]; D = 4)
+    W0 = copy(W)
+    _, errw2 = truncate!(W; trunc = truncdim(2))
+    @test max_bonddim(W) == 2
+    @test ismixedcanonical(W; tol = 10 * errw2)
+    @test mixedcanonical_error(W)[3] < 1e-12
+    @test 0 < fidelity(W, W0) < 1
+    @test errw2 > 0
+end
+

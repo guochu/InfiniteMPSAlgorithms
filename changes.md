@@ -1,5 +1,27 @@
 # 变更记录（接口）
 
+## 2026-10-02 新增 `truncate!(::CanonicalIMPS/::CanonicalIMPO; trunc)`
+
+- 正则链的原地键截断（语义对齐 InfiniteTEMPO 的 `toiadt!`/`toipt!` finalize）：
+  逐键对中心矩阵 `C[ℓ]` 做 SVD 截断（`trunc::TruncationScheme`，默认
+  `DefaultTruncation` = `Defaults.D` 封顶 + `Defaults.tolgauge` 相对阈值 +
+  `add_back = 1`），中心矩阵取对角谱（"C 对角" 规范），相邻键的 unitary
+  因子把 `AR` 旋转到与对角 `C` 一致，`AL`/`AC` 闭式装配（`AC = diag(s)·AR'`、
+  `AL = AC/C'`；MPO 版在 MPS 视图 `(wl, u·d, wr)` 上右除）；四族逐槽写回
+  （原地），不做重正则化/重建规范；返回 `(ψ, err)`，`err` 为最大逐键 `tsvd`
+  截断误差；
+  - 正则性语义：截断丢弃的谱权重小时（相对阈值方案的谱清理——包括截掉
+    秩亏的 ~0 方向），装配正则性偏差与丢弃权重同量级，`ismixedcanonical`
+    在相应容差下成立；真截断（丢有限权重）时偏差随之增大（实测 ~err，受
+    保留谱条件数放大）——正则性由调用方按 `err` 把控，不做强制重建；
+  - `truncate!` 名字为 FiniteMPSAlgorithms 同名函数的方法扩展（`import`
+    后新方法，原 `Vector`/有限 `CanonicalMPS` 方法不受影响）；已在导出列表
+    （随 tensorops 层再导出）；
+- 测试（states/mps.jl）：良态链默认方案近无操作（正则性/射线/键 profile/
+  范数保持）、零块秩亏链的谱清理（键 4→2、正则性严格成立、err=0，MPS/MPO
+  双版）、`truncdim(2)` 强截断（键 4→2、容差 = 丢弃权重下正则、混合一致性
+  机器精确、`0 < fidelity < 1`）。
+
 ## 2026-10-02 `svdguess_mult(W, W2, D)` 直接返回 `CanonicalIMPO`
 
 - 修正包装层返回类型与输入域的不一致：mpo·mpo 的乘积是算符，原实现却以
