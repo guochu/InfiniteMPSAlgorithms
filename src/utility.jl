@@ -218,7 +218,6 @@ const VERBOSE_CONV = 2
 const VERBOSE_ITER = 3
 const VERBOSE_ALL = 4
 
-const eltype = ComplexF64
 const D = 64
 const maxiter = 300
 const tolgauge = 1.0e-13

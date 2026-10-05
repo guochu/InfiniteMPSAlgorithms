@@ -1,5 +1,39 @@
 # 变更记录（接口）
 
+## 2026-10-02 清理「operator might not be hermitian」告警（测试侧适配）；构造器缺省类型改 Float64；删除 `_mpo_from_mps`
+
+- 告警诊断：测试中的海量 KrylovKit Lanczos 告警**不是哈密顿量构造错误**——
+  DMRG/VUMPS/IDMRG 的约定就是输入哈密顿量厄米、局部求解默认 Lanczos（同
+  MPSKit）。两个测试用例违反了该约定：(1) `test/algorithms/envs.jl` 异构
+  物理维 testset 用随机复 onsite 的**非厄米**哈密顿量（Lanczos 上虚部高达
+  1.0，8937 条）——改为对称化 `(h + h')/2` 的随机厄米 onsite，局部求解回归
+  默认；(2) DenseIMPO 通道基态（`operators/mpo.jl`、groundstate concordance）：
+  恒等层 bookkeeping 使转移矩阵主导空间简并，投影有效哈密顿量结构性非严格
+  厄米（~1e-6）——该通道测试显式传 `alg_eigsolve =
+  Defaults.alg_eigsolve(; ishermitian = false)`（Arnoldi；`compare_groundstate_k`
+  增加 `alg_eigsolve` 转发关键字）。SparseIMPO 通道有效哈密顿量严格厄米
+  （0 告警，对照）；源码层面 VUMPS/IDMRG 保持默认 Lanczos 不变；
+- 构造器缺省标量类型统一为 Float64：`identityimpo(phydims)`（原
+  ComplexF64）、`σx`/`σz`/`Sx`/`Sz`（原 ComplexF64）、`tfim_hamiltonian`/
+  `tfim`/`fermi_hubbard` 的 `T` 缺省（原 ComplexF64）；σy/Sy 本征复矩阵、
+  `heisenberg_hamiltonian`/`heisenberg_xxz`（含 Sy）保持 ComplexF64；
+- 删除 `Defaults.eltype`（与标准库 `eltype` 同名的常量定义有遮蔽风险，且无
+  使用方——concordance 的镜像断言同步移除）；
+- 删除内部 reshape kernel `asmps_view`/`mps_view_to_mpo`/`_local_square_rdims`：
+  包内约定 MPO 局域 `du == dd`（方算符），rank-3 ↔ rank-4 的互逆转换只保留
+  `vectorize`/`devectorize`，二者新增 **raw-string（AbstractVector）重载**——
+  `vectorize(Ws::AbstractVector{<:Array{T,4}})`（融合 `(wl,u,wr,d) →
+  (wl,u·d,wr)`，逐站读入自身物理维）与
+  `devectorize(As::AbstractVector{<:Array{T,3}})`（拆分 `f = r²`，完全平方数
+  校验）；`CanonicalIMPO(Ws)` 构造器、`devectorize`/`vectorize` 的类型方法
+  相应内联；
+- 新增三参数混合规范构造器 **`CanonicalIMPS(AL, C, AR)`** /
+  **`CanonicalIMPO(AL, C, AR)`**（镜像 MPSKit 的 `InfiniteMPS(AL, C, AR)`）：
+  `Vector`/`PeriodicVector` 皆可，`AC = AL·C` 闭式装配，输入视为已处于相应
+  规范、不做 `gaugefix!` 重整；
+- 验证：states、operators（mpo/vectorize）、envs、groundstate concordance、
+  compress 测试全过。
+
 ## 2026-10-02 新增 `truncate!(::CanonicalIMPS/::CanonicalIMPO; trunc)`
 
 - 正则链的原地键截断（语义对齐 InfiniteTEMPO 的 `toiadt!`/`toipt!` finalize）：

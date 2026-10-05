@@ -81,7 +81,6 @@ function run_lowlevel_concordance(::Type{T}) where {T<:Number}
     @testset "底层对比 [$T]" begin
 
 @testset "Defaults 常量 ≡ MPSKit" begin
-    @test Defaults.eltype == MPSKit.Defaults.eltype
     # 有意偏离：本包 maxiter = 300（MPSKit 为 200）
     @test Defaults.maxiter == 300
     @test MPSKit.Defaults.maxiter == 200

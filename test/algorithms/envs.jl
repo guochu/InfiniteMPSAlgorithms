@@ -94,9 +94,12 @@ end
     W = CanonicalIMPO([randn(T, 2, dims[ℓ], 2, dims[ℓ]) for ℓ in 1:3])
     @test ismixedcanonical(W)
 
-    # SparseIMPO：层数一致、各站物理维不同
-    Hs = SparseIMPO([mpohamiltonian(randn(T, dims[ℓ], dims[ℓ]),
-                                    Tuple{Float64,Matrix{T},Matrix{T}}[]) for ℓ in 1:3])
+    # SparseIMPO：层数一致、各站物理维不同（随机厄米 onsite——DMRG 假定
+    # 输入哈密顿量厄米，局部求解用默认 Lanczos）
+    hd = [randn(T, dims[ℓ], dims[ℓ]) for ℓ in 1:3]
+    hd = [(h + h') / 2 for h in hd]        # 对称化 ⇒ 厄米
+    Hs = SparseIMPO([mpohamiltonian(hd[ℓ], Tuple{Float64,Matrix{T},Matrix{T}}[])
+                     for ℓ in 1:3])
     @test phydims(Hs) == dims
     @test bonddim(Hs) == 2
     e0 = real(expectationvalue(ψ, Hs))

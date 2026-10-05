@@ -24,16 +24,20 @@ function _state_ray_residual(ψ_our::CanonicalIMPS, ψ_mk)
 end
 
 "同初态、固定迭代数（`tol = 0` ⇒ 恰好 k 轮）的 VUMPS/IDMRG 行为一致性：
-k 轮后的能量（与态）一致。容差按通道与算法的实测偏差量级给定。"
+k 轮后的能量（与态）一致。容差按通道与算法的实测偏差量级给定。
+`alg_eigsolve`（可空）转发给本包侧 VUMPS/IDMRG——DenseIMPO 通道的投影有效
+哈密顿量因恒等层环境简并非严格厄米，传 Arnoldi 以免 Lanczos 逐 Krylov 步
+刷「might not be hermitian」告警。"
 function compare_groundstate_k(H_our, H_mk, ψ0, D; ks = (1, 2, 5),
                                e_tol_v = 1e-10, ψ_tol_v = 1e-8,
                                e_tol_i = 1e-3, ψ_tol_i = 1e-2,
-                               compare_state = true)
+                               compare_state = true, alg_eigsolve = nothing)
     L = length(ψ0)
+    ours = alg_eigsolve === nothing ? NamedTuple() : (alg_eigsolve = alg_eigsolve,)
     for k in ks
         # ---- VUMPS：至多 k 轮（`tol = 0` 保底；恰到达精确不动点时允许提前停） ----
         ψ1, envs1, i1 = find_groundstate(ψ0, H_our,
-                    VUMPS(D = D, maxiter = k, tol = 0.0, verbosity = 0))
+                    VUMPS(; D = D, maxiter = k, tol = 0.0, verbosity = 0, ours...))
         ψ2, envs2, i2 = MPSKit.find_groundstate(mkinfinitemps(ψ0), H_mk,
                     MPSKit.VUMPS(maxiter = k, tol = 0.0, verbosity = 0))
         @test i1.niter ≤ k
@@ -43,7 +47,7 @@ function compare_groundstate_k(H_our, H_mk, ψ0, D; ks = (1, 2, 5),
         # ---- IDMRG：至多 k 轮（Dense 通道的恒等层结构会在少数几轮内到达
         # 精确不动点——C 漂移恰为 0 而提前收敛，属合法行为） ----
         ψ3, envs3, i3 = find_groundstate(ψ0, H_our,
-                    IDMRG(D = D, maxiter = k, tol = 0.0, verbosity = 0))
+                    IDMRG(; D = D, maxiter = k, tol = 0.0, verbosity = 0, ours...))
         ψ4, envs4, i4 = MPSKit.find_groundstate(mkinfinitemps(ψ0), H_mk,
                     MPSKit.IDMRG(maxiter = k, tol = 0.0, verbosity = 0))
         @test i3.niter ≤ k
@@ -88,9 +92,12 @@ end
     Random.seed!(1234)
     ψ_dense = CanonicalIMPS([randn(T, 8, d, 8)])
     @testset "DenseIMPO（InfiniteMPO 通道）" begin
+        # 投影有效哈密顿量非严格厄米（恒等层 bookkeeping）⇒ 本包侧局部求解显式
+        # 用 Arnoldi；MPSKit 侧保持其默认（行为不比对，只比能量）
         compare_groundstate_k(DenseIMPO(tfim_hamiltonian(J = 1.0, h = 1.0, T = T)),
                               to_mpskit(DenseIMPO(tfim_hamiltonian(J = 1.0, h = 1.0, T = T))),
                               ψ_dense, 8; e_tol_v = 3e-6, e_tol_i = 3e-6,
-                              compare_state = false)
+                              compare_state = false,
+                              alg_eigsolve = Defaults.alg_eigsolve(; ishermitian = false))
     end
 end

@@ -49,7 +49,7 @@ prodimps(phydims::AbstractVector{Int}, states::AbstractVector{Int} = ones(Int, l
 # ---------------- MPO constructors ----------------
 
 """
-    identityimpo([T=ComplexF64,] phydims) -> DenseIMPO
+    identityimpo([T=Float64,] phydims) -> DenseIMPO
 
 Identity MPO: bond dimension 1, `W[1, u, 1, d] = δ(u, d)`.
 """
@@ -64,7 +64,7 @@ function identityimpo(::Type{T}, phydims::AbstractVector{Int}) where {T<:Number}
     end
     return DenseIMPO(Ws)
 end
-identityimpo(phydims::AbstractVector{Int}) = identityimpo(ComplexF64, phydims)
+identityimpo(phydims::AbstractVector{Int}) = identityimpo(Float64, phydims)
 
 """
     randomimpo([T=Float64,] phydims; D, rng=Random.default_rng(), kwargs...) -> CanonicalIMPO

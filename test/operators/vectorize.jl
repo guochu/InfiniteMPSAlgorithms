@@ -2,7 +2,7 @@
 # 算符代数变换：vectorize / devectorize / superoperator
 #
 # 约定：MPO 物理腿融合 f = u + du·(d - 1)（bra/行腿 u 为快指标，与
-# asmps_view 一致；Julia 列主序下就是 reshape(X, :)）；
+# vectorize 的 raw-string 重载一致；Julia 列主序下就是 reshape(X, :)）；
 #   superoperator(:left)  = W ⊗ I（W 在慢/bra 通道）：𝓦·vec(X) = vec(W·X)
 #   superoperator(:right) = I ⊗ Wᵀ（Wᵀ 在快/ket 通道）：𝓦·vec(X) = vec(X·W)
 # 组合（mult 精确路径）：
@@ -22,9 +22,9 @@
         @test ismixedcanonical(ψ)                               # 规范族逐位携带
         @test phydims(ψ) == [4, 4]                              # 物理腿融合 d²
         @test bonddim(ψ, 1) == bonddim(Wc, 1)                   # 键维不变
-        # 纯 reshape：融合张量与规范族自身的 asmps_view 逐位相等
-        @test collect(parent(ψ.AL)) == asmps_view(collect(Wc.AL))
-        @test collect(parent(ψ.AC)) == asmps_view(collect(Wc.AC))
+        # 纯 reshape：融合张量与规范族自身的 vectorize 逐位相等
+        @test collect(parent(ψ.AL)) == vectorize(collect(Wc.AL))
+        @test collect(parent(ψ.AC)) == vectorize(collect(Wc.AC))
         # 精确往返
         W2 = devectorize(ψ)
         @test W2 isa CanonicalIMPO
@@ -57,7 +57,7 @@
         ψ = vectorize(W)
         @test ψ isa DenseIMPS
         @test phydims(ψ) == [4, 9]
-        @test collect(ψ.As) == asmps_view(Ws)       # 纯融合视图（逐位）
+        @test collect(ψ.As) == vectorize(Ws)        # 纯融合视图（逐位）
         W2 = devectorize(ψ)
         @test W2 isa DenseIMPO
         @test collect(W2.Ws) == Ws                  # 精确往返

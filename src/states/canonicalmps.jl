@@ -52,6 +52,20 @@ CanonicalIMPS(AL::PeriodicVector{Array{T,3}}, AR::PeriodicVector{Array{T,3}},
     CanonicalIMPS{T}(AL, AR, C, AC)
 
 """
+    CanonicalIMPS(AL, C, AR) -> CanonicalIMPS
+
+Three-family mixed-canonical constructor (mirrors MPSKit's `InfiniteMPS(AL, C,
+AR)`): `AL`/`C`/`AR` are the left-canonical string, the bond center matrices,
+and the right-canonical string（`Vector` 或 `PeriodicVector` 均可）；`AC = AL·C`
+闭式装配。输入即视为已处于相应规范，不做 `gaugefix!` 重整（与 1 参数
+raw-string 构造器的差别所在）。
+"""
+CanonicalIMPS(AL::AbstractVector{<:Array{T,3}}, C::AbstractVector{<:Array{T,2}},
+              AR::AbstractVector{<:Array{T,3}}) where {T} =
+    CanonicalIMPS(PeriodicVector(collect(AL)), PeriodicVector(collect(AR)),
+                  PeriodicVector(collect(C)))
+
+"""
     _check_bond_consistency(As) -> nothing
 
 逐站校验张量串的虚拟键一致性，**包含周期闭合那一条键**（`size(As[N],3) ==

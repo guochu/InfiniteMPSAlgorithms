@@ -177,8 +177,8 @@ end
     M = CanonicalIMPO(collect(Wd.Ws))             # DenseIMPO → CanonicalIMPO（方算符）
     @test phydim(M, 1) == 2 && phydim(M, 2) == 3
     @test phydims(M) == [2, 3]
-    # 非方算符：内构造即拒绝（AC 的 u/d 检查）
-    @test_throws DimensionMismatch CanonicalIMPO([randn(T, 1, 2, 1, 3), randn(T, 1, 3, 1, 2)])
+    # 非方算符（du ≠ dd）：融合物理维非完全平方数，转换 kernel 即拒绝
+    @test_throws ArgumentError CanonicalIMPO([randn(T, 1, 2, 1, 3), randn(T, 1, 3, 1, 2)])
 
     # 无 T 时默认 Float64；d 默认 2；D 必须显式给出
     ψf = randomimps(3; D = 4)
@@ -316,5 +316,32 @@ end
     @test mixedcanonical_error(W)[3] < 1e-12
     @test 0 < fidelity(W, W0) < 1
     @test errw2 > 0
+end
+
+@testset "三参数混合规范构造器 CanonicalIMPS(AL, C, AR) / CanonicalIMPO(AL, C, AR)" begin
+    T = ComplexF64
+    Random.seed!(27)
+
+    # 从已正则链提取三族重建：四族逐位一致（AC = AL·C 闭式装配）、正则性保持
+    ψ = randomimps(T, [2, 2]; D = 3)
+    ψ2 = CanonicalIMPS(ψ.AL, ψ.C, ψ.AR)
+    @test collect(ψ2.AL) == collect(ψ.AL)
+    @test collect(ψ2.C) == collect(ψ.C)
+    @test collect(ψ2.AR) == collect(ψ.AR)
+    @test collect(ψ2.AC) == collect(ψ.AC)
+    @test ismixedcanonical(ψ2)
+    # Vector 输入（MPSKit 的 InfiniteMPS(AL, C, AR) 亦接受）
+    ψ3 = CanonicalIMPS(collect(ψ.AL), collect(ψ.C), collect(ψ.AR))
+    @test collect(ψ3.AC) == collect(ψ.AC)
+
+    W = randomimpo(T, [2, 2]; D = 3)
+    W2 = CanonicalIMPO(W.AL, W.C, W.AR)
+    @test collect(W2.AL) == collect(W.AL)
+    @test collect(W2.C) == collect(W.C)
+    @test collect(W2.AR) == collect(W.AR)
+    @test collect(W2.AC) == collect(W.AC)
+    @test ismixedcanonical(W2)
+    W3 = CanonicalIMPO(collect(W.AL), collect(W.C), collect(W.AR))
+    @test collect(W3.AC) == collect(W.AC)
 end
 

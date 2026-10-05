@@ -10,13 +10,16 @@
     # DenseIMPO 通道（MPSKit InfiniteMPO 通道的对标实现）：VUMPS/IDMRG 可直接
     # 求基态——该通道的「能量」为周期 trace 收缩（含恒等层 bookkeeping，见
     # DMRGCache 的 DenseIMPO 版说明）；恒等层结构的收敛较慢，这里只断言可跑且
-    # 期望有限，与 MPSKit 的一致性由 concordance 测试固化（同参数收敛能量对比）
+    # 期望有限，与 MPSKit 的一致性由 concordance 测试固化（同参数收敛能量对比）。
+    # 投影有效哈密顿量因环境简并非严格厄米，局部求解显式用 Arnoldi
     Hd = DenseIMPO(tfim_hamiltonian(T = T))
+    alg_dense = Defaults.alg_eigsolve(; ishermitian = false)
     ψd, envsd, _ = find_groundstate(randomimps(T, [2, 2]; D = 10), Hd,
                                     VUMPS(D = 10, maxiter = 300, tol = 1e-9,
-                                          verbosity = 0))
+                                          verbosity = 0, alg_eigsolve = alg_dense))
     @test isfinite(real(expectationvalue(ψd, Hd, envsd)))
-    ψd2, envsd2, _ = find_groundstate(Hd, IDMRG(D = 10, maxiter = 300, tol = 1e-9))
+    ψd2, envsd2, _ = find_groundstate(Hd, IDMRG(D = 10, maxiter = 300, tol = 1e-9,
+                                                alg_eigsolve = alg_dense))
     @test isfinite(real(expectationvalue(ψd2, Hd, envsd2)))
     # 同一模型的 SparseIMPO 形式可正常求基态
     Hs = heisenberg_hamiltonian(T = T)

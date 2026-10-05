@@ -52,20 +52,6 @@ struct CanonicalIMPO{T<:Number} <: AbstractInfiniteMPO{T}
 end
 
 """
-    _mpo_from_mps(ψ::CanonicalIMPS, dus, dds) -> CanonicalIMPO
-
-[`CanonicalIMPS`](@ref) → [`CanonicalIMPO`](@ref): the rank-3
-families are mapped back to rank-4 via the inverse view transform
-[`mps_view_to_mpo`](@ref) (`dus`/`dds` give the u/d physical dimensions per site).
-"""
-function _mpo_from_mps(ψ::CanonicalIMPS{T}, dus::AbstractVector{Int},
-                       dds::AbstractVector{Int}) where {T}
-    to4 = As -> mps_view_to_mpo(collect(As); dus = dus, dds = dds)
-    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
-                                   copy(ψ.C), PeriodicVector(to4(ψ.AC)))
-end
-
-"""
     CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...)
 
 Construct from plain MPO tensors (mirrors `CanonicalIMPS(As)`): fuse the
@@ -75,10 +61,35 @@ convention), then mixed-canonicalize with `gaugefix!`
 normalization-scale caveat).
 """
 function CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...) where {T}
-    N = length(Ws)
-    ψ = CanonicalIMPS(asmps_view(Ws); kwargs...)
-    return _mpo_from_mps(ψ, [size(Ws[ℓ], 2) for ℓ in 1:N], [size(Ws[ℓ], 4) for ℓ in 1:N])
+    ψ = CanonicalIMPS(vectorize(Ws); kwargs...)
+    to4 = As -> devectorize(collect(As))
+    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
+                            copy(ψ.C), PeriodicVector(to4(ψ.AC)))
 end
+
+"`_mulAL(W, C)`（rank-4）：MPS 视图上的 `AC = AL·C`（三参数构造器的 `AC`
+闭式装配；rank-3 版见 `canonicalmps.jl`）。"
+function _mulAL(W::AbstractArray{T,4}, C::AbstractMatrix{T}) where {T}
+    wl, u, wr, d = size(W)
+    ALm = reshape(permutedims(W, (1, 2, 4, 3)), wl * u * d, wr)
+    ACv = reshape(ALm * C, wl, u, d, size(C, 2))
+    return permutedims(ACv, (1, 2, 4, 3))
+end
+
+"""
+    CanonicalIMPO(AL, C, AR) -> CanonicalIMPO
+
+Three-family mixed-canonical constructor (mirror of the `CanonicalIMPS`
+three-argument method): `AL`/`C`/`AR` are the left-canonical MPO string, the
+bond center matrices, and the right-canonical MPO string（`Vector` 或
+`PeriodicVector` 均可）；`AC = AL·C` 闭式装配。输入即视为已处于相应规范，
+不做 `gaugefix!` 重整。
+"""
+CanonicalIMPO(AL::AbstractVector{<:Array{T,4}}, C::AbstractVector{<:Array{T,2}},
+              AR::AbstractVector{<:Array{T,4}}) where {T} =
+    CanonicalIMPO{T}(PeriodicVector(collect(AL)), PeriodicVector(collect(AR)),
+                     PeriodicVector(collect(C)),
+                     PeriodicVector([_mulAL(AL[ℓ], C[ℓ]) for ℓ in eachindex(AL)]))
 
 # ---------------- interface (mirrors CanonicalIMPS) ----------------
 
@@ -132,12 +143,12 @@ function LinearAlgebra.normalize!(W::CanonicalIMPO)
 end
 
 """
-    asmps_view(Ws::Vector{<:Array{T,4}}) -> Vector{Array{T,3}}
+    vectorize(Ws::AbstractVector{<:Array{T,4}}) -> Vector{Array{T,3}}
 
-Internal reshape kernel of [`vectorize`](@ref): MPS view of an MPO tensor
-string, `(wl, u, wr, d)` → `(wl, u*d, wr)`.
+[`vectorize`](@ref) 的 raw-string 重载：MPO 张量串的 MPS 视图，
+`(wl, u, wr, d)` → `(wl, u*d, wr)`（纯 reshape，逐站读入自身物理维）。
 """
-function asmps_view(Ws::AbstractVector{<:Array{T,4}}) where {T}
+function vectorize(Ws::AbstractVector{<:Array{T,4}}) where {T}
     out = Vector{Array{T,3}}(undef, length(Ws))
     for (ℓ, W) in enumerate(Ws)
         wl, u, wr, d = size(W)
@@ -147,34 +158,25 @@ function asmps_view(Ws::AbstractVector{<:Array{T,4}}) where {T}
 end
 
 """
-    mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus, dds) -> Vector{Array{T,4}}
+    devectorize(As::AbstractVector{<:Array{T,3}}) -> Vector{Array{T,4}}
 
-Internal reshape kernel of [`devectorize`](@ref), inverse of [`asmps_view`](@ref):
-`(wl, u*d, wr)` → `(wl, u, wr, d)`.
-`dus`/`dds` give the u/d physical dimensions per site.
+[`devectorize`](@ref) 的 raw-string 重载（[`vectorize`](@ref) 的逆）：拆分各站
+融合物理维 `f` 为 `(u, d) = (r, r)`——包约定局域 `du == dd`，`f` 须为完全
+平方数（`r` 可逐站不同）。
 """
-function mps_view_to_mpo(As::Vector{<:Array{T,3}}; dus::AbstractVector{Int}, dds::AbstractVector{Int}) where {T}
-    length(As) == length(dus) == length(dds) || throw(DimensionMismatch())
+function devectorize(As::AbstractVector{<:Array{T,3}}) where {T}
     out = Vector{Array{T,4}}(undef, length(As))
     for (ℓ, A) in enumerate(As)
-        wl, p, wr = size(A)
-        (p == dus[ℓ] * dds[ℓ]) || throw(DimensionMismatch("physical dimension mismatch"))
-        out[ℓ] = permutedims(reshape(A, wl, dus[ℓ], dds[ℓ], wr), (1, 2, 4, 3))
+        wl, f, wr = size(A)
+        r = isqrt(f)
+        r^2 == f || throw(ArgumentError(
+            "fused physical dimension $f is not a perfect square (local du == dd required)"))
+        out[ℓ] = permutedims(reshape(A, wl, r, r, wr), (1, 2, 4, 3))
     end
     return out
 end
 
 # ---------------- operator-algebra transforms (vectorize / devectorize / superoperator) ----------------
-
-# 融合物理维 → 逐站局域方算符边长 r（包假定：局域 du == dd，各站 r 可不同）
-function _local_square_rdims(ps)
-    return [begin
-                r = isqrt(p)
-                r^2 == p || throw(ArgumentError(
-                    "fused physical dimension $p is not a perfect square (local du == dd required)"))
-                r
-            end for p in ps]
-end
 
 """
     vectorize(W::CanonicalIMPO) -> CanonicalIMPS
@@ -195,10 +197,10 @@ fused view of the raw tensors with no canonicalization (mirror of the
 `DenseIMPS`/`CanonicalIMPS` split).
 """
 function vectorize(W::CanonicalIMPO)
-    return CanonicalIMPS(PeriodicVector(asmps_view(collect(W.AL))),
-                         PeriodicVector(asmps_view(collect(W.AR))),
+    return CanonicalIMPS(PeriodicVector(vectorize(collect(W.AL))),
+                         PeriodicVector(vectorize(collect(W.AR))),
                          copy(W.C),
-                         PeriodicVector(asmps_view(collect(W.AC))))
+                         PeriodicVector(vectorize(collect(W.AC))))
 end
 # DenseIMPO/SparseIMPO/DenseIMPS 方法（纯融合视图、互逆转换）见 operators/linalg.jl
 
@@ -215,8 +217,10 @@ families are split by a pure reshape and the canonical gauge data (including
 `C`) is carried over verbatim, without any re-canonicalization.
 """
 function devectorize(ψ::CanonicalIMPS)
-    rs = _local_square_rdims(phydims(ψ))
-    return _mpo_from_mps(ψ, rs, rs)
+    T = scalartype(ψ)
+    to4 = As -> devectorize(collect(As))
+    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
+                            copy(ψ.C), PeriodicVector(to4(ψ.AC)))
 end
 
 """

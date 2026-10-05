@@ -4,7 +4,7 @@ using Random
 using TensorOperations
 using KrylovKit
 using InfiniteMPSAlgorithms
-import InfiniteMPSAlgorithms: scalartype, asmps_view
+import InfiniteMPSAlgorithms: scalartype
 
 include("testhelpers.jl")
 

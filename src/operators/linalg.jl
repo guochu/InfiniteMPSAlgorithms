@@ -104,14 +104,13 @@ DenseIMPO(W::CanonicalIMPO) = DenseIMPO(collect(W.AL))
 
 "`vectorize(W::DenseIMPO) -> DenseIMPS`：[`vectorize`](@ref) 的未规范化副本
 （纯融合视图，与 `CanonicalIMPO` 输入的规范携带版共用同一融合约定）。"
-vectorize(W::DenseIMPO) = DenseIMPS(asmps_view(W.Ws))
+vectorize(W::DenseIMPO) = DenseIMPS(vectorize(W.Ws))
 vectorize(W::SparseIMPO) = vectorize(DenseIMPO(W))
 
 "`devectorize(ψ::DenseIMPS) -> DenseIMPO`：[`devectorize`](@ref) 的未规范化
 副本（纯拆分，各站融合物理维须为完全平方数，`r` 可逐站不同）。"
 function devectorize(ψ::DenseIMPS)
-    rs = _local_square_rdims(phydims(ψ))
-    return DenseIMPO(mps_view_to_mpo(collect(ψ.As); dus = rs, dds = rs))
+    return DenseIMPO(devectorize(collect(ψ.As)))
 end
 
 """
