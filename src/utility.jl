@@ -196,9 +196,10 @@ MPSKit `fixedpoint(::Arnoldi)` 严格一致（**全盘 schursolve，不做实复
 本征为复时才升复——这从结构上消除了「实链的非厄米混合转移返回复本征向量」
 问题（`eigsolve` 的 Arnoldi 对实算子会给出复 Ritz 向量，调用方曾被迫取实部）。
 
-与环境通道的 [`fixedpoint(::NamedTuple)`](@ref)（`eigsolve`，实输入下
-leading vector 可为复、通道升复算术）**有意分流**：gauge 通道要的是实数域
-保持的代表元，环境通道要的是复提升的忠实解。
+**适用前提（gauge 通道的结构保证）**：主导本征值恒实正（规范谱固定点），
+返回的 Schur 向量即本征向量。主导本征对为复共轭对或简并时，Schur 向量只是
+（二维）不变子空间的基、**不是**本征向量——该场景必须用
+[`fixedpoint`](@ref)（`eigsolve`，本征向量语义）。
 """
 function gauge_fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi)
     TT, vecs, vals, info = KrylovKit.schursolve(operator, x₀, 1, which, alg)
@@ -213,11 +214,25 @@ end
 gauge_fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
     gauge_fixedpoint(operator, x₀, which, alg.alg)
 
-"非厄米本征值求解通道（MPSKit `fixedpoint(::Arnoldi)` 的对标，vumps/idmrg
-局部子问题的 Arnoldi 形态）：转发 [`gauge_fixedpoint`](@ref)（同一
-`schursolve` 语义——实数域保持）。"
-fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi) =
-    gauge_fixedpoint(operator, x₀, which, alg)
+"""
+    fixedpoint(operator, x₀, which, alg::KrylovKit.Arnoldi) -> (λ, v)
+
+非厄米算子的主导**本征对**（通用语义：vumps/idmrg 局部子问题的 Arnoldi 形态、
+InfiniteTEMPO 的 `largest_eigenpair` 委托等）：走标准 `KrylovKit.eigsolve`
+（Arnoldi），**保证返回本征向量**——实算子的复主导本征对（PT 对称系统等）返回
+真复本征向量（实输入下 `eigsolve` 对复 Ritz 对正确升复）。
+
+不得改走 `schursolve`（Schur 向量对本征值简并或复共轭对只是不变子空间的基、
+不是本征向量，实输入下甚至会以实向量配复本征值——本征方程残差 O(1)）；
+实数域保持的场景（规范谱固定点，主导本征值恒实正）用
+[`gauge_fixedpoint`](@ref)。
+"""
+function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi)
+    vals, vecs, _ = _eigsolve(operator, x₀, 1, which; ishermitian = false,
+                              tol = alg.tol, krylovdim = alg.krylovdim,
+                              maxiter = alg.maxiter, eager = true)
+    return vals[1], vecs[1]
+end
 
 "DynamicTol wrapper: uses the inner Krylov algorithm's initial tolerance."
 fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
