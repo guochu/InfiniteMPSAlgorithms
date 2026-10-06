@@ -1,5 +1,29 @@
 # 变更记录（接口）
 
+## 2026-10-06 `truncate!` 装配改为「截断 + 完全重正则化」（与 `gaugefix!(::InfiniteOrthogonalize)` 同构）
+
+- 原实现的闭式装配（V 旋转 AR + `AL = AC/C` 右除）**强行保留**逐键截断谱：
+  截断是键空间的非幺等投影、环形闭合方程超定，不自洽缺口 ~`err` 且被
+  `cond(C)` 放大（谱含接近截断阈值的奇异值时失控，体现为 ϵ_left 偏差）；
+- 新装配（全程无除法）：(1) 逐键 `tsvd(C)` 截断，保留子空间的行正交基 `Û`
+  投影 `AL` 两侧键 `A'[ℓ] = Û_{ℓ-1}†·AL[ℓ]·Û_ℓ`——得到截断后的**原始张量串**
+  （合法周期态）；(2) `gaugefix!(; order = :LR)` 完全重正则化：`AL` 由 QR
+  装配、`AR` 由 LQ 重建（构造性正交）、`C` 由混合转移 fixed point **重解**
+  收敛、`AC = AL·C` 闭式乘法。截断的不自洽只进射线精度（fidelity 损失
+  ~丢弃权重），不进正则性：三项 `mixedcanonical_error` 均在 `alg_gauge.tol`
+  （默认 1e-13）量级、与丢弃权重无关；
+- 语义变化：输出 `C` 为重解的 fixed point（谱 ≈ 截断谱 + O(err) 自洽调整，
+  不保证对角——需要谱时对 `C[ℓ]` 做一次 `tsvd`）；输出态归一（`norm = 1`，
+  `:LR` 路径的 `C[N]` Frobenius 归一约定）；新增 keyword `alg_gauge`
+  （默认 `Defaults.alg_gauge()`，重正则化的 `tol`/`maxiter`）；`CanonicalIMPO`
+  版改为 vectorize 的 MPS 视图上执行同一装配后 devectorize 写回；
+- 测试更新（states/mps.jl 的 truncate! testset）：强截断用例断言改为三项
+  正则误差一致 `< 1e-10`（不再与 `err` 挂钩）；默认方案近无操作、秩亏清理
+  用例断言不变（射线/键 profile/权重全保持）；代价：单次调用 ~一次完全
+  正则化（fixed point + 双向扫掠），实测 states 块 ~2× 耗时；
+- 验证：全量测试四块（states 165、operators 86、algorithms 541、
+  MPSKit concordance 359）全部通过，共 1151/1151。
+
 ## 2026-10-06 新增 `gaugefix!(::InfiniteOrthogonalize)`（states/ortho_exact.jl）；`fixedpoint(::Arnoldi)` 走 schursolve；TDVP `alg_orth` field；清理 eltype/冗余判断
 
 - **新增 `states/ortho_exact.jl`**：移植 InfiniteTEMPO 的

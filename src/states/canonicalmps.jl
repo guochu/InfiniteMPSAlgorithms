@@ -330,72 +330,63 @@ end
 # ---------------- truncate!（逐键 C 截断；语义对齐 InfiniteTEMPO 的 toiadt!） ----------------
 
 """
-    truncate!(ψ::CanonicalIMPS; trunc = DefaultTruncation) -> (ψ, err)
-    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation) -> (W, err)
+    truncate!(ψ::CanonicalIMPS; trunc = DefaultTruncation,
+              alg_gauge = Defaults.alg_gauge()) -> (ψ, err)
+    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation,
+              alg_gauge = Defaults.alg_gauge()) -> (W, err)
 
 In-place bond truncation of the mixed-canonical chain（语义对齐 InfiniteTEMPO
-的 `toiadt!`/`toipt!` finalize）：逐键对中心矩阵 `C[ℓ]` 做 SVD 截断（方案
-`trunc`：键维上限/谱下限等 [`TruncationScheme`](@ref)；默认
-[`DefaultTruncation`](@ref) = `Defaults.D` 封顶 + `Defaults.tolgauge` 相对
-阈值 + `add_back = 1`），中心矩阵取对角谱（"C 对角" 规范），相邻键的
-unitary 因子把 `AR` 旋转到与对角 `C` 一致，`AL`/`AC` 闭式装配：
-`AC[ℓ] = diag(s[ℓ-1])·AR'[ℓ]`（左键对角 ⇒ 行缩放）、`AL[ℓ] = AC[ℓ] / C'[ℓ]`
-（`CanonicalIMPO` 的 `AL` 在 MPS 视图 `(wl, u·d, wr)` 上右除）。四族逐槽写回
-（原地），不做重正则化/重建规范。
+的 `toiadt!`/`toipt!` finalize；装配模式与 `gaugefix!(::InfiniteOrthogonalize)`
+同构——**截断 + 完全重正则化**，全程无除法）：
 
-正则性：截断丢弃的谱权重小时（相对阈值方案的谱清理——包括截掉秩亏的 ~0
-方向），装配的正则性偏差与丢弃权重同量级，`ismixedcanonical` 在相应容差下
-成立；真截断（丢有限权重）时偏差随之增大。返回值 `err` 即最大逐键 `tsvd`
-截断误差（丢弃权重的 2-范数），可直接作为正则性容差的参考。除压缩键维外，
-谱清理保证输出 `C` 满秩可逆（右除需要）——逐轮变分流程（XTRG 式
+1. 逐键对中心矩阵 `C[ℓ]` 做 SVD 截断（方案 `trunc`：键维上限/谱下限等
+   [`TruncationScheme`](@ref)；默认 [`DefaultTruncation`](@ref) = `Defaults.D`
+   封顶 + `Defaults.tolgauge` 相对阈值 + `add_back = 1`），保留子空间的行
+   正交基 `Û` 投影 `AL` 的两侧键：`A'[ℓ] = Û_{ℓ-1}†·AL[ℓ]·Û_ℓ`——得到截断后
+   的**原始张量串**（合法周期态，键 profile 逐键压到保留维数）；
+2. `gaugefix!(; order = :LR)` 完全重正则化：`AL` 由 QR 扫掠装配、`AR` 由 LQ
+   扫掠重建（构造性正交，机器精度），`C` 由混合转移的 fixed point **重解**
+   收敛（`alg_gauge` 的 `tol`/`maxiter`），`AC = AL·C` 闭式乘法装配。
+
+正则性：截断是键空间的非幺等投影，环形闭合方程超定——若**强行保留**逐键
+截断谱（闭式装配 + `/C` 右除），不自洽缺口 ~`err` 且被 `cond(C)` 放大。本
+实现的 `C` 重解使截断的不自洽**只进射线精度**（fidelity 损失 ~丢弃权重），
+不进正则性：三项 `mixedcanonical_error` 均在 `alg_gauge.tol`（默认 1e-13）
+量级。语义代价：输出的 `C` 是重解的 fixed point（谱 ≈ 截断谱 + O(err) 的
+自洽调整，不保证对角；需要谱时对 `C[ℓ]` 做一次 `tsvd` 即可读出），输出态
+归一（`norm(ψ) = 1`，`:LR` 路径 `C[N]` 的 Frobenius 归一约定）。返回值
+`err` 即最大逐键 `tsvd` 截断误差（丢弃权重的 2-范数），可直接作为射线精度
+的参考。
+
+除压缩键维外，谱清理保证输出 `C` 谱严格正——逐轮变分流程（XTRG 式
 mult/compress 管线）以上一轮输出为输入时，秩亏方向的清理是保住后续迭代
 条件数的关键（`DefaultTruncation` 的相对阈值会自动截掉 ~0 奇异值）。
-
-!!! warning "数值不稳定操作（/C 右除）"
-    `AL` 的闭式装配含 `AL = AC/C` 右除（`CanonicalIMPO` 在 MPS 视图上）：
-    保留谱有接近截断阈值的奇异值时，条件数 `cond(C) = σ₁/σᵣ` 失控，右除把
-    截断不自洽放大到 `err·cond(C)` 量级（体现为左正交性 `ϵ_left` 的偏差）。
-    本实现**有意**采用该闭式（换取混合一致性 `AL·C = AC` 机器精确、无迭代
-    扫掠），数值稳定的替代装配（`Û` 投影 `AL` + `gaugefix!(; order = :R)`
-    重建 `AR`，缺口移到 `ϵ_mixed ~ err` 且不被条件数放大）在逐键谱截断语义
-    下同样无法完全自洽（截断是键空间的非幺等投影，环形闭合方程超定）。
-    使用建议：保留谱条件数大时改用变分压缩（`compress`/`mult`）或更强的
-    截断方案清理小奇异值。
-
-注意：秩亏链（`C` 有 ≈0 奇异值）请用带相对阈值的方案（`DefaultTruncation`/
-`truncrelerr`）；`NoTruncation()` 会原样保留零方向（此时右除 `AC/C` 未定义）。
 """
-function truncate!(ψ::CanonicalIMPS; trunc::TruncationScheme = DefaultTruncation)
+function truncate!(ψ::CanonicalIMPS; trunc::TruncationScheme = DefaultTruncation,
+                   alg_gauge = Defaults.alg_gauge())
     N = length(ψ)
     T = scalartype(ψ)
-    # 逐键 SVD 截断 C：中心矩阵取对角谱，右因子（行正交的 V†）留作规范旋转
-    Cs = Vector{Matrix{T}}(undef, N)
-    Sb = Vector{Vector{Float64}}(undef, N)
-    Vs = Vector{Matrix{T}}(undef, N)
+    # 逐键 SVD 截断 C：保留子空间的行正交基 U（谱基）；键 N 的保留谱作 C₀ 热启动
+    Us = Vector{Matrix{T}}(undef, N)
+    Ss = Vector{Vector{Float64}}(undef, N)
     err = 0.0
     for ℓ in 1:N
-        _, S, V, e = tsvd(ψ.C[ℓ], (1,), (2,); trunc)
-        Cs[ℓ] = Matrix{T}(Diagonal(S))
-        Sb[ℓ] = S
-        Vs[ℓ] = V
+        U, S, _, e = tsvd(ψ.C[ℓ], (1,), (2,); trunc)
+        Us[ℓ] = U
+        Ss[ℓ] = S
         err = max(err, e)
     end
-    # 相邻键的 unitary 因子把 AR 旋转到与对角 C 一致；AL/AC 闭式装配
-    ALs = Vector{Array{T,3}}(undef, N)
-    ARs = Vector{Array{T,3}}(undef, N)
-    ACs = Vector{Array{T,3}}(undef, N)
+    # 截断后的原始串：A'[ℓ] = Û_{ℓ-1}†·AL[ℓ]·Û_ℓ（键 profile 逐键压到保留维数）
+    As = Vector{Array{T,3}}(undef, N)
     for ℓ in 1:N
-        @tensor Ar[a, s, c] := Vs[_mod1(ℓ - 1, N)][a, b] * ψ.AR[ℓ][b, s, d] *
-                              conj(Vs[ℓ][c, d])
-        AC = Ar .* reshape(Sb[_mod1(ℓ - 1, N)], :, 1, 1)   # AC = diag(s)·AR（行缩放）
-        Dl, d, Dr = size(AC)
-        ALs[ℓ] = reshape(reshape(AC, Dl * d, Dr) / Cs[ℓ], Dl, d, Dr)   # AL·C = AC
-        ARs[ℓ] = Ar
-        ACs[ℓ] = AC
+        Um = Us[_mod1(ℓ - 1, N)]
+        @tensor An[a, s, b] := conj(Um[x, a]) * ψ.AL[ℓ][x, s, y] * Us[ℓ][y, b]
+        As[ℓ] = An
     end
-    copy!(ψ.AL, ALs)
-    copy!(ψ.AR, ARs)
-    copy!(ψ.C, Cs)
-    copy!(ψ.AC, ACs)
+    # 完全重正则化（与 gaugefix!(::InfiniteOrthogonalize) 同构）：AL 由 QR 精确
+    # 装配、AR 由 LQ 重建、C 由 fixed point 重解——无 /C 除法，无不自洽放大
+    g = alg_gauge isa DynamicTol ? alg_gauge.alg : alg_gauge
+    gaugefix!(ψ, As, Matrix{T}(Diagonal(Ss[N])); order = :LR,
+              tol = g.tol, maxiter = g.maxiter)
     return ψ, err
 end

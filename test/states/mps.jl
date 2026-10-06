@@ -283,16 +283,16 @@ end
     @test fidelity(ψblk, ψblk0) > 1 - 1e-10
 
     # ---- CanonicalIMPS：truncdim(2) 强截断 ----
-    # 真截断（丢有限权重）：闭式装配的正则性偏差与丢弃权重同量级（受保留谱
-    # 条件数放大，实测 ~err）——丢弃权重小（谱清理）时严格正则；混合一致性
-    # （AL·C = AC，闭式装配）机器精确
+    # 真截断（丢有限权重）：截断 + 完全重正则化（Û 投影 AL + gaugefix!(; order=:LR)
+    # 重解 C）——三项正则误差均在 alg_gauge.tol（~1e-13）级，与丢弃权重无关：
+    # 截断不自洽只进射线精度（fidelity），不进正则性
     Random.seed!(25)
     ψ = randomimps(T, [2, 2]; D = 4)
     ψ0 = copy(ψ)
     _, err2 = truncate!(ψ; trunc = truncdim(2))
     @test bonddim(ψ, 1) == 2 && bonddim(ψ, 2) == 2
-    @test ismixedcanonical(ψ; tol = 10 * err2)
-    @test mixedcanonical_error(ψ)[3] < 1e-12
+    @test ismixedcanonical(ψ; tol = 1e-10)
+    @test maximum(mixedcanonical_error(ψ)) < 1e-10
     @test 0 < fidelity(ψ, ψ0) < 1                    # 真截断：射线改变
     @test err2 > 0
 
@@ -312,8 +312,8 @@ end
     W0 = copy(W)
     _, errw2 = truncate!(W; trunc = truncdim(2))
     @test max_bonddim(W) == 2
-    @test ismixedcanonical(W; tol = 10 * errw2)
-    @test mixedcanonical_error(W)[3] < 1e-12
+    @test ismixedcanonical(W; tol = 1e-10)
+    @test maximum(mixedcanonical_error(W)) < 1e-10
     @test 0 < fidelity(W, W0) < 1
     @test errw2 > 0
 end

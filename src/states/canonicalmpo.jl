@@ -340,48 +340,25 @@ end
 # ---------------- truncate!（逐键 C 截断；语义对齐 InfiniteTEMPO 的 toipt!） ----------------
 
 """
-    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation) -> (W, err)
+    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation,
+              alg_gauge = Defaults.alg_gauge()) -> (W, err)
 
 [`truncate!`](@ref) 的 `CanonicalIMPO` 版（InfiniteTEMPO `toipt!` finalize 语义）：
-逐键 SVD 截断 `C[ℓ]`、中心矩阵取对角谱，相邻键的 unitary 因子把 `AR`（rank-4）
-旋转到与对角 `C` 一致，`AL` 在 MPS 视图 `(wl, u·d, wr)` 上右除装配
-（`AL'·C' = AC'`）。四族逐槽写回（原地），不做重正则化/重建规范；正则性
-偏差与丢弃谱权重同量级（`err`），完整约定（含 `/C` 右除的数值稳定性警示）见
-`CanonicalIMPS` 方法。
+在 [`vectorize`](@ref) 的 MPS 视图 `(wl, u·d, wr)` 上执行 MPS 版的同一装配
+（`Û` 投影 `AL` 两侧键 + `gaugefix!(; order = :LR)` 完全重正则化，全程无
+除法），经 [`devectorize`](@ref) 写回 `W` 的四族；完整约定（正则性语义、
+`C` 重解、归一化）见 `CanonicalIMPS` 方法。
 """
-function truncate!(W::CanonicalIMPO; trunc::TruncationScheme = DefaultTruncation)
-    N = length(W)
-    T = scalartype(W)
-    # 逐键 SVD 截断 C：中心矩阵取对角谱，右因子（行正交的 V†）留作规范旋转
-    Cs = Vector{Matrix{T}}(undef, N)
-    Sb = Vector{Vector{Float64}}(undef, N)
-    Vs = Vector{Matrix{T}}(undef, N)
-    err = 0.0
-    for ℓ in 1:N
-        _, S, V, e = tsvd(W.C[ℓ], (1,), (2,); trunc)
-        Cs[ℓ] = Matrix{T}(Diagonal(S))
-        Sb[ℓ] = S
-        Vs[ℓ] = V
-        err = max(err, e)
+function truncate!(W::CanonicalIMPO; trunc::TruncationScheme = DefaultTruncation,
+                   alg_gauge = Defaults.alg_gauge())
+    ψv = vectorize(W)
+    _, err = truncate!(ψv; trunc = trunc, alg_gauge = alg_gauge)
+    W4 = devectorize(ψv)
+    for ℓ in 1:length(W)
+        W.AL[ℓ] = W4.AL[ℓ]
+        W.AR[ℓ] = W4.AR[ℓ]
+        W.C[ℓ] = ψv.C[ℓ]
+        W.AC[ℓ] = W4.AC[ℓ]
     end
-    # 相邻键的 unitary 因子把 AR 旋转到与对角 C 一致；AL 在 MPS 视图上右除装配
-    ALs = Vector{Array{T,4}}(undef, N)
-    ARs = Vector{Array{T,4}}(undef, N)
-    ACs = Vector{Array{T,4}}(undef, N)
-    for ℓ in 1:N
-        @tensor Ar[a, u, c, d] := Vs[_mod1(ℓ - 1, N)][a, b] * W.AR[ℓ][b, u, e, d] *
-                                 conj(Vs[ℓ][c, e])
-        AC = Ar .* reshape(Sb[_mod1(ℓ - 1, N)], :, 1, 1, 1)    # AC = diag(s)·AR（行缩放）
-        wl, u, wr, dd = size(AC)
-        # AL·C = AC 在 MPS 视图 (wl, u·d, wr) 上求解：AL_view = AC_view / C
-        ACview = reshape(permutedims(AC, (1, 2, 4, 3)), wl * u * dd, wr)
-        ALs[ℓ] = permutedims(reshape(ACview / Cs[ℓ], wl, u, dd, wr), (1, 2, 4, 3))
-        ARs[ℓ] = Ar
-        ACs[ℓ] = AC
-    end
-    copy!(W.AL, ALs)
-    copy!(W.AR, ARs)
-    copy!(W.C, Cs)
-    copy!(W.AC, ACs)
     return W, err
 end
