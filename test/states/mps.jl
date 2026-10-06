@@ -318,6 +318,68 @@ end
     @test errw2 > 0
 end
 
+@testset "gaugefix!(InfiniteOrthogonalize)：精确混合正则化（mixedcanonicalize2!）" begin
+    Random.seed!(31)
+
+    # ---- 良态链 + 随机规范变换：射线不变、严格正则（~1e-14）、normalize 语义 ----
+    # 规范变换 A[i] → g_{i-1}⁻¹·A[i]·g[i] 在周期 trace 下严格保持射线
+    for T in (Float64, ComplexF64), N in (1, 2, 3)
+        As = [randn(T, 4, 2, 4) for _ in 1:N]
+        gs = [randn(T, 4, 4) .+ 4 .* Matrix{T}(I, 4, 4) for _ in 1:N]
+        ginvs = [inv(g) for g in gs]
+        Asg = Vector{Array{T,3}}(undef, N)
+        for ℓ in 1:N
+            @tensor Ag[a, s, b] := ginvs[mod1(ℓ - 1, N)][a, c] * As[ℓ][c, s, d] * gs[ℓ][d, b]
+            Asg[ℓ] = Ag
+        end
+        ψ0 = CanonicalIMPS([copy(a) for a in As])
+        # 输出恒归一：射线不变、标量类型保持（实链不升复）
+        ψ = CanonicalIMPS([copy(a) for a in As])
+        gaugefix!(ψ, Asg, InfiniteOrthogonalize())
+        @test ismixedcanonical(ψ; tol = 1e-10)
+        @test scalartype(ψ) == T
+        @test fidelity(ψ, ψ0) > 1 - 1e-10
+        @test norm(ψ) ≈ 1 atol = 1e-10
+    end
+
+    # ---- 相对阈值的秩亏清理：零块 (ψ2 ⊕ 0) 链（随机规范扰动后）----
+    T = ComplexF64
+    A2 = [randn(T, 2, 2, 2) for _ in 1:2]
+    Asblk = [cat(A2[ℓ], zeros(T, 2, 2, 2); dims = (1, 3)) for ℓ in 1:2]
+    gs = [randn(T, 4, 4) .+ 4 .* Matrix{T}(I, 4, 4) for _ in 1:2]
+    ginvs = [inv(g) for g in gs]
+    Asblkg = Vector{Array{T,3}}(undef, 2)
+    for ℓ in 1:2
+        @tensor Ag[a, s, b] := ginvs[mod1(ℓ - 1, 2)][a, c] * Asblk[ℓ][c, s, d] * gs[ℓ][d, b]
+        Asblkg[ℓ] = Ag
+    end
+    ψref = CanonicalIMPS([copy(a) for a in A2])
+    ψ = CanonicalIMPS([copy(a) for a in Asblk])
+    gaugefix!(ψ, Asblkg, InfiniteOrthogonalize(trunc = truncrelerr(ϵ = 1e-10)))
+    @test bonddim(ψ, 1) == 2 && bonddim(ψ, 2) == 2
+    @test ismixedcanonical(ψ; tol = 1e-10)
+    @test fidelity(ψ, ψref) > 1 - 1e-10
+
+    # ---- CanonicalIMPO：rank-4 串 + 随机规范（键腿 g·W·g⁻¹），MPS 视图正则化 ----
+    for T in (Float64, ComplexF64)
+        Ws = [randn(T, 4, 2, 4, 2) for _ in 1:2]
+        gs = [randn(T, 4, 4) .+ 4 .* Matrix{T}(I, 4, 4) for _ in 1:2]
+        ginvs = [inv(g) for g in gs]
+        Wsg = Vector{Array{T,4}}(undef, 2)
+        for ℓ in 1:2
+            @tensor Wg[a, u, b, d] := gs[mod1(ℓ - 1, 2)][a, c] * Ws[ℓ][c, u, e, d] *
+                                      ginvs[ℓ][e, b]
+            Wsg[ℓ] = Wg
+        end
+        W0 = CanonicalIMPO([copy(W) for W in Ws])
+        W = CanonicalIMPO([copy(W) for W in Ws])
+        gaugefix!(W, Wsg, InfiniteOrthogonalize())
+        @test ismixedcanonical(W; tol = 1e-10)
+        @test scalartype(W) == T
+        @test fidelity(W, W0) > 1 - 1e-10        # Hilbert–Schmidt 保真度
+    end
+end
+
 @testset "混合规范构造器 CanonicalIMPS(AL, C, AR[, AC]) / CanonicalIMPO(AL, C, AR[, AC])" begin
     T = ComplexF64
     Random.seed!(27)

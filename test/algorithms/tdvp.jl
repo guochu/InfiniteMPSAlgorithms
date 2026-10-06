@@ -2,6 +2,15 @@
     T = ComplexF64
     Hm = heisenberg_hamiltonian(T = T)
 
+    # alg_gauge field：按 VOMPS 惯例取 Defaults.alg_gauge()（(; tol, maxiter)
+    # 的 NamedTuple，动态容差下为 DynamicTol 包装）；显式传 NamedTuple 验证
+    # keyword 透传（与默认路径轨迹一致到 ~1e-10）
+    g0 = TDVP().alg_gauge
+    g0 = g0 isa DynamicTol ? g0.alg : g0
+    @test g0.tol == Defaults.tolgauge && g0.maxiter == Defaults.maxiter
+    alg_g = TDVP(integrator = Defaults.alg_expsolve(),
+                 alg_gauge = (; tol = Defaults.tolgauge, maxiter = Defaults.maxiter))
+
     # 实时间：从基态出发能量守恒
     ψg, envsg, _ = find_groundstate(randomimps(T, [2, 2]; D = 8), Hm,
                                     VUMPS(D = 8, maxiter = 200, tol = 1e-9))
@@ -11,6 +20,9 @@
     @test length(history) == 11
     @test abs(history[end] - e0) < 1e-6
     @test abs(norm(ψt) - 1) < 1e-8
+    ψt2, _, history2 = time_evolve(ψg, Hm, tspan, alg_g;
+                                   observer = (ψ, k, t) -> real(expectationvalue(ψ, Hm) / 2))
+    @test history2 ≈ history atol = 1e-10
 
     # 虚时间：收敛到基态能量（阈值 2e-3：无限链 e_exact 与 D = 8 变分基态的
     # 有限键差 ~1e-3 量级，未播种初态的收敛盆地带来波动）

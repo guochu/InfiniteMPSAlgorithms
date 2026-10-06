@@ -53,8 +53,7 @@ end
 # blocks are placed at their original Schur block positions.
 function _timempo_dense(WA, WB, WC, WD)
     a1, a2 = size(WA)
-    T = promote_type(eltype(WD), eltype(eltype(WA)),
-                     eltype(eltype(WB)), eltype(eltype(WC)))
+    T = promote_type(scalartype(WD), scalartype(WA), scalartype(WB), scalartype(WC))
     d = size(WD, 1)
     n = a1 + 1
     Wd = zeros(T, n, d, n, d)

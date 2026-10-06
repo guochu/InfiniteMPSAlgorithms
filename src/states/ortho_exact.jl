@@ -1,0 +1,227 @@
+# ---------------- exact mixed canonicalization（移植自 InfiniteTEMPO） ----------------
+#
+# InfiniteTEMPO 的 `InfiniteOrthogonalize`（adt/util.jl）与 `mixedcanonicalize2!`
+# （adt/orth/orth.jl，Reference: PHYSICAL REVIEW B 78, 155117）的 plain-array 移植：
+# 先解出转移矩阵的左右主导边界本征对（η, Vl, Vr），谱截断 Cholesky 白化
+# （chol_split），`tsvd(Y·X)` 给出闭合键的键谱并施加截断方案，随后一次前向
+# QR（QRpos）扫掠 + 一次反向 SVD 扫掠完成正则化——两趟有限深度扫掠即收敛，
+# 与 `states/ortho.jl` 的迭代 power-sweep（uniform_leftorth!/uniform_rightorth!）
+# 互补。入口为 `gaugefix!(ψ, As, alg::InfiniteOrthogonalize)`。
+
+"""
+    InfiniteOrthogonalize(; trunc = DefaultTruncation, toleig = Defaults.tolgauge,
+                          maxitereig = Defaults.maxiter, verbosity = 0)
+
+Exact mixed-canonicalization algorithm（移植自 InfiniteTEMPO 的同名结构；
+Reference: PHYSICAL REVIEW B 78, 155117）：通过左右主导边界本征对的白化 +
+单趟前向 QR / 反向 SVD 扫掠，把任意键可行的无限张量串精确正则化（非迭代
+power sweep）。输出态恒归一（`‖ψ‖ = 1`；不设 `normalize` 开关，对齐本包
+其他 gauge 函数）。
+
+- `trunc`：键谱截断方案（[`TruncationScheme`](@ref)，作用于闭合键的
+  `tsvd(Y·X)` 与反向扫掠的逐站 SVD）；
+- `toleig` / `maxitereig`：边界本征对求解（Arnoldi）的容差与迭代上限；
+- `verbosity`：`≥ 2` 时打印左右主导本征值。
+"""
+@kwdef struct InfiniteOrthogonalize{T<:TruncationScheme} <: Algorithm
+    trunc::T = DefaultTruncation
+    toleig::Float64 = Defaults.tolgauge
+    maxitereig::Int = Defaults.maxiter
+    verbosity::Int = 0
+end
+
+# ---- 辅助（InfiniteTEMPO adt/util.jl 的移植） ----
+
+"`lmul!(1/tr(x), x)`：迹归一（边界本征矩阵的归一约定）。"
+_normalize_trace!(x::AbstractMatrix) = lmul!(1 / tr(x), x)
+
+_safesign(v) = iszero(v) ? oneunit(v) : v / abs(v)
+
+"`lmul!(conj(safesign(argmax(abs, x))), x)`：按最大分量固定整体相位（确定性 +
+厄米边界矩阵的相位代表元）。"
+function _normalize_angle!(x::AbstractArray)
+    v = argmax(abs, x)
+    return lmul!(conj(_safesign(v)), x)
+end
+
+const _CHOL_SPLIT_TOL = 1.0e-12
+
+"""
+    _chol_split(m, tol) -> Matrix
+
+谱截断 Cholesky 因子（InfiniteTEMPO 的 `chol_split`）：`eigen(Hermitian(m))`
+后丢弃 `≤ tol` 的本征值，返回 `Y = Diagonal(√evals)·V̂'`（`Y'Y ≈ m`，PSD 部分）。
+非正定（负本征值超出 `_CHOL_SPLIT_TOL`）时告警。
+"""
+function _chol_split(m::AbstractMatrix{<:Number}, tol::Real)
+    evals, evecs = eigen(Hermitian(m))
+    k = length(evals) + 1
+    for i in 1:length(evals)
+        evals[i] > tol && (k = i; break)
+    end
+    # positivity check
+    (maximum(-, view(evals, 1:k-1); init = 0.0) < _CHOL_SPLIT_TOL) ||
+        @warn "input matrix is not positive (with negative eigenvalue $(argmax(-, view(evals, 1:k-1))))"
+    return Diagonal(sqrt.(evals[k:end])) * evecs[:, k:end]'
+end
+
+"""
+    _overlap_leading_boundaries(As; tol, maxiter, verbosity) -> (η, Vl, Vr)
+
+周期转移矩阵的左右主导边界本征对（InfiniteTEMPO 的
+`overlap_leading_boundaries`）：随机秩 1 PSD 初值出发，左边界为
+`L ↦ push_env_left` 一周期的主导本征矩阵 `Vl`（迹归一），右边界为
+`R ↦ push_env_right` 的 `Vr`（迹归一）；两者本征值一致（η，每周期），
+不一致时告警。
+"""
+function _overlap_leading_boundaries(As::AbstractVector{<:Array{T,3}};
+                                     tol::Real, maxiter::Int, verbosity::Int = 0) where {T}
+    D = size(As[1], 1)
+    tml = TransferMatrix(As, As; side = :left)
+    tmr = TransferMatrix(As, As; side = :right)
+    vl = randn(T, D, D)
+    vr = randn(T, D, D)
+    vl = vl * vl'
+    vr = vr * vr'
+    alg = KrylovKit.Arnoldi(; tol = tol, maxiter = maxiter, krylovdim = Defaults.krylovdim)
+    λl, Vl = fixedpoint(tml, vec(vl), :LM, alg)
+    λr, Vr = fixedpoint(tmr, vec(vr), :LM, alg)
+    verbosity >= 2 && println("left/right leading eigenvalues: $λl, $λr")
+    _normalize_angle!(Vl)
+    _normalize_angle!(Vr)
+    λl ≈ λr ||
+        @warn "left and right dominate eigenvalues $λl and $λr mismatch"
+    return λl, _normalize_trace!(reshape(Vl, D, D)), _normalize_trace!(reshape(Vr, D, D))
+end
+
+"""
+    mixedcanonicalize2!(x::AbstractVector{<:Array{T,3}}, alg::InfiniteOrthogonalize)
+        -> sv
+
+InfiniteTEMPO `mixedcanonicalize2!`（Reference: PHYSICAL REVIEW B 78, 155117）
+的 plain-array 移植：**原地**把张量串 `x`（`(wl, s, wr)`）正则化为右正则串，
+返回逐站谱 `sv`（`sv[i]` 作用在 site `i` 的**左**键上，InfiniteTEMPO 的
+`x.s` 约定；我们 `CanonicalIMPS.C` 的「键在 site ℓ 右侧」约定对应
+`C[ℓ] = sv[ℓ+1]`）。
+
+流程（对齐源实现）：
+1. 主导边界本征对 `(η, Vl, Vr)`；`Y = chol_split(Vl)`（`Y'Y ≈ Vl`）、
+   `X = chol_split(Vr)'`（`XX' ≈ Vr`）；
+2. `U, S, V = tsvd(Y·X; trunc)`：闭合键键谱 + 截断方案；
+3. `m = U'Y` 前向 QR（QRpos）扫掠 sites `1..N-1`，`m2 = XV'` 吸收进 site N；
+4. 反向 SVD 扫掠 sites `N..2`：右正则化 + 谱归一（`normalize!(ss)`），
+   `m = v·Diagonal(ss)` 逐站吸收进左邻；
+5. site 1 左除 `Diagonal(S)`（把 `AL·C` 形式化为 `C_left·AR`）。输出恒归一：
+   N = 1 时 `x[1]` 自带 `√η` 总尺度（η = 转移矩阵每周期主导本征值），先除掉；
+   N > 1 时尺度已在反向扫掠的逐站谱归一中吸收。
+
+键维上界为 `min(D, ⌊D·d⌋)` 类的可行性约束与
+[`_makefullrank!`](@ref) 无关：不可行的键 profile（`Dr > Dl·d`）下 QR 产物
+`Q` 为方阵、键维增长，不做删键处理。
+"""
+function mixedcanonicalize2!(x::AbstractVector{<:Array{T,3}},
+                             alg::InfiniteOrthogonalize) where {T}
+    N = length(x)
+    tolchol = alg.toleig * 10
+    η, Vl, Vr = _overlap_leading_boundaries(x; tol = alg.toleig,
+                                            maxiter = alg.maxitereig,
+                                            verbosity = alg.verbosity)
+
+    Y = _chol_split(Vl, tolchol)      # (r×D),  Y'Y ≈ Vl
+    X = _chol_split(Vr, tolchol)'     # (D×r'), XX' ≈ Vr
+    U, S, V, _ = tsvd(Y * X; trunc = alg.trunc)
+
+    # 前向 QR 扫掠：m = U'Y 白化 + 旋转，逐站 leftorth（QRpos）
+    m = U' * Y
+    for i in 1:(N-1)
+        @tensor xj[α, s, b] := m[α, a] * x[i][a, s, b]
+        Q, m = leftorth(xj, (1, 2), (3,); alg = QRpos())
+        x[i] = Q
+    end
+    m2 = X * V'
+    @tensor xN[α, s, β] := m[α, a] * x[N][a, s, b] * m2[b, β]
+    x[N] = xN
+
+    # 反向 SVD 扫掠：右正则化 + 谱归一，m = v·Diagonal(ss) 吸收进左邻
+    sv = Vector{Vector{Float64}}(undef, N)
+    for i in N:-1:2
+        v, ss, xj2, _ = tsvd(x[i], (1,), (2, 3); trunc = alg.trunc)
+        x[i] = xj2
+        normalize!(ss)
+        sv[i] = ss
+        m = v * Diagonal(ss)
+        @tensor xm[a, s, β] := x[i-1][a, s, b] * m[b, β]
+        x[i-1] = xm
+    end
+
+    # site 1：左除 Diagonal(S)（源实现的 tie(x[1], (1,2)) = reshape(x[1], wl, :)）；
+    # 输出恒归一——N = 1 时 x[1] 自带 √η 总尺度（边界本征值 η），先除掉
+    ηs = sqrt(real(η))
+    if N == 1
+        lmul!(1 / ηs, x[1])
+        x[1] = reshape(Diagonal(S) \ reshape(x[1], size(x[1], 1), :), size(x[1]))
+        normalize!(S)
+    else
+        normalize!(S)
+        x[1] = reshape(Diagonal(S) \ reshape(x[1], size(x[1], 1), :), size(x[1]))
+    end
+    sv[1] = S
+    return sv
+end
+
+"""
+    gaugefix!(ψ::CanonicalIMPS, As, alg::InfiniteOrthogonalize) -> ψ
+
+[`InfiniteOrthogonalize`](@ref) 的 `CanonicalIMPS` 入口：对张量串 `As`
+（`(wl, s, wr)`，键维逐站可不同、闭合键须方形）执行精确混合正则化并写回
+`ψ` 的四族。`sv` 谱 → `C[ℓ] = Diagonal(sv[ℓ+1])`（对角正谱），`AR = x`，
+`AC[ℓ] = C[ℓ-1]·AR[ℓ]`（行缩放）与 `AL[ℓ] = AC[ℓ]/C[ℓ]`（右除）闭式装配
+（同 [`truncate!`](@ref) 的装配模式）。截断丢弃权重小时输出严格正则
+（`ismixedcanonical`），偏差与丢弃权重及边界本征对容差 `toleig` 同量级。
+"""
+function gaugefix!(ψ::CanonicalIMPS, As, alg::InfiniteOrthogonalize)
+    x = [copy(a) for a in As]
+    sv = mixedcanonicalize2!(x, alg)
+    N = length(x)
+    T = scalartype(x[1])
+    ALs = Vector{Array{T,3}}(undef, N)
+    ACs = Vector{Array{T,3}}(undef, N)
+    Cs = Vector{Matrix{T}}(undef, N)
+    for ℓ in 1:N
+        sleft = sv[_mod1(ℓ, N)]                     # site ℓ 左键的谱（C[ℓ-1]）
+        sright = sv[_mod1(ℓ + 1, N)]                # site ℓ 右键的谱（C[ℓ]）
+        Cs[ℓ] = Matrix{T}(Diagonal(sright))
+        AC = x[ℓ] .* reshape(sleft, :, 1, 1)        # AC = C[ℓ-1]·AR（行缩放）
+        Dl, d, Dr = size(AC)
+        ALs[ℓ] = reshape(reshape(AC, Dl * d, Dr) / Cs[ℓ], Dl, d, Dr)   # AL·C = AC
+        ACs[ℓ] = AC
+    end
+    copy!(ψ.AL, ALs)
+    copy!(ψ.AR, x)
+    copy!(ψ.C, Cs)
+    copy!(ψ.AC, ACs)
+    return ψ
+end
+
+"""
+    gaugefix!(W::CanonicalIMPO, As, alg::InfiniteOrthogonalize) -> W
+
+[`InfiniteOrthogonalize`](@ref) 的 `CanonicalIMPO` 入口：`As` 为 rank-4
+`(wl, u, wr, d)` MPO 张量串（自动取 [`vectorize`](@ref) 的 MPS 视图）或
+rank-3 融合视图；在 MPS 视图 `(wl, u·d, wr)` 上正则化后经
+[`devectorize`](@ref) 写回 `W` 的四族（同 `truncate!` 的 MPO 通道）。
+"""
+function gaugefix!(W::CanonicalIMPO, As, alg::InfiniteOrthogonalize)
+    ψ = vectorize(W)
+    Av = As isa AbstractVector{<:AbstractArray{<:Number,4}} ?
+         vectorize(collect(As)) : collect(As)
+    gaugefix!(ψ, Av, alg)
+    W4 = devectorize(ψ)
+    for ℓ in 1:length(W)
+        W.AL[ℓ] = W4.AL[ℓ]
+        W.AR[ℓ] = W4.AR[ℓ]
+        W.C[ℓ] = ψ.C[ℓ]
+        W.AC[ℓ] = W4.AC[ℓ]
+    end
+    return W
+end

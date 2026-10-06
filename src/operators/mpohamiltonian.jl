@@ -77,7 +77,7 @@ function isidentitylevel(H::SparseIMPO, i::Int)
     (i == 1 || i == n) && return true
     return all(H.Ws) do W
         block = W.A[i - 1, :, i - 1, :]
-        return isapprox(block, Matrix{eltype(block)}(I, size(block)); atol = 1e-14)
+        return isapprox(block, Matrix{scalartype(block)}(I, size(block)); atol = 1e-14)
     end
 end
 

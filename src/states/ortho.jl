@@ -137,11 +137,6 @@ function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
             ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
             _, evec = fixedpoint(TransferMatrix(Awork, AL; side = :left),
                                  vec(C[N]), :LM, ealg)
-            if eltype(evec) !== eltype(C[N])
-                # 实链的非厄米混合转移可能出现复本征对：取实部作加速初值
-                # （收敛仍由扫掠判据决定）
-                evec = real.(evec)
-            end
             _, C[N] = leftorth(reshape(evec, size(C[N])...); alg = alg.alg_orth)
         end
         C_pre = copy(C[N])
@@ -181,9 +176,6 @@ function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
             ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
             _, evec = fixedpoint(TransferMatrix(Awork, AR; side = :right),
                                  vec(C[N]), :LM, ealg)
-            if eltype(evec) !== eltype(C[N])
-                evec = real.(evec)  # 实链的复本征对：取实部（见 uniform_leftorth! 注释）
-            end
             C[N], _ = rightorth(reshape(evec, size(C[N])...); alg = alg.alg_orth')
         end
         C_pre = copy(C[N])
@@ -234,7 +226,7 @@ function regauge!(CL::AbstractMatrix{T}, AC::AbstractArray{T,3}; alg = Defaults.
 end
 
 function regauge!(ACs::AbstractVector, Cs::AbstractVector; kwargs...)
-    return Array{eltype(ACs[1]),3}[regauge!(ACs[i], Cs[i]; kwargs...) for i in eachindex(ACs)]
+    return Array{scalartype(ACs[1]),3}[regauge!(ACs[i], Cs[i]; kwargs...) for i in eachindex(ACs)]
 end
 
 # The gaugefix!/rank-4 regauge! methods for CanonicalIMPO live in

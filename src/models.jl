@@ -65,7 +65,7 @@ Schur 矩阵（层数一致、物理维可不同）后交给 `SparseIMPO([W₁, 
 function mpohamiltonian(h1::AbstractMatrix, pairs::Vector{<:Tuple})
     N = length(pairs)
     d = size(h1, 1)
-    T = promote_type(eltype(h1), (eltype(a) for (_, a, _) in pairs)...)
+    T = promote_type(scalartype(h1), (scalartype(a) for (_, a, _) in pairs)...)
     n = N + 2
     W = Matrix{Union{Missing,T,Matrix{T}}}(missing, n, n)
     W[1, 1] = one(T)

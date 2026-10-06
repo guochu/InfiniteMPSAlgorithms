@@ -120,8 +120,7 @@ function LinearAlgebra.dot(ψ1::DenseIMPS, ψ2::DenseIMPS;
     v0 = vec(Matrix{T}(I, bonddim(ψ1, 1), bonddim(ψ2, 1)))
     tm = TransferMatrix(ψ2.As, ψ1.As)
     vals, _, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false, krylovdim = krylovdim)
-    λ = vals[1]
-    return λ isa Number ? λ : only(λ)
+    return vals[1]
 end
 
 "`LinearAlgebra.norm(ψ::DenseIMPS; kwargs...) = sqrt(|⟨ψ, ψ⟩|)`（`kwargs` 透传

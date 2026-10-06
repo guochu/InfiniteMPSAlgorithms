@@ -39,8 +39,12 @@ function timestep(ψ::CanonicalIMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(
         Hc = C_hamiltonian(loc, ψ, H, ψ, envs)
         temp_Cs[loc] = integrate(Hc, ψ.C[loc], t, dt, alg.integrator; imaginary_evolution)
     end
-    ALs = regauge!(temp_ACs, temp_Cs; alg = Defaults.alg_orth())
-    ψ′ = CanonicalIMPS(ALs, ψ.C[end]; tol = alg.tolgauge, maxiter = alg.gaugemaxiter)
+    ALs = regauge!(temp_ACs, temp_Cs; alg = alg.alg_orth)
+    # gauge 参数按 VOMPS 惯例存于 alg_gauge（(; tol, maxiter) 或 DynamicTol 包装），
+    # 以 keyword 形式喂给收尾的右规范化 gaugefix!（经 2 参构造器透传，
+    # `order = :R` 与 MPSKit 的 InfiniteMPS(AL, C₀) 重建一致）
+    g = alg.alg_gauge isa DynamicTol ? alg.alg_gauge.alg : alg.alg_gauge
+    ψ′ = CanonicalIMPS(ALs, ψ.C[end]; tol = g.tol, maxiter = g.maxiter)
     recalculate!(envs, ψ′, H)
     return ψ′, envs
 end

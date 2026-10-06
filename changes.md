@@ -1,5 +1,72 @@
 # 变更记录（接口）
 
+## 2026-10-06 新增 `gaugefix!(::InfiniteOrthogonalize)`（states/ortho_exact.jl）；`fixedpoint(::Arnoldi)` 走 schursolve；TDVP `alg_orth` field；清理 eltype/冗余判断
+
+- **新增 `states/ortho_exact.jl`**：移植 InfiniteTEMPO 的
+  `InfiniteOrthogonalize`（改为继承本包 `Algorithm`；fields
+  `trunc`/`normalize`/`toleig`/`maxitereig`/`verbosity`）与
+  `mixedcanonicalize2!`（Reference: PHYSICAL REVIEW B 78, 155117）——
+  左右主导边界本征对（`_overlap_leading_boundaries`：随机秩 1 PSD 初值 +
+  `fixedpoint`，迹归一）→ 谱截断 Cholesky 白化（`_chol_split`）→
+  `tsvd(Y·X; trunc)` 给闭合键键谱 → 前向 QR（QRpos）扫掠 + 反向 SVD 扫掠
+  （谱归一、`m = v·Diag(ss)` 吸收）→ site 1 左除 `Diag(S)`。两趟有限深度
+  扫掠即收敛，与 `states/ortho.jl` 的迭代 power sweep 互补；
+- **入口 `gaugefix!(ψ::CanonicalIMPS, As, alg::InfiniteOrthogonalize)` /
+  `gaugefix!(W::CanonicalIMPO, As, alg::InfiniteOrthogonalize)`**（3 参，
+  无 `C₀`；MPO 自动 `vectorize` 到 MPS 视图）：谱 `sv`（InfiniteTEMPO 的
+  `x.s`：键在 site ℓ **左**侧）映射到我们的 `C[ℓ] = Diag(sv[ℓ+1])`，
+  `AR = x`、`AC = C[ℓ-1]·AR`（行缩放）、`AL = AC/C`（右除）闭式装配
+  （同 `truncate!` 模式）。`InfiniteOrthogonalize` 已 export
+  （`mixedcanonicalize2!` 为内部 kernel 不导出）；
+- `InfiniteOrthogonalize` 不设 `normalize` field（对齐本包其他 gauge 函数，
+  输出恒归一）：InfiniteTEMPO 的 `normalize = false` 分支（保留 `√η` 射线
+  尺度）不移植——其 `lmul!(ηs, x[1])`/`lmul!(ηs, x.s[1])` 在四族混合规范
+  存储下会破坏 site 1 的正交性，且未归一态与本包 `dot`/`fidelity` 的转移谱
+  语义（假定已归一）不兼容；
+- `fixedpoint(::KrylovKit.Arnoldi)` 改走 `KrylovKit.schursolve`（对标
+  MPSKit）：实算子 + 实初值保持在实数域（实 Schur 形式），结构上消除「实链
+  非厄米混合转移返回复本征向量」问题；`uniform_leftorth!`/`uniform_rightorth!` 的
+  gauge_eigsolve_step! 相应删除 real 分支。NamedTuple（环境通道，
+  `alg_environments` 形态）**有意保持 `_eigsolve`**——mult/compress/hadamard
+  的环境在实输入下 leading vector 可为复（通道升为复算术的既有 MPSKit 对齐
+  行为；schursolve 的实 Schur 形式无法表示复本征对）；即 gauge 通道走
+  schursolve、环境通道走 eigsolve；
+- `TDVP` 增加 `alg_orth` field（默认 `Defaults.alg_orth()`，
+  `timestep` 收尾 `regauge!` 的 QR/LQ 算法）；
+- 删除冗余判断：`states/linalg.jl` 与 `states/canonicalmps.jl` 两处
+  `λ isa Number ? λ : only(λ)`（`_eigsolve` 的 `vals[1]` 恒为 `Number`）；
+- **`eltype` → `scalartype` 清扫**：凡「为取浮点/标量类型」而调用 `eltype`
+  的一律改 `scalartype`（VectorInterface 递归实现，嵌套容器
+  `scalartype(Vector{Matrix{T}}) = T` 等价 `eltype(eltype(x))`）——涉及
+  `regauge!`（ortho.jl）、correlator、`mpohamiltonian`、
+  `isidentitylevel`、`ExpDecayOpSum`、`_mpoham_scalar_type`、
+  `_timempo_dense`、hadamard/mult/compress 的环境类型提升
+  （`T = eltype(GLs[1])` → `scalartype(GLs[1])`、
+  `promote_type(T, eltype(vL))` → `scalartype(vL)`）与
+  `scalartype(::CompressionEnvironments)`；保留合法用途（容器元素类型
+  `Vector{eltype(ψ.AL)}`、`Base.eltype` 定义、`v isa Number` 值分派）；
+- 测试：`test/states/mps.jl` 新增「gaugefix!(InfiniteOrthogonalize)」
+  testset——良态链 + 随机规范变换（射线不变、正则性 ~1e-14、实链标量类型
+  保持、normalize 两分支）、相对阈值秩亏清理（零块链 → 键 profile [2,2]、
+  射线不变）、CanonicalIMPO（HS 保真度）。
+
+## 2026-10-02 `TDVP` 的 `tolgauge`/`gaugemaxiter` 合并为 `alg_gauge` field；gauge_eigsolve_step! 严格对齐 MPSKit
+
+- `TDVP(; integrator, alg_gauge, finalize)`：与 `VUMPS`/`IDMRG`/`VOMPS` 的
+  `alg_gauge` field 惯例完全一致，默认 `Defaults.alg_gauge()`（`(; tol,
+  maxiter)` NamedTuple，动态容差下为 `DynamicTol` 包装）；`timestep` 收尾处
+  解包后在 `gaugefix!` 调用中以 keyword 输入 `tol`/`maxiter`（经 2 参
+  `CanonicalIMPS(ALs, C₀; kwargs...)` 构造器透传，`order = :R` 与 MPSKit 的
+  `InfiniteMPS(AL, C₀)` 重建语义一致）；
+- `gaugefix!`/`CanonicalIMPS(ALs, C₀)` 保持 MPSKit 形态：kwargs 透传 + 
+  `order` 分发（不设 `alg_gauge` keyword；算法对象走四参 expert 分发）；
+- `uniform_leftorth!`/`uniform_rightorth!` 的 gauge_eigsolve_step! 删除
+  「复本征向量取实部」的非 MPSKit 分支（严格对齐 MPSKit
+  `gauge_eigsolve_step!`：直接 `left_orth!(vec)`/`right_orth!(vec)`）；
+- 测试：tdvp.jl 断言 `TDVP().alg_gauge` 解包后 `(tol, maxiter) ==
+  (Defaults.tolgauge, Defaults.maxiter)`，显式 NamedTuple 用例与默认路径
+  轨迹一致（~1e-10）。
+
 ## 2026-10-02 清理「operator might not be hermitian」告警（测试侧适配）；构造器缺省类型改 Float64；删除 `_mpo_from_mps`
 
 - 告警诊断：测试中的海量 KrylovKit Lanczos 告警**不是哈密顿量构造错误**——

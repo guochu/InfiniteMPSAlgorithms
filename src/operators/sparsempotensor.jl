@@ -88,7 +88,7 @@ function _mpoham_scalar_type(W::AbstractMatrix)
     T = Union{}
     for v in W
         v isa Missing && continue
-        T = promote_type(T, v isa Number ? typeof(v) : eltype(v))
+        T = promote_type(T, scalartype(v))
     end
     return T === Union{} ? Float64 : T
 end

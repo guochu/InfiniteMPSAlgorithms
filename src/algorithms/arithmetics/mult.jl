@@ -112,7 +112,7 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
     # 复环境提升（MPSKit 对齐：环境张量按 eigsolve 返回的实际 eltype 存放；
     # 实输入下融合转移的 leading vector 可为复，通道随后整体升为复算术）
-    TCL = promote_type(T, eltype(vL))
+    TCL = promote_type(T, scalartype(vL))
     GLs = Vector{Array{TCL,3}}(undef, N)
     GLs[1] = reshape(vL, Dl, Dw, Da)
     for ℓ in 2:N
@@ -129,7 +129,7 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
     end
     v0R = GR0 === nothing ? ones(T, Da * Dw * Dr) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
-    TCR = promote_type(T, eltype(vR))
+    TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = reshape(vR, Da, Dw, Dr)
     for ℓ in N-1:-1:1
@@ -158,9 +158,9 @@ function MultCache(below::CanonicalIMPS, operator::AbstractInfiniteMPO,
                    GL0::Union{Nothing,AbstractArray} = nothing,
                    GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = mixed_fixedpoints(below, operator, above, alg; GL0, GR0)
-    # 槽位提升到通道标量类型（环境 eltype）：[`compression_sweeps!`](@ref) 对缓存
+    # 槽位提升到通道标量类型（环境 eltype）：[`compression_sweeps!`] 对缓存
     # bra 的原地演化恒在同型算术上进行（dense/canonical 槽各自原类型提升）
-    T = eltype(GLs[1])
+    T = scalartype(GLs[1])
     return MultCache(_promote_scalar(T, operator), _promote_scalar(T, below),
                      _promote_scalar(T, above), GLs, GRs)
 end
@@ -174,7 +174,7 @@ function MultCache(below::CanonicalIMPO, W1::AbstractInfiniteMPO, W2::AbstractIn
                    GR0::Union{Nothing,AbstractArray} = nothing)
     GLs, GRs = mixed_fixedpoints(below, W1, W2, alg; GL0, GR0)
     # 槽位提升到通道标量类型（同上）
-    T = eltype(GLs[1])
+    T = scalartype(GLs[1])
     return MultCache(_promote_scalar(T, W1), _promote_scalar(T, below),
                      _promote_scalar(T, W2), GLs, GRs)
 end

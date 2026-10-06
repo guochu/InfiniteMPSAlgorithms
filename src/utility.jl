@@ -177,12 +177,25 @@ Dominant eigenpair of the transfer map (mirrors MPSKit's `fixedpoint`;
 internally KrylovKit.eigsolve). `alg` is a KrylovKit `Lanczos`/`Arnoldi`
 algorithm object.
 """
-function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.KrylovAlgorithm)
-    isherm = alg isa KrylovKit.Lanczos
+function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Lanczos)
     vals, vecs, _ = _eigsolve(operator, x₀, 1, which;
-                              ishermitian = isherm, tol = alg.tol,
+                              ishermitian = true, tol = alg.tol,
                               krylovdim = alg.krylovdim, maxiter = alg.maxiter,
                               eager = true)
+    return vals[1], vecs[1]
+end
+
+"非厄米通道（MPSKit `fixedpoint(::Arnoldi)` 的对标）：走 KrylovKit 的
+`schursolve` 而非 `eigsolve`——实算子 + 实初值保持在实数域（实 Schur 形式），
+只有收敛的 Schur 值本征为复时才升复。这从结构上消除了「实链的非厄米混合
+转移返回复本征向量」问题（`eigsolve` 的 Arnoldi 对实算子会给出复 Ritz 向量，
+调用方曾被迫取实部）。"
+function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi)
+    TT, vecs, vals, info = KrylovKit.schursolve(operator, x₀, 1, which, alg)
+    info.converged == 0 &&
+        @warn "fixed point not converged after $(info.numiter) iterations" normres = info.normres[1]
+    size(TT, 2) > 1 && !iszero(TT[2, 1]) &&
+        @warn "non-unique fixed point detected"
     return vals[1], vecs[1]
 end
 
@@ -191,11 +204,16 @@ fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
     fixedpoint(operator, x₀, which, alg.alg)
 
 "NamedTuple algorithm（环境通道的 `alg_environments` 形态，DynamicTol 解包后
-落到这里）：非厄米迁移矩阵的 `which` 主本征对；`krylovdim` 取
-`Defaults.krylovdim`。"
+落到这里）：走 `_eigsolve`（`ishermitian` 分流）——与 KrylovKit.Arnoldi 方法的
+`schursolve`（gauge 通道、MPSKit `fixedpoint` 语义、实数域保持）**有意不同**：
+mult/compress/hadamard 的环境通道在实输入下融合转移的 leading vector 可为复
+（MPSKit 对齐：环境按解的实际 eltype 存放、通道升为复算术——eigsolve 的
+复 Ritz 向量承载该提升；schursolve 的实 Schur 形式无法表示复本征对）。
+`krylovdim` 取 `Defaults.krylovdim`。"
 function fixedpoint(operator, x₀, which::Symbol, alg::NamedTuple;
                     krylovdim::Int = Defaults.krylovdim)
-    vals, vecs, _ = _eigsolve(operator, x₀, 1, which; ishermitian = false,
+    vals, vecs, _ = _eigsolve(operator, x₀, 1, which;
+                              ishermitian = get(alg, :ishermitian, false),
                               tol = alg.tol, krylovdim = krylovdim,
                               maxiter = alg.maxiter, eager = true)
     return vals[1], vecs[1]

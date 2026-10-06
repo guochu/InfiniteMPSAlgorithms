@@ -40,6 +40,7 @@ include("states/infinitemps.jl")
 include("states/canonicalmpo.jl")
 include("states/linalg.jl")
 include("states/ortho.jl")
+include("states/ortho_exact.jl")
 include("states/constructors.jl")
 
 # ---- operators ----
@@ -104,7 +105,7 @@ export
     randomimps, prodimps, identityimpo, randomimpo,
     # gauges
     gaugefix!, regauge!,
-    LeftCanonical, RightCanonical, MixedCanonical,
+    LeftCanonical, RightCanonical, MixedCanonical, InfiniteOrthogonalize,
     # transfer matrices and fixed points
     TransferMatrix, push_env_left, push_env_right, fixedpoint, linsolve, regularize!,
     transfer_leftenv!, transfer_rightenv!,

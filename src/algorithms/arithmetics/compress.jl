@@ -300,7 +300,7 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
     v0L = GL0 === nothing ? ones(T, Dl * Da) : vec(copy(GL0))
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
-    TCL = promote_type(T, eltype(vL))
+    TCL = promote_type(T, scalartype(vL))
     GLs = Vector{Matrix{TCL}}(undef, N)
     GLs[1] = GL = reshape(vL, Dl, Da)
     for ℓ in 2:N
@@ -316,7 +316,7 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
     end
     v0R = GR0 === nothing ? ones(T, Da * Dl) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
-    TCR = promote_type(T, eltype(vR))
+    TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Matrix{TCR}}(undef, N)
     GRs[N] = GR = reshape(vR, Da, Dl)
     for ℓ in N-1:-1:1
@@ -345,7 +345,7 @@ function OverlapCache(below::CanonicalIMPS, above::AbstractInfiniteMPS,
     GLs, GRs = overlap_fixedpoints(below, above, alg; GL0, GR0)
     # bra/ket 提升到环境标量类型：缓存内所有 fields 同一浮点类型（dense/canonical
     # 槽各自原类型提升，不做规范转换）
-    T = eltype(GLs[1])
+    T = scalartype(GLs[1])
     return OverlapCache(_promote_scalar(T, below), _promote_scalar(T, above),
                         GLs, GRs)
 end

@@ -22,7 +22,7 @@ function correlator(ψ::CanonicalIMPS, O1::AbstractMatrix, O2::AbstractMatrix,
     # insert O1 at site i: V[(bra right bond, ket right bond)]
     AC = ψ.AC[i]
     V = @tensor V0[b̄, β] := conj(AC[a, ū, b̄]) * O1[ū, d] * AC[a, d, β]
-    G = similar(collect(js), promote_type(scalartype(ψ), eltype(O1), eltype(O2)))
+    G = similar(collect(js), promote_type(scalartype(ψ), scalartype(O1), scalartype(O2)))
     ctr = i
     for (k, j) in enumerate(js)
         (j > ctr) || (k > 1 && continue)

@@ -174,10 +174,11 @@ end
 
 Construct from left-canonical tensors plus an initial gauge matrix (mirrors
 MPSKit's `InfiniteMPS(AL, C₀)`): `gaugefix!` to the right-canonical form
-(`order = :R`), then `AC = AL·C`. `C₀` 作用在键 N 上，必须是 `(χ_N, χ_N)`。
+(`order = :R`; `kwargs` forwarded to `gaugefix!`), then `AC = AL·C`. `C₀` 作用
+在键 N 上，必须是 `(χ_N, χ_N)`。
 """
 function CanonicalIMPS(ALs::AbstractVector{<:Array{T,3}}, C₀::AbstractMatrix;
-                              kwargs...) where {T}
+                       kwargs...) where {T}
     N = length(ALs)
     _check_bond_consistency(ALs)
     (size(C₀, 1) == size(C₀, 2) == size(ALs[N], 3)) ||
@@ -255,9 +256,8 @@ function LinearAlgebra.dot(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS;
     T = promote_type(scalartype(ψ₁), scalartype(ψ₂))
     v0 = vec(Matrix{T}(I, bonddim(ψ₁, 0), bonddim(ψ₂, 0)))
     tm = TransferMatrix(ψ₂.AL, ψ₁.AL)
-    vals, vecs, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false, krylovdim = krylovdim)
-    λ = vals[1]
-    return λ isa Number ? λ : only(λ)
+    vals, _, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false, krylovdim = krylovdim)
+    return vals[1]
 end
 
 """

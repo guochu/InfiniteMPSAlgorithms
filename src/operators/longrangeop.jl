@@ -63,7 +63,7 @@ function ExpDecayOpSum(a::AbstractMatrix, m::AbstractMatrix, b::AbstractMatrix,
                        αs::Vector{<:Number}, λs::Vector{<:Number})
     (length(αs) == length(λs)) ||
         throw(DimensionMismatch("αs and λs must have equal lengths"))
-    T = promote_type(eltype(αs), eltype(λs))
+    T = promote_type(scalartype(αs), scalartype(λs))
     return ExpDecayOpSum(a, m, b, convert(Vector{T}, αs), convert(Vector{T}, λs))
 end
 

@@ -14,7 +14,7 @@ Base.length(envs::CompressionEnvironments) = length(envs.bra)
 
 "压缩通道缓存标量类型（环境张量的实际 eltype——实输入下复提升后的通道算术
 类型；构造器已把各槽位提升到该类型）。"
-scalartype(envs::CompressionEnvironments) = eltype(envs.lefts[1])
+scalartype(envs::CompressionEnvironments) = scalartype(envs.lefts[1])
 
 # ---------------- 统一压缩扫掠引擎（compress / mult / hadamard 共用） ----------------
 

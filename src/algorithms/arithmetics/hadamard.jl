@@ -86,7 +86,7 @@ function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
         a, s, b = size(A1); c, _, e = size(A2)
         f = size(carry, 2)
         l4 = reshape(carry, b, e, f)                     # carry 行 = (e-1)·b + b：b 最快
-        B3 = Array{promote_type(eltype(A1), eltype(carry)),4}(undef, c, a, s, f)
+        B3 = Array{promote_type(scalartype(A1), scalartype(carry)),4}(undef, c, a, s, f)
         @inbounds for k in 1:s
             # Y[a,e,f] = Σ_b A1[a,s,b]·l4[b,e,f]
             Y = reshape(view(A1, :, k, :) * reshape(l4, b, e * f), a, e, f)
@@ -144,7 +144,7 @@ function _zip_push_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
     bl′ = size(below, 3)
     D2, d = size(A2, 1), size(A2, 2)       # A2[c, s, e]
     D1 = size(A1, 1)                       # A1[a, s, b]
-    T = promote_type(eltype(L), eltype(below), eltype(A2), eltype(A1))
+    T = promote_type(scalartype(L), scalartype(below), scalartype(A2), scalartype(A1))
     belowC = conj(below)                   # (bl, s, bl′)
     W = zeros(T, D2, D1, bl′)              # 各 s 片累加：(e, b, bl′)
     for s in 1:d
@@ -166,7 +166,7 @@ function _zip_push_right(R::AbstractArray{TR,3}, A2::AbstractArray{Ta,3},
     bl = size(below, 3)                    # 旧 below 键
     D2, d = size(A2, 1), size(A2, 2)       # A2[c, s, e]
     D1 = size(A1, 1)                       # A1[a, s, b]
-    T = promote_type(eltype(R), eltype(below), eltype(A2), eltype(A1))
+    T = promote_type(scalartype(R), scalartype(below), scalartype(A2), scalartype(A1))
     belowC = conj(below)                   # (bl′, s, bl)
     W = zeros(T, D1, D2, bl′)              # 各 s 片累加：(a, c, bl′)
     for s in 1:d
@@ -187,7 +187,7 @@ function _mapAC_zip(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
     Dx = size(GL, 1)
     D2, d = size(A2ac, 1), size(A2ac, 2)   # A2ac[c, p, e]
     D1 = size(A1ac, 1)                     # A1ac[a, p, b]
-    T = promote_type(eltype(GL), eltype(GR), eltype(A2ac), eltype(A1ac))
+    T = promote_type(scalartype(GL), scalartype(GR), scalartype(A2ac), scalartype(A1ac))
     # 步1（键 c）：Y[a, xL, p, e] = Σ_c GL[xL, a, c]·A2ac[c, p, e]
     @tensor Y[a, xL, p, e] := GL[xL, a, c] * A2ac[c, p, e]      # 中间 Dx·D1·d·D2
     # 步2a（键 a；p 逐片——p 为两因子共享的开放指标，按物理片 batched GEMM）：
@@ -246,7 +246,7 @@ function HadamardCache(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::Abst
     GLs, GRs = hadamard_fixedpoints(below, ψ1, ψ2, alg; GL0, GR0)
     # 槽位提升到通道标量类型（环境 eltype）：[`compression_sweeps!`](@ref) 对缓存
     # bra 的原地演化恒在同型算术上进行
-    T = eltype(GLs[1])
+    T = scalartype(GLs[1])
     return HadamardCache(_promote_scalar(T, below), _promote_scalar(T, ψ1),
                          _promote_scalar(T, ψ2), GLs, GRs)
 end
@@ -294,7 +294,7 @@ function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ
     v0L = GL0 === nothing ? ones(T, Dl * D1 * D2) : vec(copy(GL0))
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
-    TCL = promote_type(T, eltype(vL))
+    TCL = promote_type(T, scalartype(vL))
     GLs = Vector{Array{TCL,3}}(undef, N)
     GLs[1] = GL = reshape(vL, Dl, D1, D2)
     for ℓ in 2:N
@@ -310,7 +310,7 @@ function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ
     end
     v0R = GR0 === nothing ? ones(T, D1 * D2 * Dl) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
-    TCR = promote_type(T, eltype(vR))
+    TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = GR = reshape(vR, D1, D2, Dl)
     for ℓ in N-1:-1:1
