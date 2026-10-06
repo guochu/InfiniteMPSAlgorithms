@@ -182,24 +182,31 @@ end
 [`InfiniteOrthogonalize`](@ref) 的 `CanonicalIMPS` 入口：对张量串 `As`
 （`(wl, s, wr)`，键维逐站可不同、闭合键须方形）执行精确混合正则化并写回
 `ψ` 的四族。`mixedcanonicalize2!` 产出右正则串 `AR = x` 与逐站谱 `sv`
-（`sv[1]` = 闭合键 N 的谱）后，`AR` 写入 `ψ.AR`，再以
-`C₀ = Diagonal(sv[1])` 经 `gaugefix!(; order = :L)`（`uniform_leftorth!`
-的 QR 扫掠）装配 `AL`/`C`，`AC = AL·C` 闭式乘法装配——**全程无除法**：
-不采用 `AL = C₋·AR/C′` 的右除装配（谱有接近截断阈值的奇异值时条件数
-失控），而是利用 QR 唯一性（R 因子对角正 = 已知的对角正谱）做单趟左向
-扫掠，初值已是精确混合规范，扫掠一轮即收敛（`alg_gauge` 的 `tol`/`maxiter`
-与 `alg_orth` 为该步参数）。截断丢弃权重小时输出严格正则
-（`ismixedcanonical`），偏差与丢弃权重及边界本征对容差同量级。
+（`sv[1]` = 闭合键 N 的谱）后，以 `C₀ = Diagonal(sv[1])` 经
+`gaugefix!(; order = :LR)` 装配四族——**全程无除法**（不采用
+`AL = C₋·AR/C′` 的右除装配，谱有接近截断阈值的奇异值时条件数失控）：
+
+- **L 趟**：QR 扫掠从 `(x, C₀)` 装配 `AL`/`C`（构造性左正交）；
+- **R 趟**：从左正交的 `AL` 串经 LQ 扫掠重建 `AR`、重解 `C`——必要的收尾：
+  `mixedcanonicalize2!` 的 site-1 收尾 `Diag(S)⁻¹·x[1]`（谱 bookkeeping）只
+  在无截断时保持右正交，强截断下 `x[1]` 的右正交性破缺 O(err)，且该非正交
+  使串的每周期转移尺度 λ ≠ 1——`:L` 单独装配的收敛判据（逐轮 C 的方向差）
+  对该尺度盲，会留下 `ϵ_mixed ~ |√λ − 1|` 的缺口；R 趟的 LQ 重建使 `AR`
+  构造性右正交、`C` 重解到固定点，三个正则误差全部回到 `alg_gauge.tol`
+  （默认 1e-13）量级——**与截断强度无关**（截断不自洽只进射线精度）。
+
+`alg_gauge` 的 `tol`/`maxiter` 与 `alg_orth` 为两趟扫掠的迭代参数。
 """
 function gaugefix!(ψ::CanonicalIMPS, As, alg::InfiniteOrthogonalize)
     x = [copy(a) for a in As]
     sv = mixedcanonicalize2!(x, alg)
     copy!(ψ.AR, x)
     # 闭合键谱 C₀ = Diag(sv[1])（sv[i] 作用在 site i 的左键上，键 N = site 1 左键）；
-    # order = :L 的 QR 扫掠从 (AR, C₀) 装配 AL/C/AC（AC = AL·C 在该路径内闭式装配）
+    # :LR 两趟装配：L 趟 QR 装配 AL/C（输入 = mixedcanonicalize2! 的串 x），
+    # R 趟 LQ 重建 AR/重解 C（修复强截断下 x[1] 的右正交性破缺，见 docstring）
     T = scalartype(ψ)
     g = alg.alg_gauge isa DynamicTol ? alg.alg_gauge.alg : alg.alg_gauge
-    gaugefix!(ψ, ψ.AR, Matrix{T}(Diagonal(sv[1])); order = :L,
+    gaugefix!(ψ, ψ.AR, Matrix{T}(Diagonal(sv[1])); order = :LR,
               tol = g.tol, maxiter = g.maxiter, alg_orth = alg.alg_orth)
     return ψ
 end

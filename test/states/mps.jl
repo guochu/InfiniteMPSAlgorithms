@@ -360,6 +360,18 @@ end
     @test ismixedcanonical(ψ; tol = 1e-10)
     @test fidelity(ψ, ψref) > 1 - 1e-10
 
+    # ---- 强截断（truncdim）下的严格正则性 ----
+    # mixedcanonicalize2! 的 site-1 收尾 Diag(S)⁻¹·x[1] 只在无截断时保持右正交，
+    # 强截断下破缺 O(err)——:LR 装配的 R 趟（LQ 重建 AR + C 重解）必须把它修复：
+    # 三个正则误差与截断强度无关，恒 ~alg_gauge.tol（截断不自洽只进射线精度）
+    ψs0 = CanonicalIMPS([randn(ComplexF64, 4, 2, 4) for _ in 1:2])
+    Asg = collect(ψs0.AL)
+    ψs = copy(ψs0)
+    gaugefix!(ψs, Asg, InfiniteOrthogonalize(trunc = truncdim(2)))
+    @test bonddim(ψs, 1) == 2 && bonddim(ψs, 2) == 2
+    @test maximum(mixedcanonical_error(ψs)) < 1e-10
+    @test 0 < fidelity(ψs, ψs0) < 1                   # 真截断：射线改变
+
     # ---- CanonicalIMPO：rank-4 串 + 随机规范（键腿 g·W·g⁻¹），MPS 视图正则化 ----
     for T in (Float64, ComplexF64)
         Ws = [randn(T, 4, 2, 4, 2) for _ in 1:2]
