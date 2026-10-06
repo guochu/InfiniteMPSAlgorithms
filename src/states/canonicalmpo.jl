@@ -346,7 +346,8 @@ end
 逐键 SVD 截断 `C[ℓ]`、中心矩阵取对角谱，相邻键的 unitary 因子把 `AR`（rank-4）
 旋转到与对角 `C` 一致，`AL` 在 MPS 视图 `(wl, u·d, wr)` 上右除装配
 （`AL'·C' = AC'`）。四族逐槽写回（原地），不做重正则化/重建规范；正则性
-偏差与丢弃谱权重同量级（`err`），完整约定见 `CanonicalIMPS` 方法。
+偏差与丢弃谱权重同量级（`err`），完整约定（含 `/C` 右除的数值稳定性警示）见
+`CanonicalIMPS` 方法。
 """
 function truncate!(W::CanonicalIMPO; trunc::TruncationScheme = DefaultTruncation)
     N = length(W)

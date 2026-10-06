@@ -91,8 +91,8 @@ function _overlap_leading_boundaries(As::AbstractVector{<:Array{T,3}};
     vl = vl * vl'
     vr = vr * vr'
     alg = KrylovKit.Arnoldi(; tol = tol, maxiter = maxiter, krylovdim = Defaults.krylovdim)
-    λl, Vl = fixedpoint(tml, vec(vl), :LM, alg)
-    λr, Vr = fixedpoint(tmr, vec(vr), :LM, alg)
+    λl, Vl = gauge_fixedpoint(tml, vec(vl), :LM, alg)
+    λr, Vr = gauge_fixedpoint(tmr, vec(vr), :LM, alg)
     verbosity >= 2 && println("left/right leading eigenvalues: $λl, $λr")
     _normalize_angle!(Vl)
     _normalize_angle!(Vr)

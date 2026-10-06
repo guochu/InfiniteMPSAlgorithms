@@ -135,8 +135,8 @@ function uniform_leftorth!((AL, C), A, C₀, alg::LeftCanonical)
         # C[ℓ] 始终方形。MPSKit 的 gauge_eigsolve_step! 也没有方阵守卫。
         if iter ≥ alg.eig_miniter
             ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
-            _, evec = fixedpoint(TransferMatrix(Awork, AL; side = :left),
-                                 vec(C[N]), :LM, ealg)
+            _, evec = gauge_fixedpoint(TransferMatrix(Awork, AL; side = :left),
+                                       vec(C[N]), :LM, ealg)
             _, C[N] = leftorth(reshape(evec, size(C[N])...); alg = alg.alg_orth)
         end
         C_pre = copy(C[N])
@@ -174,8 +174,8 @@ function uniform_rightorth!((AR, C), A, C₀, alg::RightCanonical)
         # （方阵性同 uniform_leftorth!：由构造时的 _makefullrank! 保证）
         if iter ≥ alg.eig_miniter
             ealg = updatetol(alg.alg_eigsolve, 1, ϵ^2)
-            _, evec = fixedpoint(TransferMatrix(Awork, AR; side = :right),
-                                 vec(C[N]), :LM, ealg)
+            _, evec = gauge_fixedpoint(TransferMatrix(Awork, AR; side = :right),
+                                       vec(C[N]), :LM, ealg)
             C[N], _ = rightorth(reshape(evec, size(C[N])...); alg = alg.alg_orth')
         end
         C_pre = copy(C[N])

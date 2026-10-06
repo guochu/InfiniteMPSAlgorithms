@@ -185,19 +185,39 @@ function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Lanczos)
     return vals[1], vecs[1]
 end
 
-"非厄米通道（MPSKit `fixedpoint(::Arnoldi)` 的对标）：走 KrylovKit 的
-`schursolve` 而非 `eigsolve`——实算子 + 实初值保持在实数域（实 Schur 形式），
-只有收敛的 Schur 值本征为复时才升复。这从结构上消除了「实链的非厄米混合
-转移返回复本征向量」问题（`eigsolve` 的 Arnoldi 对实算子会给出复 Ritz 向量，
-调用方曾被迫取实部）。"
-function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi)
+"""
+    gauge_fixedpoint(operator, x₀, which, alg::KrylovKit.Arnoldi) -> (λ, v)
+
+Gauge 通道的转移矩阵主导本征对（`uniform_leftorth!`/`uniform_rightorth!` 与
+`InfiniteOrthogonalize` 的边界本征对）：走 KrylovKit 的 `schursolve`——与
+MPSKit `fixedpoint(::Arnoldi)` 严格一致（**全盘 schursolve，不做实复分流**；
+复数输入下 `schursolve` 即标准复 Schur 分解，与 `eigsolve` 的 Arnoldi 数值
+等价）。实算子 + 实初值保持在实数域（实 Schur 形式），只有收敛的 Schur 值
+本征为复时才升复——这从结构上消除了「实链的非厄米混合转移返回复本征向量」
+问题（`eigsolve` 的 Arnoldi 对实算子会给出复 Ritz 向量，调用方曾被迫取实部）。
+
+与环境通道的 [`fixedpoint(::NamedTuple)`](@ref)（`eigsolve`，实输入下
+leading vector 可为复、通道升复算术）**有意分流**：gauge 通道要的是实数域
+保持的代表元，环境通道要的是复提升的忠实解。
+"""
+function gauge_fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi)
     TT, vecs, vals, info = KrylovKit.schursolve(operator, x₀, 1, which, alg)
     info.converged == 0 &&
-        @warn "fixed point not converged after $(info.numiter) iterations" normres = info.normres[1]
+        @warn "gauge fixed point not converged after $(info.numiter) iterations" normres = info.normres[1]
     size(TT, 2) > 1 && !iszero(TT[2, 1]) &&
         @warn "non-unique fixed point detected"
     return vals[1], vecs[1]
 end
+
+"DynamicTol wrapper: uses the inner Krylov algorithm's initial tolerance."
+gauge_fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
+    gauge_fixedpoint(operator, x₀, which, alg.alg)
+
+"非厄米本征值求解通道（MPSKit `fixedpoint(::Arnoldi)` 的对标，vumps/idmrg
+局部子问题的 Arnoldi 形态）：转发 [`gauge_fixedpoint`](@ref)（同一
+`schursolve` 语义——实数域保持）。"
+fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi) =
+    gauge_fixedpoint(operator, x₀, which, alg)
 
 "DynamicTol wrapper: uses the inner Krylov algorithm's initial tolerance."
 fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
