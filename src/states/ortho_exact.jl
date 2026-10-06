@@ -9,8 +9,9 @@
 # 互补。入口为 `gaugefix!(ψ, As, alg::InfiniteOrthogonalize)`。
 
 """
-    InfiniteOrthogonalize(; trunc = DefaultTruncation, toleig = Defaults.tolgauge,
-                          maxitereig = Defaults.maxiter, verbosity = 0)
+    InfiniteOrthogonalize(; trunc = DefaultTruncation, alg_gauge = Defaults.alg_gauge(),
+                          alg_environments = Defaults.alg_environments(),
+                          alg_orth = Defaults.alg_orth(), verbosity = 0)
 
 Exact mixed-canonicalization algorithm（移植自 InfiniteTEMPO 的同名结构；
 Reference: PHYSICAL REVIEW B 78, 155117）：通过左右主导边界本征对的白化 +
@@ -20,13 +21,19 @@ power sweep）。输出态恒归一（`‖ψ‖ = 1`；不设 `normalize` 开关
 
 - `trunc`：键谱截断方案（[`TruncationScheme`](@ref)，作用于闭合键的
   `tsvd(Y·X)` 与反向扫掠的逐站 SVD）；
-- `toleig` / `maxitereig`：边界本征对求解（Arnoldi）的容差与迭代上限；
+- `alg_environments`：边界本征对求解（Arnoldi）的容差与迭代上限
+  （`Defaults.alg_environments()` 惯例：`(; tol, maxiter)` NamedTuple 或
+  `DynamicTol` 包装）；
+- `alg_gauge`：`(AR, C) → AL` 装配扫掠（`gaugefix!(; order = :L)` 的
+  `uniform_leftorth!`）的迭代参数；
+- `alg_orth`：前向 QR 扫掠与装配扫掠的正交化算法（默认 `QRpos()`）；
 - `verbosity`：`≥ 2` 时打印左右主导本征值。
 """
-@kwdef struct InfiniteOrthogonalize{T<:TruncationScheme} <: Algorithm
+@kwdef struct InfiniteOrthogonalize{T<:TruncationScheme, G, E, O} <: Algorithm
     trunc::T = DefaultTruncation
-    toleig::Float64 = Defaults.tolgauge
-    maxitereig::Int = Defaults.maxiter
+    alg_gauge::G = Defaults.alg_gauge()
+    alg_environments::E = Defaults.alg_environments()
+    alg_orth::O = Defaults.alg_orth()
     verbosity::Int = 0
 end
 
@@ -122,9 +129,9 @@ InfiniteTEMPO `mixedcanonicalize2!`（Reference: PHYSICAL REVIEW B 78, 155117）
 function mixedcanonicalize2!(x::AbstractVector{<:Array{T,3}},
                              alg::InfiniteOrthogonalize) where {T}
     N = length(x)
-    tolchol = alg.toleig * 10
-    η, Vl, Vr = _overlap_leading_boundaries(x; tol = alg.toleig,
-                                            maxiter = alg.maxitereig,
+    g = alg.alg_environments isa DynamicTol ? alg.alg_environments.alg : alg.alg_environments
+    tolchol = g.tol * 10
+    η, Vl, Vr = _overlap_leading_boundaries(x; tol = g.tol, maxiter = g.maxiter,
                                             verbosity = alg.verbosity)
 
     Y = _chol_split(Vl, tolchol)      # (r×D),  Y'Y ≈ Vl
@@ -135,7 +142,7 @@ function mixedcanonicalize2!(x::AbstractVector{<:Array{T,3}},
     m = U' * Y
     for i in 1:(N-1)
         @tensor xj[α, s, b] := m[α, a] * x[i][a, s, b]
-        Q, m = leftorth(xj, (1, 2), (3,); alg = QRpos())
+        Q, m = leftorth(xj, (1, 2), (3,); alg = alg.alg_orth)
         x[i] = Q
     end
     m2 = X * V'
@@ -174,32 +181,26 @@ end
 
 [`InfiniteOrthogonalize`](@ref) 的 `CanonicalIMPS` 入口：对张量串 `As`
 （`(wl, s, wr)`，键维逐站可不同、闭合键须方形）执行精确混合正则化并写回
-`ψ` 的四族。`sv` 谱 → `C[ℓ] = Diagonal(sv[ℓ+1])`（对角正谱），`AR = x`，
-`AC[ℓ] = C[ℓ-1]·AR[ℓ]`（行缩放）与 `AL[ℓ] = AC[ℓ]/C[ℓ]`（右除）闭式装配
-（同 [`truncate!`](@ref) 的装配模式）。截断丢弃权重小时输出严格正则
-（`ismixedcanonical`），偏差与丢弃权重及边界本征对容差 `toleig` 同量级。
+`ψ` 的四族。`mixedcanonicalize2!` 产出右正则串 `AR = x` 与逐站谱 `sv`
+（`sv[1]` = 闭合键 N 的谱）后，`AR` 写入 `ψ.AR`，再以
+`C₀ = Diagonal(sv[1])` 经 `gaugefix!(; order = :L)`（`uniform_leftorth!`
+的 QR 扫掠）装配 `AL`/`C`，`AC = AL·C` 闭式乘法装配——**全程无除法**：
+不采用 `AL = C₋·AR/C′` 的右除装配（谱有接近截断阈值的奇异值时条件数
+失控），而是利用 QR 唯一性（R 因子对角正 = 已知的对角正谱）做单趟左向
+扫掠，初值已是精确混合规范，扫掠一轮即收敛（`alg_gauge` 的 `tol`/`maxiter`
+与 `alg_orth` 为该步参数）。截断丢弃权重小时输出严格正则
+（`ismixedcanonical`），偏差与丢弃权重及边界本征对容差同量级。
 """
 function gaugefix!(ψ::CanonicalIMPS, As, alg::InfiniteOrthogonalize)
     x = [copy(a) for a in As]
     sv = mixedcanonicalize2!(x, alg)
-    N = length(x)
-    T = scalartype(x[1])
-    ALs = Vector{Array{T,3}}(undef, N)
-    ACs = Vector{Array{T,3}}(undef, N)
-    Cs = Vector{Matrix{T}}(undef, N)
-    for ℓ in 1:N
-        sleft = sv[_mod1(ℓ, N)]                     # site ℓ 左键的谱（C[ℓ-1]）
-        sright = sv[_mod1(ℓ + 1, N)]                # site ℓ 右键的谱（C[ℓ]）
-        Cs[ℓ] = Matrix{T}(Diagonal(sright))
-        AC = x[ℓ] .* reshape(sleft, :, 1, 1)        # AC = C[ℓ-1]·AR（行缩放）
-        Dl, d, Dr = size(AC)
-        ALs[ℓ] = reshape(reshape(AC, Dl * d, Dr) / Cs[ℓ], Dl, d, Dr)   # AL·C = AC
-        ACs[ℓ] = AC
-    end
-    copy!(ψ.AL, ALs)
     copy!(ψ.AR, x)
-    copy!(ψ.C, Cs)
-    copy!(ψ.AC, ACs)
+    # 闭合键谱 C₀ = Diag(sv[1])（sv[i] 作用在 site i 的左键上，键 N = site 1 左键）；
+    # order = :L 的 QR 扫掠从 (AR, C₀) 装配 AL/C/AC（AC = AL·C 在该路径内闭式装配）
+    T = scalartype(ψ)
+    g = alg.alg_gauge isa DynamicTol ? alg.alg_gauge.alg : alg.alg_gauge
+    gaugefix!(ψ, ψ.AR, Matrix{T}(Diagonal(sv[1])); order = :L,
+              tol = g.tol, maxiter = g.maxiter, alg_orth = alg.alg_orth)
     return ψ
 end
 
