@@ -27,10 +27,14 @@
   `devectorize(As::AbstractVector{<:Array{T,3}})`（拆分 `f = r²`，完全平方数
   校验）；`CanonicalIMPO(Ws)` 构造器、`devectorize`/`vectorize` 的类型方法
   相应内联；
-- 新增三参数混合规范构造器 **`CanonicalIMPS(AL, C, AR)`** /
-  **`CanonicalIMPO(AL, C, AR)`**（镜像 MPSKit 的 `InfiniteMPS(AL, C, AR)`）：
-  `Vector`/`PeriodicVector` 皆可，`AC = AL·C` 闭式装配，输入视为已处于相应
-  规范、不做 `gaugefix!` 重整；
+- 新增混合规范构造器 **`CanonicalIMPS(AL, C, AR[, AC])`** /
+  **`CanonicalIMPO(AL, C, AR[, AC])`**（镜像 MPSKit 的 `InfiniteMPS(AL, C,
+  AR)`）：`Vector`/`PeriodicVector` 皆可，`AC` 缺省由 `AC = AL·C` 闭式装配
+  （rank-4 kernel `_mulAL`/批量 `_mul_ALC`），输入视为已处于相应规范、不做
+  `gaugefix!` 重整；相应地 **4 参族序构造器统一为 `(AL, C, AR, AC)`**
+  （原 `(AL, AR, C, AC)`，`CanonicalIMPO{T}` 内构造签名同步换序，字段存储序
+  不变），全部内部调用点（copy/similar/circshift/dag/`CanonicalIMPO(Ws)`/
+  `vectorize`/`devectorize`/mult `_promote_scalar`/tdvp 复数化）已随新序更新；
 - 验证：states、operators（mpo/vectorize）、envs、groundstate concordance、
   compress 测试全过。
 

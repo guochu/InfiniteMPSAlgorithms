@@ -52,8 +52,8 @@
         end
     end
     ψ0 = CanonicalIMPS(InfiniteMPSAlgorithms.PeriodicVector([AL0, copy(AL0)]),
-                       InfiniteMPSAlgorithms.PeriodicVector([copy(AL0), copy(AL0)]),
                        InfiniteMPSAlgorithms.PeriodicVector([Matrix{T}(I, D, D), Matrix{T}(I, D, D)]),
+                       InfiniteMPSAlgorithms.PeriodicVector([copy(AL0), copy(AL0)]),
                        InfiniteMPSAlgorithms.PeriodicVector([copy(AL0), copy(AL0)]))
 
     # ---- 本包：虚时冷却 ----

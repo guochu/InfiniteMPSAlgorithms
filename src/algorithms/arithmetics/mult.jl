@@ -270,7 +270,7 @@ end
 function _promote_scalar(::Type{T}, ψ::CanonicalIMPS) where {T}
     scalartype(ψ) == T && return ψ
     cast = As -> PeriodicVector([T.(a) for a in As])
-    return CanonicalIMPS(cast(ψ.AL), cast(ψ.AR), cast(ψ.C), cast(ψ.AC))
+    return CanonicalIMPS(cast(ψ.AL), cast(ψ.C), cast(ψ.AR), cast(ψ.AC))
 end
 
 "VOMPS Galerkin residual (mirrors MPSKit's `calc_galerkin`): the norm of the
@@ -450,7 +450,7 @@ end
 function _promote_scalar(::Type{T}, W::CanonicalIMPO) where {T}
     scalartype(W) == T && return W
     cast = As -> PeriodicVector([T.(a) for a in As])
-    return CanonicalIMPO{T}(cast(W.AL), cast(W.AR), cast(W.C), cast(W.AC))
+    return CanonicalIMPO{T}(cast(W.AL), cast(W.C), cast(W.AR), cast(W.AC))
 end
 
 "`_promote_scalar` 的 DenseIMPO/DenseIMPS 版：按原类型逐张量提升（不转换规范

@@ -106,8 +106,8 @@ end
 function from_mpskit(ϕ::MPSKit.InfiniteMPS)
     P = InfiniteMPSAlgorithms.PeriodicVector
     return CanonicalIMPS(P([tensor_to_array(a) for a in ϕ.AL]),
-                         P([tensor_to_array(a) for a in ϕ.AR]),
                          P([tensor_to_array(c) for c in ϕ.C]),
+                         P([tensor_to_array(a) for a in ϕ.AR]),
                          P([tensor_to_array(ac) for ac in ϕ.AC]))
 end
 

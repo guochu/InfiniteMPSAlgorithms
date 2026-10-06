@@ -318,7 +318,7 @@ end
     @test errw2 > 0
 end
 
-@testset "三参数混合规范构造器 CanonicalIMPS(AL, C, AR) / CanonicalIMPO(AL, C, AR)" begin
+@testset "混合规范构造器 CanonicalIMPS(AL, C, AR[, AC]) / CanonicalIMPO(AL, C, AR[, AC])" begin
     T = ComplexF64
     Random.seed!(27)
 
@@ -333,6 +333,9 @@ end
     # Vector 输入（MPSKit 的 InfiniteMPS(AL, C, AR) 亦接受）
     ψ3 = CanonicalIMPS(collect(ψ.AL), collect(ψ.C), collect(ψ.AR))
     @test collect(ψ3.AC) == collect(ψ.AC)
+    # 显式四族
+    ψ4 = CanonicalIMPS(ψ.AL, ψ.C, ψ.AR, ψ.AC)
+    @test collect(ψ4.AL) == collect(ψ.AL)
 
     W = randomimpo(T, [2, 2]; D = 3)
     W2 = CanonicalIMPO(W.AL, W.C, W.AR)
@@ -343,5 +346,7 @@ end
     @test ismixedcanonical(W2)
     W3 = CanonicalIMPO(collect(W.AL), collect(W.C), collect(W.AR))
     @test collect(W3.AC) == collect(W.AC)
+    W4 = CanonicalIMPO(W.AL, W.C, W.AR, W.AC)
+    @test collect(W4.AC) == collect(W.AC)
 end
 

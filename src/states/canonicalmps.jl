@@ -39,31 +39,28 @@ struct CanonicalIMPS{T<:Number} <: AbstractInfiniteMPS{T}
     end
 end
 
-_mul_ALC(AL::PeriodicVector{A}, C::PeriodicVector{B}) where {A<:Array{T,3},B<:Matrix{T}} where {T} =
-    PeriodicVector(Array{T,3}[_mulAL(AL[ℓ], C[ℓ]) for ℓ in 1:length(AL)])
+_mul_ALC(AL::AbstractVector{<:Array{T,3}},
+         C::AbstractVector{<:AbstractMatrix{T}}) where {T} =
+    Array{T,3}[_mulAL(AL[ℓ], C[ℓ]) for ℓ in eachindex(AL)]
 _mulAL(AL::AbstractArray{T,3}, C::AbstractMatrix{T}) where {T} =
     begin
         @tensor AC[a, s, c] := AL[a, s, b] * C[b, c]
     end
 
-CanonicalIMPS(AL::PeriodicVector{Array{T,3}}, AR::PeriodicVector{Array{T,3}},
-                     C::PeriodicVector{Array{T,2}},
-                     AC::PeriodicVector{Array{T,3}} = _mul_ALC(AL, C)) where {T} =
-    CanonicalIMPS{T}(AL, AR, C, AC)
-
 """
-    CanonicalIMPS(AL, C, AR) -> CanonicalIMPS
+    CanonicalIMPS(AL, C, AR, [AC]) -> CanonicalIMPS
 
-Three-family mixed-canonical constructor (mirrors MPSKit's `InfiniteMPS(AL, C,
-AR)`): `AL`/`C`/`AR` are the left-canonical string, the bond center matrices,
-and the right-canonical string（`Vector` 或 `PeriodicVector` 均可）；`AC = AL·C`
-闭式装配。输入即视为已处于相应规范，不做 `gaugefix!` 重整（与 1 参数
-raw-string 构造器的差别所在）。
+Mixed-canonical constructor (mirrors MPSKit's `InfiniteMPS(AL, C, AR)`):
+`AL`/`C`/`AR`/`AC` are the left-canonical string, the bond center matrices,
+the right-canonical string, and the center string（`Vector` 或 `PeriodicVector`
+均可）；`AC` 缺省由 `AC = AL·C` 闭式装配。输入即视为已处于相应规范，不做
+`gaugefix!` 重整（与 1 参数 raw-string 构造器的差别所在）。
 """
 CanonicalIMPS(AL::AbstractVector{<:Array{T,3}}, C::AbstractVector{<:Array{T,2}},
-              AR::AbstractVector{<:Array{T,3}}) where {T} =
-    CanonicalIMPS(PeriodicVector(collect(AL)), PeriodicVector(collect(AR)),
-                  PeriodicVector(collect(C)))
+              AR::AbstractVector{<:Array{T,3}},
+              AC::AbstractVector{<:Array{T,3}} = _mul_ALC(AL, C)) where {T} =
+    CanonicalIMPS{T}(PeriodicVector(collect(AL)), PeriodicVector(collect(AR)),
+                     PeriodicVector(collect(C)), PeriodicVector(collect(AC)))
 
 """
     _check_bond_consistency(As) -> nothing
@@ -204,16 +201,16 @@ eachsite(ψ::CanonicalIMPS) = 1:length(ψ)
 
 function Base.copy(ψ::CanonicalIMPS)
     return CanonicalIMPS(PeriodicVector([copy(a) for a in ψ.AL]),
-                                PeriodicVector([copy(a) for a in ψ.AR]),
                                 PeriodicVector([copy(c) for c in ψ.C]),
+                                PeriodicVector([copy(a) for a in ψ.AR]),
                                 PeriodicVector([copy(a) for a in ψ.AC]))
 end
 function Base.similar(ψ::CanonicalIMPS{T}) where {T}
     return CanonicalIMPS{T}(similar(ψ.AL), similar(ψ.AR), similar(ψ.C), similar(ψ.AC))
 end
 function Base.circshift(ψ::CanonicalIMPS, n)
-    return CanonicalIMPS(circshift(ψ.AL, n), circshift(ψ.AR, n),
-                                circshift(ψ.C, n), circshift(ψ.AC, n))
+    return CanonicalIMPS(circshift(ψ.AL, n), circshift(ψ.C, n),
+                                circshift(ψ.AR, n), circshift(ψ.AC, n))
 end
 
 "phydim(ψ, i): site `i` 的物理维度（unit cell 内允许逐站不同）。"
@@ -224,8 +221,9 @@ max_bonddim(ψ::CanonicalIMPS) = maximum(bonddim(ψ, ℓ) for ℓ in 1:length(ψ
 
 "`dag(ψ)`: elementwise conjugation of every tensor."
 dag(ψ::CanonicalIMPS) =
-    CanonicalIMPS(PeriodicVector(conj.(parent(ψ.AL))), PeriodicVector(conj.(parent(ψ.AR))),
-                         PeriodicVector(conj.(parent(ψ.C))), PeriodicVector(conj.(parent(ψ.AC))))
+    CanonicalIMPS(PeriodicVector(conj.(parent(ψ.AL))), PeriodicVector(conj.(parent(ψ.C))),
+                         PeriodicVector(conj.(parent(ψ.AR))),
+                         PeriodicVector(conj.(parent(ψ.AC))))
 
 "`LinearAlgebra.norm(ψ) = norm(ψ.AC[1])` (consistent with MPSKit)."
 LinearAlgebra.norm(ψ::CanonicalIMPS) = norm(ψ.AC[1])

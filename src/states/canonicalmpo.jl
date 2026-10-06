@@ -30,8 +30,8 @@ struct CanonicalIMPO{T<:Number} <: AbstractInfiniteMPO{T}
     AC::PeriodicVector{Array{T,4}}
 
     function CanonicalIMPO{T}(AL::PeriodicVector{Array{T,4}},
-                                     AR::PeriodicVector{Array{T,4}},
                                      C::PeriodicVector{Array{T,2}},
+                                     AR::PeriodicVector{Array{T,4}},
                                      AC::PeriodicVector{Array{T,4}}) where {T}
         L = length(AL)
         (L == length(AR) == length(C) == length(AC)) ||
@@ -63,33 +63,35 @@ normalization-scale caveat).
 function CanonicalIMPO(Ws::AbstractVector{<:Array{T,4}}; kwargs...) where {T}
     ψ = CanonicalIMPS(vectorize(Ws); kwargs...)
     to4 = As -> devectorize(collect(As))
-    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
-                            copy(ψ.C), PeriodicVector(to4(ψ.AC)))
+    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), copy(ψ.C),
+                            PeriodicVector(to4(ψ.AR)), PeriodicVector(to4(ψ.AC)))
 end
 
-"`_mulAL(W, C)`（rank-4）：MPS 视图上的 `AC = AL·C`（三参数构造器的 `AC`
-闭式装配；rank-3 版见 `canonicalmps.jl`）。"
+"`_mulAL(W, C)`（rank-4）：MPS 视图上的 `AC = AL·C`（`CanonicalIMPO` 构造器的
+`AC` 闭式装配 kernel；rank-3 版见 `canonicalmps.jl`）。"
 function _mulAL(W::AbstractArray{T,4}, C::AbstractMatrix{T}) where {T}
     wl, u, wr, d = size(W)
     ALm = reshape(permutedims(W, (1, 2, 4, 3)), wl * u * d, wr)
     ACv = reshape(ALm * C, wl, u, d, size(C, 2))
     return permutedims(ACv, (1, 2, 4, 3))
 end
+_mul_ALC(AL::AbstractVector{<:Array{T,4}},
+         C::AbstractVector{<:AbstractMatrix{T}}) where {T} =
+    Array{T,4}[_mulAL(AL[ℓ], C[ℓ]) for ℓ in eachindex(AL)]
 
 """
-    CanonicalIMPO(AL, C, AR) -> CanonicalIMPO
+    CanonicalIMPO(AL, C, AR, [AC]) -> CanonicalIMPO
 
-Three-family mixed-canonical constructor (mirror of the `CanonicalIMPS`
-three-argument method): `AL`/`C`/`AR` are the left-canonical MPO string, the
-bond center matrices, and the right-canonical MPO string（`Vector` 或
-`PeriodicVector` 均可）；`AC = AL·C` 闭式装配。输入即视为已处于相应规范，
-不做 `gaugefix!` 重整。
+Mirror of the `CanonicalIMPS` four-argument method：`AL`/`C`/`AR`/`AC` 分别为
+左正交算符串、键中心矩阵、右正交算符串与中心串（`Vector` 或 `PeriodicVector`
+均可）；`AC` 缺省由 `AC = AL·C` 闭式装配。输入即视为已处于相应规范，不做
+`gaugefix!` 重整。
 """
 CanonicalIMPO(AL::AbstractVector{<:Array{T,4}}, C::AbstractVector{<:Array{T,2}},
-              AR::AbstractVector{<:Array{T,4}}) where {T} =
-    CanonicalIMPO{T}(PeriodicVector(collect(AL)), PeriodicVector(collect(AR)),
-                     PeriodicVector(collect(C)),
-                     PeriodicVector([_mulAL(AL[ℓ], C[ℓ]) for ℓ in eachindex(AL)]))
+              AR::AbstractVector{<:Array{T,4}},
+              AC::AbstractVector{<:Array{T,4}} = _mul_ALC(AL, C)) where {T} =
+    CanonicalIMPO{T}(PeriodicVector(collect(AL)), PeriodicVector(collect(C)),
+                     PeriodicVector(collect(AR)), PeriodicVector(collect(AC)))
 
 # ---------------- interface (mirrors CanonicalIMPS) ----------------
 
@@ -99,16 +101,16 @@ eachsite(W::CanonicalIMPO) = 1:length(W)
 
 function Base.copy(W::CanonicalIMPO{T}) where {T}
     return CanonicalIMPO{T}(PeriodicVector([copy(a) for a in W.AL]),
-                                   PeriodicVector([copy(a) for a in W.AR]),
                                    PeriodicVector([copy(c) for c in W.C]),
+                                   PeriodicVector([copy(a) for a in W.AR]),
                                    PeriodicVector([copy(a) for a in W.AC]))
 end
 function Base.similar(W::CanonicalIMPO{T}) where {T}
-    return CanonicalIMPO{T}(similar(W.AL), similar(W.AR), similar(W.C), similar(W.AC))
+    return CanonicalIMPO{T}(similar(W.AL), similar(W.C), similar(W.AR), similar(W.AC))
 end
 function Base.circshift(W::CanonicalIMPO, n)
-    return CanonicalIMPO{T}(circshift(W.AL, n), circshift(W.AR, n),
-                                   circshift(W.C, n), circshift(W.AC, n))
+    return CanonicalIMPO{T}(circshift(W.AL, n), circshift(W.C, n),
+                                   circshift(W.AR, n), circshift(W.AC, n))
 end
 
 "phydim(W, i): site `i` 的物理维（unit cell 内允许逐站不同；包内约定并强制
@@ -121,8 +123,9 @@ max_bonddim(W::CanonicalIMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 "`dag(W)`: elementwise conjugation of every tensor (for overlap-type
 contractions; not the operator-adjoint network)."
 dag(W::CanonicalIMPO{T}) where {T} =
-    CanonicalIMPO{T}(PeriodicVector(conj.(parent(W.AL))), PeriodicVector(conj.(parent(W.AR))),
-                            PeriodicVector(conj.(parent(W.C))), PeriodicVector(conj.(parent(W.AC))))
+    CanonicalIMPO{T}(PeriodicVector(conj.(parent(W.AL))), PeriodicVector(conj.(parent(W.C))),
+                            PeriodicVector(conj.(parent(W.AR))),
+                            PeriodicVector(conj.(parent(W.AC))))
 
 "`LinearAlgebra.norm(W) = norm(W.AC[1])` (consistent with CanonicalIMPS)."
 LinearAlgebra.norm(W::CanonicalIMPO) = norm(W.AC[1])
@@ -198,8 +201,8 @@ fused view of the raw tensors with no canonicalization (mirror of the
 """
 function vectorize(W::CanonicalIMPO)
     return CanonicalIMPS(PeriodicVector(vectorize(collect(W.AL))),
-                         PeriodicVector(vectorize(collect(W.AR))),
                          copy(W.C),
+                         PeriodicVector(vectorize(collect(W.AR))),
                          PeriodicVector(vectorize(collect(W.AC))))
 end
 # DenseIMPO/SparseIMPO/DenseIMPS 方法（纯融合视图、互逆转换）见 operators/linalg.jl
@@ -219,8 +222,8 @@ families are split by a pure reshape and the canonical gauge data (including
 function devectorize(ψ::CanonicalIMPS)
     T = scalartype(ψ)
     to4 = As -> devectorize(collect(As))
-    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), PeriodicVector(to4(ψ.AR)),
-                            copy(ψ.C), PeriodicVector(to4(ψ.AC)))
+    return CanonicalIMPO{T}(PeriodicVector(to4(ψ.AL)), copy(ψ.C),
+                            PeriodicVector(to4(ψ.AR)), PeriodicVector(to4(ψ.AC)))
 end
 
 """

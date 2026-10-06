@@ -84,8 +84,8 @@ function time_evolve(ψ₀::CanonicalIMPS, H, t_span::AbstractVector{<:Number},
     ψ = copy(ψ₀)
     if scalartype(ψ) <: Real && (!imaginary_evolution || !isreal(dt_span_diff(t_span)))
         ψ = CanonicalIMPS(PeriodicVector(complex.(parent(ψ.AL))),
-                              PeriodicVector(complex.(parent(ψ.AR))),
                               PeriodicVector(complex.(parent(ψ.C))),
+                              PeriodicVector(complex.(parent(ψ.AR))),
                               PeriodicVector(complex.(parent(ψ.AC))))
     end
     history = Any[]
