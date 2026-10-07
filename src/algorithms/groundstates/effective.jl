@@ -84,12 +84,12 @@ function (h::MPO_AC_Hamiltonian{L,Op,R})(x::AbstractArray{T,3}) where {L,Op<:MPO
 end
 
 # Schur 稀疏算符的 AC 作用：按 level 对 (i, j) 逐块收缩（iszero 零块跳过——
-# Schur 上三角结构的零块从不落地），语义与稠密张量收缩逐位一致
+# Schur 上三角结构的零块从不落地），语义与稠密张量收缩逐位一致。
+# 矩形张量：行/列各自取 space_l/space_r（GL 的 w 维 = space_l、GR 的 = space_r）。
 function (h::MPO_AC_Hamiltonian{L,Op,R})(x::AbstractArray{T,3}) where {L,Op<:SchurMPOTensor,R,T}
     GL, GR, W = h.leftenv, h.rightenv, h.operators
-    nl = nlvls(W)
     y = zeros(T, size(GL, 1), size(x, 2), size(GR, 3))
-    for i in 1:nl, j in 1:nl
+    for i in 1:space_l(W), j in 1:space_r(W)
         Wij = W[i, j]                 # (u_out, u_in) 块
         iszero(Wij) && continue
         GLi = @view GL[:, i, :]       # (bra bond, ket bond)

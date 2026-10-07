@@ -85,3 +85,98 @@ end
     U = make_time_mpo(H, 0.01, WII(); imaginary_evolution = true)
     @test U isa DenseIMPO
 end
+
+@testset "矩形 Schur 链（非方阵 SchurMPOTensor，unitcell = 3）" begin
+    T = ComplexF64
+    # 二聚化 TFIM：NN 耦合只在键 (1,2) 上（通道只跨越键 1），
+    # 各站逻辑形状 [2×3, 3×2, 2×2]、键层数 [3, 2, 2]
+    h, J = T(0.3), T(1.0)
+    W1 = Matrix{Union{Missing,T,Matrix{T}}}(missing, 2, 3)
+    W1[1, 1] = one(T); W1[2, 3] = one(T)
+    W1[1, 3] = Matrix{T}(-h * σz(T)); W1[1, 2] = Matrix{T}(-J * σx(T))
+    W2 = Matrix{Union{Missing,T,Matrix{T}}}(missing, 3, 2)
+    W2[1, 1] = one(T); W2[3, 2] = one(T)
+    W2[1, 2] = Matrix{T}(-h * σz(T)); W2[2, 2] = Matrix{T}(σx(T))
+    W3 = Matrix{Union{Missing,T,Matrix{T}}}(missing, 2, 2)
+    W3[1, 1] = one(T); W3[2, 2] = one(T)
+    W3[1, 2] = Matrix{T}(-h * σz(T))
+
+    # 构造与链式闭合检查
+    H = SparseIMPO([W1, W2, W3])
+    @test [size(H[i]) for i in 1:3] == [(2, 3), (3, 2), (2, 2)]
+    @test [bonddim(H, ℓ) for ℓ in 1:3] == [2, 3, 2]   # 键 ℓ-1 的层数
+    @test max_bonddim(H) == 3
+    @test_throws ArgumentError bonddim(H)              # 非均匀层数：0 参版报错
+    @test_throws DimensionMismatch SparseIMPO([W1, W1, W3])  # 链式闭合破坏
+    @test size(tompotensor(H[1])) == (2, 2, 3, 2)
+    Hd = DenseIMPO(H)
+    @test [bonddim(Hd, ℓ) for ℓ in 1:3] == [2, 3, 2]   # 稠密化保持键 profile
+
+    # 逐层环境：lefts 的 w 维 = 键 ℓ-1 层数、rights 的 = 键 ℓ 层数
+    Random.seed!(2)
+    ψ0 = randomimps(T, 3; d = 2, D = 8)
+    envs0 = DMRGCache(ψ0, H)
+    @test [size(leftenv(envs0, ℓ), 2) for ℓ in 1:3] == [2, 3, 2]
+    @test [size(rightenv(envs0, ℓ), 2) for ℓ in 1:3] == [3, 2, 2]
+    @test isfinite(real(expectationvalue(ψ0, H, envs0)))
+
+    # VUMPS 收敛到二聚体 + 自由自旋的解析基态能量：
+    # 偶宇称块 diag(-2h, 2h) ⊕ -J ⇒ E_dimer = -sqrt(4h² + J²)，自由 site 3 = -|h|
+    E_exact = -sqrt(4 * abs2(h) + abs2(J)) - abs(h)
+    Random.seed!(3)
+    ψg, eg, _ = find_groundstate(randomimps(T, 3; d = 2, D = 8), H,
+                                 VUMPS(D = 8, maxiter = 300, tol = 1e-12, verbosity = 0))
+    @test abs(real(expectationvalue(ψg, H, eg)) - E_exact) < 1e-8
+
+    # 与同一算符的均匀方形（3×3）表示逐位一致（通道层处处保留、部分空置）
+    V1 = Matrix{Union{Missing,T,Matrix{T}}}(missing, 3, 3)
+    V1[1, 1] = one(T); V1[3, 3] = one(T)
+    V1[1, 3] = Matrix{T}(-h * σz(T)); V1[1, 2] = Matrix{T}(-J * σx(T))
+    V2 = Matrix{Union{Missing,T,Matrix{T}}}(missing, 3, 3)
+    V2[1, 1] = one(T); V2[3, 3] = one(T)
+    V2[1, 3] = Matrix{T}(-h * σz(T)); V2[2, 3] = Matrix{T}(σx(T))
+    V3 = Matrix{Union{Missing,T,Matrix{T}}}(missing, 3, 3)
+    V3[1, 1] = one(T); V3[3, 3] = one(T)
+    V3[1, 3] = Matrix{T}(-h * σz(T))
+    Hsq = SparseIMPO([V1, V2, V3])
+    @test bonddim(Hsq) == 3
+    ψr = randomimps(T, 3; d = 2, D = 6)
+    @test expectationvalue(ψr, H) ≈ expectationvalue(ψr, Hsq) atol = 1e-10
+
+    # 直和加法（内层通道拼接、单位层共享）与能量平移
+    H2 = H + H
+    @test [size(H2[i]) for i in 1:3] == [(2, 4), (4, 2), (2, 2)]
+    @test [bonddim(H2, ℓ) for ℓ in 1:3] == [2, 4, 2]
+    @test abs(real(expectationvalue(ψg, H2)) - 2 * E_exact) < 1e-8
+    Hλ = H + [0.1, 0.2, 0.3]
+    @test abs(real(expectationvalue(ψg, Hλ)) - (E_exact + 0.6)) < 1e-8
+
+    # 逐站 Schur 演化（W^II）在矩形链上可装配
+    U = make_time_mpo(H, 0.01, WII(); imaginary_evolution = true)
+    @test U isa DenseIMPO
+end
+
+@testset "DenseIMPO / CanonicalIMPO 非均匀键（unitcell 内 bonddim 不同）" begin
+    T = ComplexF64
+    Random.seed!(4)
+    Wd = DenseIMPO([randn(T, 2, 2, 3, 2), randn(T, 3, 2, 2, 2), randn(T, 2, 2, 2, 2)])
+    @test [bonddim(Wd, ℓ) for ℓ in 1:3] == [2, 3, 2]
+    @test max_bonddim(Wd) == 3
+
+    # CanonicalIMPO：混合规范化保留非均匀键 profile（规范变换不改变射线）。
+    # bonddim 约定与 MPS 侧一致：C[ℓ] 在键 ℓ（site ℓ 右侧）
+    Wc = CanonicalIMPO([copy(w) for w in Wd.Ws])
+    @test Wc isa CanonicalIMPO
+    @test [bonddim(Wc, ℓ) for ℓ in 1:3] == [3, 2, 2]
+    @test ismixedcanonical(Wc)
+    @test fidelity(DenseIMPO(Wc), Wd) ≈ 1 atol = 1e-8
+
+    # vectorize / devectorize 往返保持键 profile
+    Wrt = devectorize(vectorize(Wd))
+    @test [bonddim(Wrt, ℓ) for ℓ in 1:3] == [2, 3, 2]
+    @test all(ℓ -> size(Wrt[ℓ]) == size(Wd[ℓ]), 1:3)
+
+    # 非均匀键 DenseIMPO 的期望值通道（主本征向量环境）
+    ψ = randomimps(T, 3; d = 2, D = 4)
+    @test isfinite(real(expectationvalue(ψ, Wd)))
+end

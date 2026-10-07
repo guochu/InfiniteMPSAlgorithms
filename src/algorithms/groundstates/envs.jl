@@ -112,15 +112,20 @@ function _push_slice_right(R::AbstractMatrix, Wl::AbstractMatrix, A::AbstractArr
     @tensor R′[a′, b′] := A[a′, d, a] * Wl[ū, d] * conj(A[b′, ū, b]) * R[a, b]
 end
 
-"Full-cell left sweep (mirrors MPSKit left_cyclethrough!):
-`GL[site+1, i] = Σ_{l≤i} W_site[l→i]·GL[site, l]`."
+"Full-cell left sweep of an **interior** level (mirrors MPSKit left_cyclethrough!):
+`GL[site+1, i] = Σ_{l≤i} W_site[l→i]·GL[site, l]`. 矩形 Schur 链：目标层 i
+在下一键不是内层（`i ≥ space_r(site)`，含闭合位）时跳过——闭合层由
+[`_left_closing_sweep!`](@ref) 专责；读取上限 `min(i, space_l(site))`
+（左侧键的层数，闭合位的读取块结构为零，不贡献）。"
 function _left_cyclethrough!(lefts, Wds, ALs, i::Int, N::Int, Ds, T)
     for site in 1:N
         snext = site == N ? 1 : site + 1
         # 目标键 = site 的右键（逐站键维不同，取张量自身的实际尺寸）
         χs = size(ALs[site], 3)
+        ms, ns = size(Wds[site], 1), size(Wds[site], 3)
+        i <= ns - 1 || continue
         tgt = zeros(T, χs, χs)
-        for l in 1:i
+        for l in 1:min(i, ms)
             tgt .+= _push_slice_left(lefts[site][:, l, :],
                                      view(Wds[site], l, :, i, :), ALs[site])
         end
@@ -129,22 +134,56 @@ function _left_cyclethrough!(lefts, Wds, ALs, i::Int, N::Int, Ds, T)
     return lefts
 end
 
+"Full-cell left sweep of the **closing** level: at every site the whole closing
+column `W_site[:, n_site]` is contracted（on-site `D`、内层通道的 `B` 闭合块、
+上一键闭合层的 corner 延续）——矩形 Schur 链上闭合层逐键换标号（corner 流：
+`closing(b) → last row → corner → closing(b+1)`，角块恒为 I，故其环转移 =
+纯 MPS 转移，在 DMRGCache 里走 regularize 路径）。"
+function _left_closing_sweep!(lefts, Wds, ALs, N::Int, T)
+    for site in 1:N
+        snext = site == N ? 1 : site + 1
+        χs = size(ALs[site], 3)
+        ms, ns = size(Wds[site], 1), size(Wds[site], 3)
+        tgt = zeros(T, χs, χs)
+        for l in 1:ms
+            tgt .+= _push_slice_left(lefts[site][:, l, :],
+                                     view(Wds[site], l, :, ns, :), ALs[site])
+        end
+        lefts[snext][:, ns, :] .= tgt
+    end
+    return lefts
+end
+
 "Full-cell right sweep (mirrors MPSKit right_cyclethrough!):
-`GR[site−1, i] = Σ_{l≥i} W_site[i→l]·GR[site, l]`."
+`GR[site−1, i] = Σ_{l≥i} W_site[i→l]·GR[site, l]`. 矩形 Schur 链：目标层 i
+在上一键不存在（`i > space_l(site)`）时跳过；读取范围 `i:space_r(site)`
+（含闭合位的 corner 读取——闭合右环境恒为 I 播种，corner 推进保持不变）。"
 function _right_cyclethrough!(rights, Wds, ARs, i::Int, N::Int, Ds, T)
-    nl = size(Wds[1], 1)
     for site in N:-1:1
         sprev = site == 1 ? N : site - 1
         # 目标键 = site 的左键（逐站键维不同，取张量自身的实际尺寸）
         χs = size(ARs[site], 1)
+        ms, ns = size(Wds[site], 1), size(Wds[site], 3)
+        i <= ms || continue
         tgt = zeros(T, χs, χs)
-        for l in i:nl
+        for l in i:ns
             tgt .+= _push_slice_right(rights[site][:, l, :],
                                       view(Wds[site], i, :, l, :), ARs[site])
         end
         rights[sprev][:, i, :] .= tgt
     end
     return rights
+end
+
+"对角通道切片 `Wd[i, i]`（逐层 linsolve 的转移算子）。矩形 Schur 链上 i 可
+超出该站的内层数（通道未跨越此站）：通道缺失 = 零块，整个环上的对角转移
+为 0，`(1 − T)` 平凡可逆、linsolve 一步收敛到 `x = RHS`。"
+@inline function _diag_channel(Wd::AbstractArray{T,4}, i::Int) where {T}
+    return if i <= min(size(Wd, 1), size(Wd, 3))
+        view(Wd, i, :, i, :)
+    else
+        zeros(T, size(Wd, 2), size(Wd, 4))
+    end
 end
 
 # ---------------- 哈密顿量环境缓存（DMRGCache） ----------------
@@ -228,6 +267,12 @@ Schur Hamiltonian environments: per-level linear solves (mirroring MPSKit's
 `compute_leftenvs!/compute_rightenvs!(::SparseIMPO)`).
 `init_lefts`/`init_rights` provide warm-started initial values (see
 [`recalculate!`](@ref)).
+
+矩形 Schur 链（unitcell > 1、键层数逐键不同）：`lefts[ℓ]` 的 w 维 =
+`space_l(H[ℓ])`（键 ℓ-1 的层数）、`rights[ℓ]` 的 w 维 = `space_r(H[ℓ])`；
+左环境在键 N 上按其层数逐层求解、右环境同理，通道缺失的层（该键无此层）
+在对角转移中为零块（见 [`_diag_channel`](@ref)），`(1 − T)` 平凡可逆。
+要求 ket 的单胞长度是算符单胞长度的整数倍（键结构在 ket 单胞上闭合）。
 """
 function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
                    tol::Real = Defaults.tol, maxiter::Int = Defaults.maxiter,
@@ -235,22 +280,27 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
                    init_lefts::Union{Nothing,Vector{<:AbstractArray}} = nothing,
                    init_rights::Union{Nothing,Vector{<:AbstractArray}} = nothing)
     N = length(ψ)
-    nl = bonddim(H)
     T = promote_type(scalartype(ψ), scalartype(H))
     # 逐站键维：lefts[ℓ] 在键 ℓ-1（键维 χ_{ℓ-1} = size(AL[ℓ],1)），
     # rights[ℓ] 在键 ℓ（键维 χ_ℓ = size(AL[ℓ],3)）。非均匀键下两者不再相同。
     Dl = [size(ψ.AL[ℓ], 1) for ℓ in 1:N]
     Dr = [size(ψ.AL[ℓ], 3) for ℓ in 1:N]
-    lefts = [zeros(T, Dl[ℓ], nl, Dl[ℓ]) for ℓ in 1:N]
-    rights = [zeros(T, Dr[ℓ], nl, Dr[ℓ]) for ℓ in 1:N]
-    Wds = [tompotensor(H[ℓ]) for ℓ in 1:N]      # (nl, d, nl, d)
+    Wds = [tompotensor(H[ℓ]) for ℓ in 1:N]      # (m_ℓ, d, n_ℓ, d)，矩形链逐站形状
+    (size(Wds[N], 3) == size(Wds[1], 1)) || throw(DimensionMismatch(
+        "operator level chain does not close over the ket unit cell " *
+        "(N = $N): bond N has $(size(Wds[N], 3)) right levels vs bond 1 has $(size(Wds[1], 1)) left levels " *
+        "—— ket 单胞长度须为算符单胞长度的整数倍"))
+    ml = [size(W, 1) for W in Wds]               # lefts[ℓ] 的 w 维（键 ℓ-1 的层数）
+    nr = [size(W, 3) for W in Wds]               # rights[ℓ] 的 w 维（键 ℓ 的层数）
+    lefts = [zeros(T, Dl[ℓ], ml[ℓ], Dl[ℓ]) for ℓ in 1:N]
+    rights = [zeros(T, Dr[ℓ], nr[ℓ], Dr[ℓ]) for ℓ in 1:N]
     IdL = [Matrix{T}(I, Dl[ℓ], Dl[ℓ]) for ℓ in 1:N]
     IdR = [Matrix{T}(I, Dr[ℓ], Dr[ℓ]) for ℓ in 1:N]
 
-    # 单位层：level 1（左）与 level nl（右）= ρ = I（AL/AR 规范固定点）
+    # 单位层：level 1（左真空）与 level n_ℓ（右闭合，逐站）= ρ = I（AL/AR 规范固定点）
     for ℓ in 1:N
         lefts[ℓ][:, 1, :] .= IdL[ℓ]
-        rights[ℓ][:, nl, :] .= IdR[ℓ]
+        rights[ℓ][:, nr[ℓ], :] .= IdR[ℓ]
     end
 
     # 对标 MPSKit environment_alg：krylovdim 截断到环境向量空间维数 D·D
@@ -258,112 +308,165 @@ function DMRGCache(ψ::CanonicalIMPS, H::SparseIMPO;
     linalg = KrylovKit.GMRES(; tol = tol, maxiter = maxiter,
                             krylovdim = min(max_krylovdim, krylovdim))
 
-    # ---- 左环境：level 2..nl ----
+    # ---- 左环境 ----
     # 对标 MPSKit compute_leftenvs!：每 level 先 cyclethrough 全胞扫描（通道跳转
     # 可发生在任意中间 site），在 site 1 解 (1 − T)·x = RHS 后再扫描一次展开。
-    for i in 2:nl
-        D = Dl[1]        # 左环境定义在键 N 上
-        # 热启动初值（对标 MPSKit：复用上一轮环境的第 i 层）
+    # 矩形链的轮次结构：内层标号 i = 2..jmax 递增处理——
+    # · i ≤ m₁−1：键 N 的内层，需要定点求解（恒等内层走 regularize 路径）；
+    # · i > m₁−1：瞬态层（只在更宽的中间键上存在，无环返回通道），单次前向
+    #   扫描即定值；最后是闭合通道轮（键 N 的闭合层，角块恒为 I ⇒ 转移 =
+    #   纯 MPS 转移，须 regularize——均匀链上即原 i = nl 的恒等层轮）。
+    jmax = maximum(nr) - 1
+    for i in 2:jmax
+        if i <= ml[1] - 1
+            D = Dl[1]        # 左环境定义在键 N 上
+            # 热启动初值（对标 MPSKit：复用上一轮环境的第 i 层）
+            prev = if init_lefts !== nothing && size(init_lefts[1]) == size(lefts[1])
+                vec(copy(init_lefts[1][:, i, :]))
+            else
+                vec(copy(lefts[1][:, i, :]))
+            end
+            # 第一次全胞扫描：RHS 落在 lefts[1][i]（写 site+1，读 site，顺序覆盖）
+            _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
+            RHS = copy(lefts[1][:, i, :])
+            if isidentitylevel(H, i)
+                # MPSKit：T=regularize(Tm, l_LL=I, r_LL=C[N]C[N]')，linsolve 用 flip(T)，
+                # 而 flip(RegTM) 交换 l/r 参数（transfermatrix.jl:40），
+                # 故实际作用为 T(v) − tr(r_LL·v)·l_LL = T(v) − tr(ρr·v)·I。
+                I1 = IdL[1]
+                ρr = ψ.C[N] * ψ.C[N]'
+                op = function (v::AbstractVector)
+                    X = reshape(v, D, D)
+                    for ℓ in 1:N
+                        X = push_env_left(X, ψ.AL[ℓ])
+                    end
+                    regularize!(X, ρr, I1)
+                    return vec(X)
+                end
+                x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
+                lefts[1][:, i, :] .= reshape(x, D, D)
+                # 第二次扫描：把修正后的 site 1 展开到 site 2..N（MPSKit 仅 L>1 时执行）
+                if N > 1
+                    _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
+                end
+                # 恒等层：逐 site 投影掉固定点分量
+                for ℓ in 1:N
+                    ρr_ℓ = ψ.C[ℓ - 1] * ψ.C[ℓ - 1]'
+                    regularize!(@view(lefts[ℓ][:, i, :]), ρr_ℓ, IdL[ℓ])
+                end
+            else
+                if !isemptylevel(H, i)
+                    op = function (v::AbstractVector)
+                        X = reshape(v, D, D)
+                        for ℓ in 1:N
+                            X = _push_slice_left(X, _diag_channel(Wds[ℓ], i), ψ.AL[ℓ])
+                        end
+                        return vec(X)
+                    end
+                    x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
+                    lefts[1][:, i, :] .= reshape(x, D, D)
+                end
+                if N > 1
+                    _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
+                end
+            end
+        else
+            # 瞬态内层：无环返回通道（T = 0），单次前向扫描即定值
+            _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
+        end
+    end
+
+    # ---- 左环境的闭合通道轮（键 N 的闭合层；在所有内层/瞬态层定值之后） ----
+    begin
+        i = ml[1]             # = n_N：键 N 的闭合层标号
+        D = Dl[1]
         prev = if init_lefts !== nothing && size(init_lefts[1]) == size(lefts[1])
             vec(copy(init_lefts[1][:, i, :]))
         else
             vec(copy(lefts[1][:, i, :]))
         end
-        # 第一次全胞扫描：RHS 落在 lefts[1][i]（写 site+1，读 site，顺序覆盖）
-        _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
+        _left_closing_sweep!(lefts, Wds, ψ.AL, N, T)
         RHS = copy(lefts[1][:, i, :])
-        if isidentitylevel(H, i)
-            # MPSKit：T=regularize(Tm, l_LL=I, r_LL=C[N]C[N]')，linsolve 用 flip(T)，
-            # 而 flip(RegTM) 交换 l/r 参数（transfermatrix.jl:40），
-            # 故实际作用为 T(v) − tr(r_LL·v)·l_LL = T(v) − tr(ρr·v)·I。
-            I1 = IdL[1]
-            ρr = ψ.C[N] * ψ.C[N]'
-            op = function (v::AbstractVector)
-                X = reshape(v, D, D)
-                for ℓ in 1:N
-                    X = push_env_left(X, ψ.AL[ℓ])
-                end
-                regularize!(X, ρr, I1)
-                return vec(X)
-            end
-            x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
-            lefts[1][:, i, :] .= reshape(x, D, D)
-            # 第二次扫描：把修正后的 site 1 展开到 site 2..N（MPSKit 仅 L>1 时执行）
-            if N > 1
-                _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
-            end
-            # 恒等层：逐 site 投影掉固定点分量
+        # corner 流的环转移 = 纯 MPS 转移（同上 isidentitylevel 路径的 regularization）
+        I1 = IdL[1]
+        ρr = ψ.C[N] * ψ.C[N]'
+        op = function (v::AbstractVector)
+            X = reshape(v, D, D)
             for ℓ in 1:N
-                ρr_ℓ = ψ.C[ℓ - 1] * ψ.C[ℓ - 1]'
-                regularize!(@view(lefts[ℓ][:, i, :]), ρr_ℓ, IdL[ℓ])
+                X = push_env_left(X, ψ.AL[ℓ])
             end
-        else
-            if !isemptylevel(H, i)
-                op = function (v::AbstractVector)
-                    X = reshape(v, D, D)
-                    for ℓ in 1:N
-                        X = _push_slice_left(X, view(Wds[ℓ], i, :, i, :), ψ.AL[ℓ])
-                    end
-                    return vec(X)
-                end
-                x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
-                lefts[1][:, i, :] .= reshape(x, D, D)
-            end
-            if N > 1
-                _left_cyclethrough!(lefts, Wds, ψ.AL, i, N, Dl, T)
-            end
+            regularize!(X, ρr, I1)
+            return vec(X)
+        end
+        x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
+        lefts[1][:, i, :] .= reshape(x, D, D)
+        if N > 1
+            _left_closing_sweep!(lefts, Wds, ψ.AL, N, T)
+        end
+        # 恒等层：逐 site 投影掉固定点分量（闭合层逐键换标号 = 各键的最后一层）
+        for ℓ in 1:N
+            ρr_ℓ = ψ.C[ℓ - 1] * ψ.C[ℓ - 1]'
+            regularize!(@view(lefts[ℓ][:, ml[ℓ], :]), ρr_ℓ, IdL[ℓ])
         end
     end
 
-    # ---- 右环境：level nl-1..1（反向全胞扫描） ----
-    for i in nl-1:-1:1
-        D = Dr[N]        # 右环境定义在键 N 上
-        # 热启动初值（对标 MPSKit：复用上一轮环境的第 i 层）
-        prev = if init_rights !== nothing && size(init_rights[N]) == size(rights[N])
-            vec(copy(init_rights[N][:, i, :]))
-        else
-            vec(copy(rights[N][:, i, :]))
-        end
-        # 第一次反向全胞扫描：RHS 落在 rights[N][i]
-        _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
-        RHS = copy(rights[N][:, i, :])
-        if isidentitylevel(H, i)
-            # l_RR(ψ, 1) = C[N]'·C[N]（默认 loc=1，site 0 即 site N），r_RR = I
-            IN = IdR[N]
-            ρl = ψ.C[N]' * ψ.C[N]
-            op = function (v::AbstractVector)
-                X = reshape(v, D, D)
-                for ℓ in N:-1:1
-                    X = push_env_right(X, ψ.AR[ℓ])
-                end
-                regularize!(X, ρl, IN)
-                return vec(X)
+    # ---- 右环境 ----
+    # 矩形链的轮次结构：内层标号 i = jmax..1 递减处理（高标签先定值）：
+    # · i ≤ n_N−1：键 N 的内层/真空层，定点求解（i = 1 真空走 regularize 路径）；
+    # · i > n_N−1：瞬态层，单次反向扫描即定值。闭合右环境恒为 I 播种、不解。
+    for i in jmax:-1:1
+        if i <= nr[N] - 1
+            D = Dr[N]        # 右环境定义在键 N 上
+            # 热启动初值（对标 MPSKit：复用上一轮环境的第 i 层）
+            prev = if init_rights !== nothing && size(init_rights[N]) == size(rights[N])
+                vec(copy(init_rights[N][:, i, :]))
+            else
+                vec(copy(rights[N][:, i, :]))
             end
-            x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
-            rights[N][:, i, :] .= reshape(x, D, D)
-            if N > 1
-                _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
-            end
-            # 恒等层：逐 site 投影
-            for ℓ in 1:N
-                ρl_ℓ = ψ.C[ℓ]' * ψ.C[ℓ]
-                regularize!(@view(rights[ℓ][:, i, :]), ρl_ℓ, IdR[ℓ])
-            end
-        else
-            if !isemptylevel(H, i)
+            # 第一次反向全胞扫描：RHS 落在 rights[N][i]
+            _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
+            RHS = copy(rights[N][:, i, :])
+            if isidentitylevel(H, i)
+                # l_RR(ψ, 1) = C[N]'·C[N]（默认 loc=1，site 0 即 site N），r_RR = I
+                IN = IdR[N]
+                ρl = ψ.C[N]' * ψ.C[N]
                 op = function (v::AbstractVector)
                     X = reshape(v, D, D)
                     for ℓ in N:-1:1
-                        X = _push_slice_right(X, view(Wds[ℓ], i, :, i, :), ψ.AR[ℓ])
+                        X = push_env_right(X, ψ.AR[ℓ])
                     end
+                    regularize!(X, ρl, IN)
                     return vec(X)
                 end
                 x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
                 rights[N][:, i, :] .= reshape(x, D, D)
+                if N > 1
+                    _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
+                end
+                # 恒等层：逐 site 投影
+                for ℓ in 1:N
+                    ρl_ℓ = ψ.C[ℓ]' * ψ.C[ℓ]
+                    regularize!(@view(rights[ℓ][:, i, :]), ρl_ℓ, IdR[ℓ])
+                end
+            else
+                if !isemptylevel(H, i)
+                    op = function (v::AbstractVector)
+                        X = reshape(v, D, D)
+                        for ℓ in N:-1:1
+                            X = _push_slice_right(X, _diag_channel(Wds[ℓ], i), ψ.AR[ℓ])
+                        end
+                        return vec(X)
+                    end
+                    x, info = linsolve(op, vec(RHS), prev, linalg; a₀ = 1, a₁ = -1)
+                    rights[N][:, i, :] .= reshape(x, D, D)
+                end
+                if N > 1
+                    _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
+                end
             end
-            if N > 1
-                _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
-            end
+        else
+            # 瞬态内层：单次反向扫描即定值
+            _right_cyclethrough!(rights, Wds, ψ.AR, i, N, Dr, T)
         end
     end
 

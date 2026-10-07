@@ -90,17 +90,18 @@ out during environment construction, so the `(end → end)` terms vanish.
 function expectationvalue(ψ::CanonicalIMPS, H::SparseIMPO,
                           envs::Environments = DMRGCache(ψ, H))
     N = length(ψ)
-    nl = bonddim(H)
     T = promote_type(scalartype(ψ), scalartype(H))
     E = zero(T)
     for ℓ in 1:N
+        W = H[ℓ]
+        ms, ns = space_l(W), space_r(W)   # 矩形链：闭合列逐站取 ns
         GL = leftenv(envs, ℓ)        # 键 ℓ-1 上的左环境
         GR = rightenv(envs, ℓ)       # 键 ℓ 上的右环境（非均匀键下与 GL 维数不同）
         d = size(ψ.AC[ℓ], 2)         # 逐站物理维
-        GRe = reshape(GR[:, nl, :], size(GR, 1), 1, size(GR, 3))
-        Wcol = zeros(T, nl, d, 1, d)
-        for l in 1:nl
-            Wcol[l, :, 1, :] .= H[ℓ][l, nl]
+        GRe = reshape(GR[:, ns, :], size(GR, 1), 1, size(GR, 3))
+        Wcol = zeros(T, ms, d, 1, d)
+        for l in 1:ms
+            Wcol[l, :, 1, :] .= W[l, ns]
         end
         E += contract_mpo_expval(ψ.AC[ℓ], GL, Wcol, GRe)
     end

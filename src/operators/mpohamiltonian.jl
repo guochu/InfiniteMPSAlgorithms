@@ -23,13 +23,20 @@ into the type; plain `Vector` inputs are converted automatically).
 `Ws[i][j, k]` is the local operator at site `i` from left level `j` to right
 level `k`; entries may be `Missing`, `Number`s, or `(d, d)` matrices.
 
-约束：unit cell 内**层数必须一致**（Schur 上三角 + 周期闭合的要求），
-但**各站物理维可以不同**（`phydims(H)` 逐站返回，例如 `[2, 3, 2]`）；
-`models.jl` 的便捷构造（`tfim` / `heisenberg_xxz` / `mpohamiltonian(h1, …)`）
-因为只给一个 `h1`，产出的模型各站物理维相同。
+约束（对标 FMA 后端 `MPOHamiltonian` 的链式闭合）：相邻站
+`space_r(Ws[i]) == space_l(Ws[i+1])`、周期 `space_r(Ws[end]) == space_l(Ws[1])`。
+unitcell > 1 时各站 Schur 张量**可以为矩形**（通道在不同键上开启/闭合，
+键层数逐键可不同，如 `[2, 3, 2]`）；各站物理维也可以不同（`phydims(H)`
+逐站返回）。均匀（每站方形等层数）时 0 参 `bonddim(H)` 可用，一般情形请用
+`bonddim(H, ℓ)` / `max_bonddim(H)`。
 """
 struct SparseIMPO{T<:Number} <: AbstractInfiniteMPO{T}
     Ws::PeriodicVector{SchurMPOTensor{T}}
+
+    function SparseIMPO{T}(Ws::PeriodicVector{SchurMPOTensor{T}}) where {T}
+        _check_level_chain(Ws)
+        new{T}(Ws)
+    end
 end
 
 Base.length(H::SparseIMPO) = length(H.Ws)
@@ -43,23 +50,39 @@ Base.eltype(::Type{SparseIMPO{T}}) where {T} = SchurMPOTensor{T}
 
 SparseIMPO(Ws::PeriodicVector{SchurMPOTensor{T}}) where {T} = SparseIMPO{T}(Ws)
 SparseIMPO(Ws::Vector{SchurMPOTensor{T}}) where {T} = SparseIMPO{T}(PeriodicVector(Ws))
-function SparseIMPO(Ws::Vector{<:Matrix})
-    for W in Ws
-        (size(W, 1) == size(W, 2)) || throw(ArgumentError("level matrices of an infinite Hamiltonian must be square"))
-        (size(W, 1) == size(Ws[1], 1)) ||
-            throw(ArgumentError("all level matrices must have the same number of levels " *
-                                "(Schur 上三角 + 周期闭合要求层数一致；各站物理维可以不同)"))
+SparseIMPO(Ws::Vector{<:Matrix}) =
+    SparseIMPO(PeriodicVector([SchurMPOTensor(W) for W in Ws]))
+
+"链式闭合检查（对标 FMA `MPOHamiltonian` 构造器）：相邻站
+`space_r(W[i]) == space_l(W[i+1])`、周期 `space_r(W[end]) == space_l(W[1])`。
+各站 Schur 张量可为矩形（键层数逐键不同）。"
+function _check_level_chain(Ws)
+    N = length(Ws)
+    N > 0 || throw(ArgumentError("Ws must not be empty"))
+    for ℓ in 1:N
+        ℓ1 = _mod1(ℓ + 1, N)
+        space_r(Ws[ℓ]) == space_l(Ws[ℓ1]) || throw(DimensionMismatch(
+            "level chain mismatch: Ws[$ℓ] right levels $(space_r(Ws[ℓ])) vs Ws[$ℓ1] left levels $(space_l(Ws[ℓ1]))"))
     end
-    return SparseIMPO(PeriodicVector([SchurMPOTensor(W) for W in Ws]))
+    return Ws
 end
 
-"bonddim(H, ℓ): the number of Schur virtual levels at site ℓ (per-bond bond
-dimension semantics, mirroring MPSKit's `size(mpo[i], 1)`)."
-bonddim(H::SparseIMPO, ℓ::Integer) = nlvls(H[ℓ])
-"bonddim(H): the uniform level count of the unit cell (the upper-triangular
-block structure plus periodic closure require identical levels across sites,
-guaranteed by the constructors)."
-bonddim(H::SparseIMPO) = nlvls(H[1])
+"bonddim(H, ℓ): the number of Schur virtual levels on the bond left of
+site ℓ (= `space_l(H[ℓ])`; rectangular site tensors make the left/right
+level counts of a bond's two sides coincide only via the chain closure)."
+bonddim(H::SparseIMPO, ℓ::Integer) = space_l(H[ℓ])
+
+"bonddim(H): the uniform level count — only defined when every site tensor is
+square with identical level counts (the translation-invariant case); throws an
+error for rectangular chains（逐键层数请用 `bonddim(H, ℓ)` / `max_bonddim(H)`）."
+function bonddim(H::SparseIMPO)
+    nl = space_l(H[1])
+    all(W -> space_l(W) == space_r(W) == nl, H.Ws) ||
+        throw(ArgumentError("non-uniform level structure (rectangular Schur chain); " *
+                            "use bonddim(H, ℓ) or max_bonddim(H)"))
+    return nl
+end
+max_bonddim(H::SparseIMPO) = maximum(space_l(W) for W in H.Ws)
 
 "`phydim(H, i)`: site `i` 的物理维（unit cell 内允许逐站不同）。"
 phydim(H::SparseIMPO, i::Integer) = size(H[i].A, 2)
@@ -69,13 +92,18 @@ phydims(H::SparseIMPO) = [size(H[ℓ].A, 2) for ℓ in 1:length(H)]
     isidentitylevel(H, i) -> Bool
 
 Whether level `i` is an identity level (its transfer contains only the physical
-identity operator): always true for the first/last levels; middle levels
-require the `(i,i)` diagonal block to be the identity on every site.
+identity operator): always true for the first level; the closing unit corner
+(`i == m == n` of a square site) and identity `(i, i)` diagonal blocks on every
+site also qualify. On rectangular sites the `(i, i)` diagonal block may be
+structurally absent (`i` beyond the interior rows/columns) — such a cut makes
+the level transfer nilpotent, not identity, so it counts as non-identity.
 """
 function isidentitylevel(H::SparseIMPO, i::Int)
-    n = bonddim(H)
-    (i == 1 || i == n) && return true
+    i == 1 && return true
     return all(H.Ws) do W
+        m, n = space_l(W), space_r(W)
+        (i == m == n) && return true          # 该站的闭合单位角 (m, n)
+        (i > m - 1 || i > n - 1) && return false  # 对角通道在该站缺失（矩形）
         block = W.A[i - 1, :, i - 1, :]
         return isapprox(block, Matrix{scalartype(block)}(I, size(block)); atol = 1e-14)
     end
@@ -88,16 +116,20 @@ Whether level `i` is a completely unused channel (mirroring MPSKit: a level is
 empty if its diagonal block is structurally absent on any site). In this
 package's dense representation this is equivalent to: on every site, the
 diagonal block, the first-row C block, and the last-column B block are all
-zero. Note that explicitly stored zero diagonal blocks (e.g. middle levels of
+zero (blocks beyond a rectangular site's logical shape count as absent/zero).
+Note that explicitly stored zero diagonal blocks (e.g. middle levels of
 a strictly nearest-neighbor MPO) do not count as empty.
 """
 function isemptylevel(H::SparseIMPO, i::Int)
-    n = bonddim(H)
-    (i == 1 || i == n) && return false
+    i == 1 && return false
+    # 某站的闭合单位层（右角）恒非空：闭合通道的终点，环境以 I 播种
+    any(W -> i == space_r(W), H.Ws) && return false
     return all(H.Ws) do W
-        return iszero(W.A[i - 1, :, i - 1, :]) &&
-               iszero(W.C[:, i - 1, :]) &&
-               iszero(W.B[i - 1, :, :])
+        m, n = space_l(W), space_r(W)
+        dz = (i > m - 1 || i > n - 1) || iszero(W.A[i - 1, :, i - 1, :])
+        cz = (i > n - 1) || iszero(W.C[:, i - 1, :])
+        bz = (i > m - 1) || iszero(W.B[i - 1, :, :])
+        return dz && cz && bz
     end
 end
 

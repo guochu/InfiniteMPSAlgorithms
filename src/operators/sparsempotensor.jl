@@ -15,16 +15,17 @@
 # 类型本体（struct、逻辑矩阵构造器、块访问 getindex/setindex!、稠密化
 # tompotensor、直和加法 `+`（通道拼接、D 角相加）、copy/scalartype/complex）
 # 由 FiniteMPSAlgorithms 提供（`src/operators/schurmpotensor.jl`，由本包移植
-# 并扩展了矩形通道空间 `space_l ≠ space_r` 的支持——本包的平移不变单胞张量
-# 恒为方形）。本文件只保留本包侧的命名与语义扩展。
+# 并扩展了矩形通道空间 `space_l ≠ space_r` 的支持——FMA 后端的原生能力，
+# 本包经 [`SparseIMPO`](@ref) 的链式闭合构造在 unitcell > 1 时使用）。
+# 本文件只保留本包侧的命名与语义扩展。
 
 """
     nlvls(W::SchurMPOTensor)
 
 The number of virtual levels of the Schur tensor (= bond channels + 2 unit
-levels)——本包命名。For the square (translation-invariant unit cell) tensors
-of this package `nlvls(W) == space_l(W) == space_r(W)`; FMA 后端的矩形张量
-请直接用 `space_l`/`space_r`。
+levels) on its **left** side——本包命名（`= space_l(W)`）。方形张量（平移不变
+单胞）`nlvls(W) == space_l(W) == space_r(W)`；矩形张量（unitcell > 1 的
+Schur 链，`space_l ≠ space_r`）请显式区分 `space_l`/`space_r`。
 """
 nlvls(W::SchurMPOTensor) = space_l(W)
 
