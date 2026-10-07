@@ -233,6 +233,22 @@ end
     gc = svdguess_compress(ψbig, 4)
     @test max_bonddim(gc) == 4 && ismixedcanonical(gc)
 
+    # 回归（下游 InfiniteTEMPO 报告）：MPO 通道的 svdguess_compress 初猜质量。
+    # 旧实现对左正交 AL 串裸做流式 SVD（谱全在 C 里被丢弃——按「形状」而非
+    # 「权重」选方向），键 16、谱衰减好的演化算符上 D=6 初猜保真度只有 ~0.4，
+    # 变分压缩可能卡在次优不动点；CanonicalIMPS/CanonicalIMPO 方法现经
+    # InfiniteOrthogonalize（闭合键真实键谱截断，对齐 FMA 的 _canonicalize!
+    # 初猜语义），初猜 ≈ D=6 变分最优
+    U = timeevompo(heisenberg_hamiltonian(T = T), -im * 0.2, WII())
+    Wbig = U * U                                  # DenseIMPO，键 16、谱衰减好
+    Wc = CanonicalIMPO(collect(Wbig.Ws))          # 规范形态（下游 canonicalize! 后）
+    g0 = svdguess_compress(Wc, 6)                 # MPO 进 MPO 出（truncate! 通道）
+    @test g0 isa CanonicalIMPO
+    @test max_bonddim(g0) == 6 && ismixedcanonical(g0)
+    @test fidelity(g0, Wc) > 0.99                 # 旧流式实现实测 ~0.37
+    outw, _, _ = compress(Wc, VOMPS(D = 6, maxiter = 100))
+    @test fidelity(outw, Wc) > 0.9999
+
     # lazy（流式）构造：naive 乘积的 site tensor 现算、自右向左 SVD 截断，
     # 整条 naive 串从不 materialize（回归：曾先建整条串再规范化+截断）
     ψa = randomimps(T, [2, 2]; D = 4)

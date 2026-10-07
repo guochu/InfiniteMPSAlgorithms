@@ -1,5 +1,59 @@
 # 变更记录（接口）
 
+## 2026-10-07 修复 svdguess_compress 规范链初猜质量（下游 InfiniteTEMPO 报告）
+
+- **根因**：`svdguess_compress(x::CanonicalIMPS, D)` 对**左正交 `AL` 串**裸做
+  流式 SVD 截断——混合规范下键谱/权重全在中心矩阵 `C` 里，`AL` 串的 SVD 谱
+  与真实键谱无关，截断按「张量形状」而非「权重」选方向。MPS 通道谱衰减好时
+  侥幸可用，**MPO 通道（vectorize 的 MPS 视图）暴露**：键 16、谱衰减好的
+  演化算符上 D=6 初猜保真度仅 ~0.37（最优 ~1），变分压缩可能卡在次优不动点
+  （下游实测 0.65 → 0.986）；
+- **修复**：改经 [`truncate!`](@ref)（`truncdim(D)`：逐键中心矩阵的**真实
+  键谱**截断 + 完全重正则化）——`CanonicalIMPS` 与 `CanonicalIMPO` 输入各自
+  直调对应 `truncate!` 方法（MPO 走其 vectorize 的 MPS 视图通道），实测同
+  场景初猜保真度 0.37 → > 0.99（变分最优水平）；**返回类型变化**：
+  `CanonicalIMPO` 输入现返回 `CanonicalIMPO`（原返回 MPS 视图
+  `CanonicalIMPS`）；裸张量串方法（下游底层入口）保留原流式实现并加
+  docstring 警示（只对携带权重的串给出好初猜，勿对 `AL`/`AR` 家族直用）；
+  测试新增回归用例（MPO 进出类型 + 初猜 > 0.99 + 变分收敛 > 0.9999）。
+
+## 2026-10-07 TEBD 门类型改用 FMA + Schur 环境推进去稠密化
+
+- 删除 tebd.jl 的本包门类型定义（AbstractGate/UnitaryGate/GeneralGate 的
+  struct、positions/shift/adjoint/scalartype、NTuple 构造与 `_isunitary`
+  ——与 FMA 侧本就是同一份代码的移植），经主文件 import 直接用 FMA 的
+  （用户同时 using 两包时门类型不再同名冲突）；本包保留 Pair{Int,Int}
+  矩阵约定的便捷构造（FMA 无，Kronecker 约定 permute 成张量约定后委托
+  FMA 的 NTuple 构造）与 CanonicalIMPS 上的 apply!/swap!（Hastings 更新）；
+- envs.jl 新增 `push_env_left/right(L, W::SchurMPOTensor, A)`——Schur 通道
+  的环境推进逐 level 块收缩特化（`iszero` 零块跳过，复用 `_push_slice`
+  kernel，语义与稠密版逐位一致、随机张量实测 ≈），`transfer_leftenv!/
+  transfer_rightenv!` 据此去掉 `tompotensor` 稠密化分支、直接多分派
+  （DenseIMPO 走稠密 kernel、SparseIMPO 走 Schur 特化）——IDMRG 扫掠的
+  增量推进不再为 Schur 哈密顿量物化 (m·d·n·d) 稠密张量。
+
+## 2026-10-07 FMA 同名函数族 import 合并（双包协同）
+
+- 主文件 `import FiniteMPSAlgorithms: ...` 扩展 24 个同名函数（原有
+  distance/distance2/⊙/truncate!/tompotensor/timeevompo/phydim 之外新增
+  phydims/bonddim/vectorize/devectorize/superoperator/fidelity/infidelity/
+  expectationvalue/entanglement_spectrum/changebond!/compress/compress!/mult/
+  mult!/hadamard/hadamard!/tompotensors/svdguess_{mult,hadamard,compress}/
+  apply!/swap!/positions/shift）：含义类似且类型分派不重叠（FMA 方法作用于
+  有限链类型、本包作用于 infinite 类型）——合并为同一函数对象后，用户同时
+  `using` 两包时统一函数名按类型自动分派，消除「仅 using 不 import 会静默
+  创建同名本地函数、切裂方法表」的隐患（phydim 委托 bug 的教训）；实证
+  分裂名单从 44 收敛到 20 个有意遮蔽项，双侧分派冒烟通过；
+- **有意保持遮蔽（不 import，注释固化于主文件）**：σx/σy/σz/Sx/Sy/Sz
+  （签名相同但缺省类型不同——FMA 全 ComplexF64、本包实矩阵缺省 Float64）、
+  heisenberg_hamiltonian/tfim_hamiltonian/fermi_hubbard（FMA 带 L 位置参数
+  返回有限 MPOHamiltonian vs 本包无限 SparseIMPO）、linsolve（FMA 的 ALS
+  变分求解 vs 本包的 KrylovKit 稠密包装）、类型撞名 AbstractGate/
+  UnitaryGate/GeneralGate 与 DMRGCache/MultCache/OverlapCache/HadamardCache
+  （struct 无法 import 合并，cache 构造器语义已对齐 chain-first）、Defaults
+  （模块撞名）；effective.jl 的 MPSTensor/MPOTensor 为内部 const 别名
+  （不导出，故意取更宽的 AbstractArray），加注释说明。
+
 ## 2026-10-07 SparseIMPO 矩形 Schur 链；timeevompo(::SparseIMPO) 接口收敛；bonddim 全家族统一右键约定
 
 - `SparseIMPO` 支持非方阵 SchurMPOTensor（对标 FMA `MPOHamiltonian` 的链式

@@ -30,18 +30,43 @@ using FiniteMPSAlgorithms
 # `using ...Defaults: f` 只引入函数名，不引入 Defaults 模块名（避免与本包
 # 的同名 Defaults 模块冲突）
 using FiniteMPSAlgorithms.Defaults: alg_orth_trunc
-# 方法扩展：distance/distance2 扩展 FiniteMPSAlgorithms 的同名函数（保持其
-# 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
-# TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。
-# tompotensor：FMA 未导出的 Schur 稠密化（mpohamiltonian.jl 的 tompotensors
-# 使用）；timeevompo：方法扩展（w1w2.jl 的 `SparseIMPO` 逐站演化入口）；
-# phydim：方法扩展（合并 FMA 函数族——`phydim(::SchurMPOTensor/::OpSum/...)`
-# 单参方法与本包 infinite 家族的双参方法；仅 using 不 import 会静默创建
-# 同名本地函数、切裂方法表，SparseIMPO 的 phydim 委托 `phydim(H[i])` 由此
-# 落空）；SchurMPOTensor/WI/WII/ExpDecayOp* 等已由上方 using 引入并由本包
-# 再导出。
+# 方法扩展（集中在此声明，各子文件不再出现 using/import；scalartype 扩展
+# TensorOperations 的同名函数）。
+#
+# import 约定（便于用户同时使用两包——同名函数经 import 合并为同一函数
+# 对象、按类型自动分派；**仅 using 不 import 会静默创建同名本地函数、
+# 切裂方法表**，phydim 委托 bug 的教训）：
+# - tompotensor：FMA 未导出的 Schur 稠密化（tompotensors 的底层）；
+# - 含义类似、类型分派不重叠的 FMA 导出函数族（作用于 FMA 有限链类型，
+#   本包方法作用于 infinite 类型）：distance/distance2/⊙/truncate!/
+#   timeevompo/phydim(phydims)/bonddim/vectorize/devectorize/superoperator/
+#   fidelity/infidelity/expectationvalue/entanglement_spectrum/changebond!/
+#   compress(compress!)/mult(mult!)/hadamard(hadamard!)/tompotensors/
+#   svdguess_{mult,hadamard,compress} 与 TEBD 门族——门类型本身
+#   （AbstractGate/UnitaryGate/GeneralGate）与基础接口（positions/shift/
+#   adjoint）同为 FMA 提供，tebd.jl 只保留 Pair 矩阵便捷构造与
+#   CanonicalIMPS 上的 apply!/swap!；
+# - **有意遮蔽（不 import，经模块名限定访问 FMA 版）**：
+#   · σx/σy/σz/Sx/Sy/Sz：签名相同但缺省类型不同（FMA 全 ComplexF64，
+#     本包实矩阵缺省 Float64）；
+#   · heisenberg_hamiltonian/tfim_hamiltonian/fermi_hubbard：返回类型不同
+#     （FMA 带 L 位置参数的有限 MPOHamiltonian vs 本包无限 SparseIMPO）；
+#   · linsolve：语义分层不同（FMA 的 ALS 变分求解 vs 本包的 KrylovKit
+#     稠密包装）；
+#   · 类型撞名（struct 无法 import 合并）——**门类型已改为直接用 FMA 的**
+#   （tebd.jl 删除本地定义）：剩 DMRGCache/MultCache/OverlapCache/
+#     HadamardCache（算法 cache，构造器语义已对齐 chain-first）；
+#   · Defaults：模块撞名，仅显式 `using ...Defaults: f` 引入个别函数名。
 import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!, tompotensor,
-                             timeevompo, phydim
+                             timeevompo, phydim, phydims, bonddim,
+                             vectorize, devectorize, superoperator,
+                             fidelity, infidelity, expectationvalue,
+                             entanglement_spectrum, changebond!,
+                             compress, compress!, mult, mult!, hadamard, hadamard!,
+                             tompotensors, svdguess_mult, svdguess_hadamard,
+                             svdguess_compress,
+                             apply!, swap!, positions, shift,
+                             AbstractGate, UnitaryGate, GeneralGate
 import TensorOperations: scalartype
 
 include("utility.jl")

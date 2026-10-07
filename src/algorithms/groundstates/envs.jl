@@ -186,6 +186,49 @@ end
     end
 end
 
+"""
+    push_env_left(L, W::SchurMPOTensor, A) -> Array{T,3}
+
+Schur 通道的左环境推进（`transfer_leftenv!` 用，无需 `tompotensor` 稠密化）：
+逐 level 块收缩（`iszero` 零块跳过），语义与稠密版
+`push_env_left(L, W::Array{T,4}, A)` 逐位一致——
+`L′[a′, j, b′] = Σ_{i,ū,d} conj(A[a,ū,a′])·L[a,i,b]·W[i→j](ū,d)·A[b,d,b′]`。
+`L` 的 w 维 = `space_l(W)`、输出的 = `space_r(W)`（矩形链逐站不同）。
+"""
+function push_env_left(L::AbstractArray{TL,3}, W::SchurMPOTensor,
+                       A::AbstractArray{Ta,3}) where {TL,Ta}
+    T = promote_type(TL, scalartype(W), Ta)
+    # 键随 A 的右键推进（稠密版 @tensor 的输出形状）：(bra = ket = size(A, 3))
+    L′ = zeros(T, size(A, 3), space_r(W), size(A, 3))
+    for i in 1:space_l(W), j in 1:space_r(W)
+        Wij = W[i, j]
+        iszero(Wij) && continue
+        L′[:, j, :] .+= _push_slice_left(@view(L[:, i, :]), Wij, A)
+    end
+    return L′
+end
+
+"""
+    push_env_right(R, W::SchurMPOTensor, A) -> Array{T,3}
+
+Schur 通道的右环境推进（`transfer_rightenv!` 用，无需稠密化）：逐 level 块
+收缩，语义与稠密版逐位一致——
+`R′[a′, i, b′] = Σ_{j,ū,d} A[a′,d,a]·W[i→j](ū,d)·conj(A[b′,ū,b])·R[a,j,b]`。
+`R` 的 w 维 = `space_r(W)`、输出的 = `space_l(W)`。
+"""
+function push_env_right(R::AbstractArray{TR,3}, W::SchurMPOTensor,
+                        A::AbstractArray{Ta,3}) where {TR,Ta}
+    T = promote_type(TR, scalartype(W), Ta)
+    # 键随 A 的左键回退（稠密版 @tensor 的输出形状）：(bra = ket = size(A, 1))
+    R′ = zeros(T, size(A, 1), space_l(W), size(A, 1))
+    for i in 1:space_l(W), j in 1:space_r(W)
+        Wij = W[i, j]
+        iszero(Wij) && continue
+        R′[:, i, :] .+= _push_slice_right(@view(R[:, j, :]), Wij, A)
+    end
+    return R′
+end
+
 # ---------------- 哈密顿量环境缓存（DMRGCache） ----------------
 
 """
@@ -540,23 +583,21 @@ end
     transfer_leftenv!(envs, ψ, operator, ψ2, site) -> envs
 
 Push the left environment from `site − 1` to `site` (the incremental update of
-the IDMRG sweep, mirroring MPSKit's `transfer_leftenv!`).
+the IDMRG sweep, mirroring MPSKit's `transfer_leftenv!`). `operator[ℓm]` 经
+`push_env_left` 多分派：DenseIMPO 走稠密 kernel、SparseIMPO 走 Schur 逐层
+块收缩特化（不稠密化）。
 """
 function transfer_leftenv!(envs::DMRGCache, ψ, operator, ψ2, site::Int)
     ℓ = _mod1(site, length(ψ))
     ℓm = _mod1(site - 1, length(ψ))
-    W = operator isa SparseIMPO ?
-        tompotensor(operator[ℓm]) : operator[ℓm]   # Schur 张量稠密化进统一 kernel
-    envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], W, ψ.AL[ℓm])
+    envs.lefts[ℓ] = push_env_left(envs.lefts[ℓm], operator[ℓm], ψ.AL[ℓm])
     return envs
 end
 
-"Push the right environment from `site + 1` to `site`."
+"Push the right environment from `site + 1` to `site`（同上，多分派 Schur/稠密）."
 function transfer_rightenv!(envs::DMRGCache, ψ, operator, ψ2, site::Int)
     ℓ = _mod1(site, length(ψ))
     ℓp = _mod1(site + 1, length(ψ))
-    W = operator isa SparseIMPO ?
-        tompotensor(operator[ℓp]) : operator[ℓp]   # Schur 张量稠密化进统一 kernel
-    envs.rights[ℓ] = push_env_right(envs.rights[ℓp], W, ψ.AR[ℓp])
+    envs.rights[ℓ] = push_env_right(envs.rights[ℓp], operator[ℓp], ψ.AR[ℓp])
     return envs
 end

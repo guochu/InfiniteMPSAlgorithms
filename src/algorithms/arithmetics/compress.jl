@@ -9,29 +9,34 @@
 
 """
     svdguess_compress(x, D) -> CanonicalIMPS
-    svdguess_compress(ALs::PeriodicVector{<:Array{T,3}}, D) -> Vector{Array{T,3}}
+    svdguess_compress(x::CanonicalIMPO, D) -> CanonicalIMPO
 
 Deterministic initial guess of the iterative [`compress`](@ref) (reference:
-FiniteMPSAlgorithms' `svdguess_compress`): the bond-wise SVD truncation of the
-input to `D` (accurate but costly compared to [`changebond!`](@ref) zero
-padding). `CanonicalIMPO` input returns the MPS-view guess (`CanonicalIMPS`
-on the doubled space).
+FiniteMPSAlgorithms' `svdguess_compress`): a truncating re-canonicalization of
+the input to bond `D`——[`truncate!`](@ref)（`truncdim(D)`：逐键中心矩阵的
+**真实键谱**截断 + 完全重正则化；MPO 输入走其 vectorize 的 MPS 视图通道，
+输出保持 `CanonicalIMPO`）。`kwargs` 透传 `truncate!`（如 `tol`/`maxiter`）。
 
-The bare-tensor method accepts the site-tensor string directly (e.g.
-`ψ.AL` / `ψ.AR` of a [`CanonicalIMPS`](@ref)) and returns a plain right-gauge
-tensor string truncated to `D` (wrap bond Schmidt-truncated at site 1,
-[`_lazy_svd_guess`](@ref)) — the low-level entry point for downstream
-packages; the `CanonicalIMPS`/`CanonicalIMPO` methods are thin wrappers that
-re-canonicalize its output（`kwargs` 透传末端 `CanonicalIMPS` 构造器 →
-`gaugefix!`，如 `tol`/`maxiter`）.
+!!! warning "不要对左正交串直接调裸张量方法"
+    低层入口（下方 bare-tensor 方法）做的是流式 SVD 截断，只对**携带权重**
+    的裸张量串（如 naive 代数乘积、Dense 链的原始张量）给出好初猜；对已
+    规范化链的 `AL`/`AR` 家族（左/右正交、谱全在 `C` 里）它按「张量形状」而
+    非「权重」选方向——MPO 的 MPS 视图上初猜保真度会崩坏（回归用例见
+    test/algorithms/compress.jl）。规范链请走 `CanonicalIMPS`/`CanonicalIMPO`
+    方法（内部经 `truncate!` 处理谱）。
 """
 function svdguess_compress(x::CanonicalIMPS, D::Int; kwargs...)
     max_bonddim(x) ≤ D && return copy(x)
-    return CanonicalIMPS(svdguess_compress(x.AL, D); kwargs...)
+    ψ = copy(x)
+    truncate!(ψ; trunc = truncdim(D), kwargs...)
+    return ψ
 end
 
 function svdguess_compress(x::CanonicalIMPO, D::Int; kwargs...)
-    return svdguess_compress(vectorize(x), D; kwargs...)
+    max_bonddim(x) ≤ D && return copy(x)
+    W = copy(x)
+    truncate!(W; trunc = truncdim(D), kwargs...)
+    return W
 end
 
 "`svdguess_compress` 的 [`AbstractInfiniteMPS`](@ref) 泛型入口（`DenseIMPS` 等

@@ -6,6 +6,8 @@
 # The effective Hamiltonians are strictly linear operators (no conjugation of
 # x, MPSKit form; correct for complex data as well).
 
+# 内部类型约束别名（不导出，故意遮蔽 FMA 的同名 Array 别名——此处取更宽的
+# AbstractArray 以接受 view 输入；用户侧无冲突）
 const MPOTensor{T} = AbstractArray{T, 4}
 const MPSTensor{T} = AbstractArray{T, 3}
 

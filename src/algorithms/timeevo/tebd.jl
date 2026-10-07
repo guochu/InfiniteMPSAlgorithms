@@ -1,6 +1,12 @@
 # TEBD: quantum gates (AbstractGate / UnitaryGate / GeneralGate) + apply! + swap!
 # Minimal TEBD building blocks; the time-evolution loop is driven by the caller.
 #
+# 门类型与基础接口（struct 定义、positions/shift/adjoint/scalartype、NTuple
+# 构造与 unitarity 检查）由 FiniteMPSAlgorithms 提供并经主文件 import 再导出
+# （两侧本就是同一份代码的移植）。本文件只保留本包侧的扩展：
+# Pair{Int,Int} 矩阵约定的便捷构造（FMA 无）与 CanonicalIMPS（infinite 链）
+# 上的 apply!/swap!（Hastings 更新）。
+#
 # The Hastings update (aligned with TEMPO/GTEMPO) acts on the two-site window
 # AC[i]·AR[i+1] (exact local representation, unit left environment). A single
 # truncated SVD of the post-gate window,
@@ -16,8 +22,8 @@
 # exact for identity gates, O(gate) orthogonality error otherwise, as in
 # TEMPO/GTEMPO). These solves are what keeps the mixed-canonical identity
 # network AC = AL·C = C·AR exact without any global re-canonicalization
-# sweep. With no truncation the post-gate window is reproduced exactly, so
-# the physical state is preserved exactly for any gate, and identity gates
+# sweep. With no truncation the post-gate window is reproduced exactly, so the
+# physical state is preserved exactly for any gate, and identity gates
 # (swaps) are exact lossless re-gaugings.
 #
 # The seam gauge solves are exact on any mixed-canonical input: `regauge!`
@@ -27,74 +33,15 @@
 # states that never went through any special initialization.
 
 """
-	AbstractGate{N,T}
-
-Abstract supertype of quantum gates acting on `N` sites: `positions(g)::NTuple{N,Int}`
-(ascending), `g.op::Array{T,M}` — the rank-`M = 2N` operator tensor in the index
-convention `(i1', i2', …, iN', i1, …, iN)`, i.e. all bra (output) indices first and all
-ket (input) indices second, each block ordered with site 1 the slowest index.
-"""
-abstract type AbstractGate{N, T} end
-
-positions(g::AbstractGate) = g.positions
-scalartype(::Type{<:AbstractGate{N, T}}) where {N, T} = T
-
-"""
-	shift(g, by)
-
-Shift all support positions of gate `g` by `by` sites.
-"""
-shift(g::G, by::Integer) where {G<:AbstractGate} =
-	typeof(g)(ntuple(i -> g.positions[i] + by, Val(length(g.positions))), g.op)
-
-function Base.adjoint(g::G) where {G<:AbstractGate}
-	N = length(g.positions)
-	# U† : swap the ket/bra index blocks and conjugate; support positions unchanged
-	perm = (ntuple(i -> N + i, Val(N))..., ntuple(i -> i, Val(N))...)
-	return typeof(g)(g.positions, permutedims(conj(g.op), perm))
-end
-
-_isunitary(m::AbstractMatrix; atol::Real) =
-	norm(m' * m - I(size(m, 1))) <= atol * max(1.0, size(m, 1))
-
-"""
-	UnitaryGate(positions, op; atol=1e-10)
 	UnitaryGate(positions::Pair{Int,Int}, op::AbstractMatrix; atol=1e-10)
 
-A unitary gate acting on the `N` ascending sites `positions`. The operator `op` may be
-given in either of two index conventions:
-
-* a rank-`2N` tensor `(i1', i2', …, iN', i1, …, iN)` — all bra (output) indices first,
-  all ket (input) indices second, each block ordered with site 1 the slowest index;
-* for `positions::Pair{Int,Int}` (`N = 2`), a `d²×d²` matrix in the Kronecker
-  convention `(i1 i2)', (i1 i2)` with site `i1` the slower index; it is permuted into
-  the tensor convention on construction. **该形式要求两侧物理维相同**（把矩阵按
-  `d = isqrt` 拆开）；unit cell 内各站物理维不同时请用上面的 rank-4 张量形式
-  （形状 `(d_i, d_j, d_i, d_j)`）。
-
-The input is copied and materialized as a dense array of concrete element type, then
-checked for unitarity (`op'*op ≈ I` within `atol`), throwing `ArgumentError` otherwise.
+本包对 FMA [`UnitaryGate`](@ref) 的便捷构造扩展：`d²×d²` 矩阵按 Kronecker
+约定 `(i1 i2)', (i1 i2)`（site i1 为慢指标），permute 成张量约定
+`(i1', i2', i1, i2)` 后委托 FMA 的 NTuple 构造（含 unitarity 检查）。
+**该形式要求两侧物理维相同**（按 `d = isqrt` 拆开）；unit cell 内各站物理维
+不同时请直接用 rank-4 张量形式 `UnitaryGate((i, j), t)`（形状
+`(d_i, d_j, d_i, d_j)`）。
 """
-struct UnitaryGate{N, T, M} <: AbstractGate{N, T}
-	positions::NTuple{N, Int}
-	op::Array{T, M}   # (i1', …, iN', i1, …, iN) with M == 2N (checked at construction)
-
-	function UnitaryGate{N, T, M}(positions::NTuple{N, Int}, op::Array{<:Any, M}; atol::Real=1.0e-10) where {N, T, M}
-		M == 2N || throw(ArgumentError("the operator tensor must have rank $(2N)"))
-		issorted(collect(positions)) || throw(ArgumentError("positions must be ascending"))
-		op = convert(Array{T, M}, op)
-		m = tie(op, (N, N))
-		_isunitary(m; atol) || throw(ArgumentError("the gate operator is not unitary"))
-		return new{N, T, M}(positions, op)
-	end
-end
-
-function UnitaryGate(positions::NTuple{N, Int}, op::AbstractArray; atol::Real=1.0e-10) where {N}
-	M = ndims(op)
-	M == 2N || throw(ArgumentError("the operator tensor must have rank $(2N)"))
-	T = scalartype(op)
-	return UnitaryGate{N, T, M}(positions, Array{T, M}(op); atol)
-end
 function UnitaryGate(positions::Pair{Int, Int}, op::AbstractMatrix; atol::Real=1.0e-10)
 	d2 = size(op, 1)
 	d = isqrt(d2)
@@ -108,34 +55,12 @@ function UnitaryGate(positions::Pair{Int, Int}, op::AbstractMatrix; atol::Real=1
 end
 
 """
-	GeneralGate(positions, op)
 	GeneralGate(positions::Pair{Int,Int}, op::AbstractMatrix)
 
-A general gate with the same data storage and index conventions as
-[`UnitaryGate`](@ref) (rank-`2N` tensor `(i1', …, iN', i1, …, iN)`, or for
-`positions::Pair{Int,Int}` a `d²×d²` Kronecker-convention matrix `(i1 i2)', (i1 i2)`
-with i1 the slowest index), but the input is **not** checked for unitarity. The input
-is copied and materialized as a dense array of concrete element type. Since a
-non-unitary gate does not preserve the canonical form, `apply!` re-canonicalizes the
-state with `gaugefix!` afterwards.
+本包对 FMA [`GeneralGate`](@ref) 的便捷构造扩展：`d²×d²` Kronecker 约定矩阵
+（site i1 为慢指标）permute 成张量约定后委托 FMA 的 NTuple 构造（不做
+unitarity 检查）。物理维不同的站点对请直接用 rank-4 张量形式。
 """
-struct GeneralGate{N, T, M} <: AbstractGate{N, T}
-	positions::NTuple{N, Int}
-	op::Array{T, M}   # (i1', …, iN', i1, …, iN) with M == 2N (checked at construction)
-
-	function GeneralGate{N, T, M}(positions::NTuple{N, Int}, op::Array{<:Any, M}) where {N, T, M}
-		M == 2N || throw(ArgumentError("the operator tensor must have rank $(2N)"))
-		issorted(collect(positions)) || throw(ArgumentError("positions must be ascending"))
-		return new{N, T, M}(positions, convert(Array{T, M}, op))
-	end
-end
-
-function GeneralGate(positions::NTuple{N, Int}, op::AbstractArray) where {N}
-	M = ndims(op)
-	M == 2N || throw(ArgumentError("the operator tensor must have rank $(2N)"))
-	T = scalartype(op)
-	return GeneralGate{N, T, M}(positions, Array{T, M}(op))
-end
 function GeneralGate(positions::Pair{Int, Int}, op::AbstractMatrix)
 	d2 = size(op, 1)
 	d = isqrt(d2)
@@ -291,4 +216,3 @@ function swap!(ψ::CanonicalIMPS, i::Integer;
 	_hastings_update!(ψ, gated, i; trunc)
 	return ψ
 end
-
