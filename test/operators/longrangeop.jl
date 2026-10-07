@@ -14,7 +14,7 @@
     t = ExpDecayOpTerm(a, m, b, 0.8, 0.5)
     @test scalartype(t) == ComplexF64
     J = SchurMPOTensor(t)
-    @test J isa SchurMPOTensor && nlvls(J) == 3
+    @test J isa SchurMPOTensor && size(J, 1) == 3
     @test J[1, 2] ≈ 0.8 * 0.5 * a atol = 1e-12    # 通道开启（α·λ·a）
     @test J[2, 2] ≈ 0.5 * m atol = 1e-12          # 通道自传播（λ·m）
     @test J[2, 3] ≈ b atol = 1e-12                # 通道关闭（b）
@@ -27,7 +27,7 @@
     s = ExpDecayOpSum(a, m, b, αs, λs)
     @test scalartype(s) == ComplexF64
     J2 = SchurMPOTensor(s)
-    @test nlvls(J2) == 4
+    @test size(J2, 1) == 4
     @test J2[1, 2] ≈ αs[1] * λs[1] * a atol = 1e-12
     @test J2[1, 3] ≈ αs[2] * λs[2] * a atol = 1e-12
     @test J2[2, 2] ≈ λs[1] * m atol = 1e-12

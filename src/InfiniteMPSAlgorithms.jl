@@ -33,12 +33,15 @@ using FiniteMPSAlgorithms.Defaults: alg_orth_trunc
 # 方法扩展：distance/distance2 扩展 FiniteMPSAlgorithms 的同名函数（保持其
 # 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
 # TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。
-# tompotensor：FMA 未导出的 Schur 稠密化（mpohamiltonian.jl 的 tompotensors 与
-# sparsempotensor.jl 适配层使用）；timeevompo：方法扩展（w1w2.jl 的
-# `SparseIMPO` 逐站演化入口）；SchurMPOTensor/WI/WII/ExpDecayOp* 等已由上方
-# using 引入并由本包再导出。
+# tompotensor：FMA 未导出的 Schur 稠密化（mpohamiltonian.jl 的 tompotensors
+# 使用）；timeevompo：方法扩展（w1w2.jl 的 `SparseIMPO` 逐站演化入口）；
+# phydim：方法扩展（合并 FMA 函数族——`phydim(::SchurMPOTensor/::OpSum/...)`
+# 单参方法与本包 infinite 家族的双参方法；仅 using 不 import 会静默创建
+# 同名本地函数、切裂方法表，SparseIMPO 的 phydim 委托 `phydim(H[i])` 由此
+# 落空）；SchurMPOTensor/WI/WII/ExpDecayOp* 等已由上方 using 引入并由本包
+# 再导出。
 import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!, tompotensor,
-                             timeevompo
+                             timeevompo, phydim
 import TensorOperations: scalartype
 
 include("utility.jl")
@@ -54,11 +57,11 @@ include("states/constructors.jl")
 
 # ---- operators ----
 include("operators/infinitempo.jl")
-include("operators/sparsempotensor.jl")
 include("operators/mpohamiltonian.jl")
 include("operators/linalg.jl")
-# SchurMPOTensor(::ExpDecayOpSum/ExpDecayOpTerm) 等长程算符构造由
-# FiniteMPSAlgorithms 直接提供并经上方 using 再导出（本包不再有本地适配层）
+# SchurMPOTensor 类型本体与全部块级操作（含 ::ExpDecayOpSum/ExpDecayOpTerm
+# 长程算符构造）由 FiniteMPSAlgorithms 直接提供并经上方 using 再导出
+# （原 sparsempotensor.jl 薄适配层——nlvls 与 *(λ, W)——无消费者，已删除）
 
 # ---- transfer matrices ----
 include("transfermatrix.jl")
@@ -141,7 +144,7 @@ export
     # SparseIMPO (Schur structure) and time-evolution MPOs
     SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,
-    isidentitylevel, isemptylevel, nlvls,
+    isidentitylevel, isemptylevel,
     tompotensors, tompotensor,
     WI, WII, timeevompo,
     # observables

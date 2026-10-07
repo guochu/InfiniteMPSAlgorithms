@@ -104,9 +104,9 @@ end
     @test bonddim(Hs) == 2
     e0 = real(expectationvalue(ψ, Hs))
     @test isfinite(e0)
-    # H + λs 逐站取物理维（回归：曾用 site 1 的 d）
-    @test phydims(Hs + [0.1, 0.2, 0.3]) == dims
-    @test abs(real(expectationvalue(ψ, Hs + ones(3))) - e0 - 3) < 1e-10
+    # H + λs 逐站取物理维（回归：曾用 site 1 的 d）；helper 定义于 testhelpers.jl
+    @test phydims(shift_local_energies(Hs, [0.1, 0.2, 0.3])) == dims
+    @test abs(real(expectationvalue(ψ, shift_local_energies(Hs, ones(3)))) - e0 - 3) < 1e-10
 
     # 算法：可解析的异构模型（逐站对角 on-site 场 ⇒ 基态是乘积态，E = Σ min λ）
     λs = [T[-2, 1], T[-3, 0, 2], T[-2, 1]]

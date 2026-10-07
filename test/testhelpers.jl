@@ -1,4 +1,23 @@
 # ---- 周期 trace 表示的稠密辅助（algebra 与 api 共用）----
+
+"""
+    shift_local_energies(H::SparseIMPO, λs) -> SparseIMPO
+
+逐 site 加 `λᵢ·I`（对标 MPSKit 的 `H + λs`，仅测试用）：直接注入各站 Schur
+张量的 `D` 角（on-site 项）——能量平移不引入新通道，键维保持不变；逐站取
+物理维（unit cell 内各站物理维允许不同）。
+"""
+function shift_local_energies(H::SparseIMPO, λs::AbstractVector{<:Number})
+    (length(H) == length(λs)) || throw(DimensionMismatch("unit-cell lengths do not match"))
+    Ws = Vector{SchurMPOTensor{scalartype(H)}}(undef, length(H))
+    for i in 1:length(H)
+        W = copy(H[i])
+        W.D .+= λs[i] * one(W.D)
+        Ws[i] = W
+    end
+    return SparseIMPO(PeriodicVector(Ws))
+end
+
 # MPS：c[(s1…sN)] = tr(∏ AL[ℓ][:, s_ℓ, :])（左规范张量的周期 trace）。
 # 注意必须用 AL 而非 AC：混合规范下 AC = AL·C 在张量间插入 C 矩阵，
 # tr(∏AC) 是规范依赖的 C 加权量；而 tr(∏AL) = tr(∏A_raw)/λ（λ 实正），

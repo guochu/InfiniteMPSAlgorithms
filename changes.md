@@ -19,6 +19,22 @@
   `DenseIMPO`；主文件 `import FiniteMPSAlgorithms: timeevompo` 并再导出；
   同时删除 `SparseIMPO` 的 `Base.eltype`/`Base.iterate`/三参 `Base.getindex`
   定义（元素类型统一 `scalartype(H)`，后两者无包内消费者）；
+- 删除 `src/operators/sparsempotensor.jl` 整个薄适配层：`nlvls`
+  （= `space_l`，本包命名；层数请直接用 `space_l`/`space_r` 或 `size(W, 1)`）
+  与 `*(λ, W)`（物理块缩放 B/C/D——与 FMA `lmul!` 的全块缩放语义不同）随
+  功能一并退役（api.jl 的 `λ * W` 语义测试块同步删除）；export 列表移除
+  `nlvls`，测试的层数断言改 `size(W, 1)`；
+- 主文件 `import FiniteMPSAlgorithms: phydim` 合并函数族：Julia 向其他模块
+  导出的函数加方法必须显式 import（仅 `using` 时定义会静默创建同名本地
+  函数、切裂方法表），`phydim(H::SparseIMPO, i) = phydim(H[i])` 的 FMA
+  `phydim(::SchurMPOTensor)` 委托由此修复；
+- **`Base.:+(H::SparseIMPO, λs)` 退役**：能量平移不是算符代数（对标 MPSKit
+  的 `H + λs` 仅为数值便利），且包内无消费者——同名 helper `shift_local_
+  energies`（逐站注入 Schur D 角）移至 test/testhelpers.jl 供测试使用，
+  反向 `λs + H` 一并移除；
+- `SparseIMPO` 的 `phydim`/`phydims` 委托 FMA 的
+  `phydim(::SchurMPOTensor)`；`isidentitylevel` 增加 `atol` keyword；
+  `+ λs` 的 D 角注入改 `one(W.D)`；
 - 删除 `src/operators/longrangeop.jl`：`SchurMPOTensor(::ExpDecayOpSum/
   ExpDecayOpTerm)` 便捷构造（hloc 缺省零）FMA 后端已提供（经 `using`
   再导出，对外 API 不变；顺带消除加载时的方法覆写告警）；

@@ -70,9 +70,10 @@ end
     er = real(expectationvalue(ψr, H, envsr) / 2)
     @test abs(er - e_exact) < 5e-4
 
-    # H + λs（能量平移）：对标 MPSKit 语义——逐 site 加 λ（i => scale!(id, λ)），
-    # 2-site 单胞的 cell 能量和增加 N·λ
-    H2 = H + [0.1]
+    # shift_local_energies（能量平移，helper 定义于 testhelpers.jl）：对标
+    # MPSKit 语义——逐 site 加 λ（i => scale!(id, λ)），2-site 单胞的 cell
+    # 能量和增加 N·λ
+    H2 = shift_local_energies(H, [0.1])
     @test bonddim(H2) == bonddim(H)
     @test real(expectationvalue(ψr, H2)) ≈ real(expectationvalue(ψr, H)) + 0.2 atol = 1e-8
 
@@ -148,7 +149,7 @@ end
     @test [size(H2[i]) for i in 1:3] == [(2, 4), (4, 2), (2, 2)]
     @test [bonddim(H2, ℓ) for ℓ in 1:3] == [4, 2, 2]
     @test abs(real(expectationvalue(ψg, H2)) - 2 * E_exact) < 1e-8
-    Hλ = H + [0.1, 0.2, 0.3]
+    Hλ = shift_local_energies(H, [0.1, 0.2, 0.3])
     @test abs(real(expectationvalue(ψg, Hλ)) - (E_exact + 0.6)) < 1e-8
 
     # 逐站 Schur 演化（W^II）在矩形链上可装配

@@ -84,8 +84,8 @@ end
 max_bonddim(H::SparseIMPO) = maximum(space_r(W) for W in H.Ws)
 
 "`phydim(H, i)`: site `i` 的物理维（unit cell 内允许逐站不同）。"
-phydim(H::SparseIMPO, i::Integer) = size(H[i].A, 2)
-phydims(H::SparseIMPO) = [size(H[ℓ].A, 2) for ℓ in 1:length(H)]
+phydim(H::SparseIMPO, i::Integer) = phydim(H[i])
+phydims(H::SparseIMPO) = [phydim(H[ℓ]) for ℓ in 1:length(H)]
 
 """
     isidentitylevel(H, i) -> Bool
@@ -97,14 +97,14 @@ site also qualify. On rectangular sites the `(i, i)` diagonal block may be
 structurally absent (`i` beyond the interior rows/columns) — such a cut makes
 the level transfer nilpotent, not identity, so it counts as non-identity.
 """
-function isidentitylevel(H::SparseIMPO, i::Int)
+function isidentitylevel(H::SparseIMPO, i::Int; atol = 1e-14)
     i == 1 && return true
     return all(H.Ws) do W
         m, n = space_l(W), space_r(W)
         (i == m == n) && return true          # 该站的闭合单位角 (m, n)
         (i > m - 1 || i > n - 1) && return false  # 对角通道在该站缺失（矩形）
         block = W.A[i - 1, :, i - 1, :]
-        return isapprox(block, Matrix{scalartype(block)}(I, size(block)); atol = 1e-14)
+        return isapprox(block, one(block); atol = atol)
     end
 end
 
@@ -141,26 +141,6 @@ function Base.:+(H₁::SparseIMPO, H₂::SparseIMPO)
     W = [H₁[i] + H₂[i] for i in 1:length(H₁)]
     return SparseIMPO(PeriodicVector(W))
 end
-
-"""
-    H + λs::AbstractVector (or `λs + H`)
-
-Add `λᵢ·I` per site (mirrors MPSKit's `H + λs`). 逐站取物理维（unit cell 内各站
-物理维允许不同，例如 `phydims = [2, 3, 2]`）。直接注入各站 Schur 张量的 `D`
-角（on-site 项）——能量平移不引入新通道，键维保持不变。
-"""
-function Base.:+(H::SparseIMPO, λs::AbstractVector{<:Number})
-    (length(H) == length(λs)) || throw(DimensionMismatch("unit-cell lengths do not match"))
-    Ws = Vector{SchurMPOTensor{scalartype(H)}}(undef, length(H))
-    for i in 1:length(H)
-        W = copy(H[i])
-        d = size(W.D, 1)               # 逐站物理维
-        W.D .+= λs[i] * Matrix{scalartype(H)}(I, d, d)
-        Ws[i] = W
-    end
-    return SparseIMPO(PeriodicVector(Ws))
-end
-Base.:+(λs::AbstractVector{<:Number}, H::SparseIMPO) = H + λs
 
 """
     tompotensors(H::SparseIMPO) -> Vector{<:Array{T,4}}

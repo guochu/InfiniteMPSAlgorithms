@@ -141,8 +141,8 @@ coefficient itself——实时演化 `δ = -im·t`（`exp(-i·H·t)`）、虚时
 ## Sparse MPO layer
 
 `SparseIMPO` stores MPO tensors in Schur (upper-triangular block) form
-(level structure
-`isidentitylevel` / `isemptylevel` / `nlvls`), used by the Hamiltonian
+(level structure `isidentitylevel` / `isemptylevel`; per-side level counts
+`space_l` / `space_r`), used by the Hamiltonian
 environments (per-level solves) and the W^I/W^II construction. Densify with
 `DenseIMPO(W)`; inspect per-level dense tensors with `tompotensor`.
 

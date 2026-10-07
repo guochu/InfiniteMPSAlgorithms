@@ -166,7 +166,6 @@ ExpDecayOpTerm
 ExpDecayOpSum
 isidentitylevel
 isemptylevel
-nlvls
 tompotensors
 tompotensor
 infinite_mpo

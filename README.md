@@ -156,7 +156,7 @@ states, same parameters).
 - **Superoperator layer**: `vectorize`, `devectorize`, `superoperator`.
 - **Schur/Jordan helpers and models**: `tompotensor`, `tompotensors`,
   `infinite_mpo`, `bulk_mpo`, `mpohamiltonian`, `isidentitylevel`,
-  `isemptylevel`, `nlvls`, `tfim_hamiltonian`, `heisenberg_hamiltonian`,
+  `isemptylevel`, `tfim_hamiltonian`, `heisenberg_hamiltonian`,
   `heisenberg_xxz`, `fermi_hubbard` (MPSKit keeps models in MPSKitModels.jl).
 - **Constructors and misc**: `randomimps`, `prodimps`, `identityimpo`,
   `randomimpo`, `fidelity`, `infidelity`, `renyi_entropy`,

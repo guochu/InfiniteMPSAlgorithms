@@ -399,7 +399,7 @@ end
 
     # SchurMPOTensor：块访问、层数、稠密化、copy
     Wj = SchurMPOTensor(Wmat)
-    @test nlvls(Wj) == 3
+    @test size(Wj, 1) == 3
     @test Wj[1, 1] ≈ Matrix{T}(I, 2, 2)
     @test Wj[1, 2] ≈ -J * X
     @test Wj[2, 3] ≈ X
@@ -418,17 +418,12 @@ end
     J1 = SchurMPOTensor(Wmat)
     J2 = SchurMPOTensor(Wmat2)
     J12 = J1 + J2
-    @test nlvls(J12) == 4                        # 通道 1 ⊕ 1 + 2 单位层
+    @test size(J12, 1) == 4                       # 通道 1 ⊕ 1 + 2 单位层
     @test J12[1, 2] ≈ J1[1, 2] && J12[1, 3] ≈ J2[1, 2]     # C：两通道并置
     @test J12[2, 2] ≈ J1[2, 2] && J12[3, 3] ≈ J2[2, 2]     # A：对角块并置
     @test J12[2, 4] ≈ J1[2, 3] && J12[3, 4] ≈ J2[2, 3]     # B：两通道并置
     @test J12[1, 4] ≈ J1[1, 3] + J2[1, 3]                   # D 角相加
     @test tompotensor(J12)[1, :, 1, :] ≈ Matrix{T}(I, 2, 2)
-
-    # Schur 标量乘法：只缩放物理块，恒等角点保持
-    Jm = -1.0 * J1
-    @test Jm.B ≈ -J1.B && Jm.C ≈ -J1.C && Jm.D ≈ -J1.D
-    @test tompotensor(Jm)[1, :, 1, :] ≈ Matrix{T}(I, 2, 2)
 
     # 稠密转换
     Hd = DenseIMPO(tfim_hamiltonian(T = T))
