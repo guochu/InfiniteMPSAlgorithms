@@ -412,15 +412,17 @@ end
     Hfin = SparseIMPO([Wmat, Wmat])
     @test length(Hfin) == 2 && bonddim(Hfin) == 3
 
-    # Schur 块加法（A/B/C/D 逐块相加，恒等角点不参与）对标 MPSKit H1+H2
+    # Schur 块加法（FMA 后端：通道直和拼接 + D 角相加，普适于不同通道结构，
+    # 对标 MPSKit H1+H2 的块拼接语义；恒等角不参与）
     Wmat2 = mpohamiltonian(-0.3 * Z, [(-0.7, X, X)])
     J1 = SchurMPOTensor(Wmat)
     J2 = SchurMPOTensor(Wmat2)
     J12 = J1 + J2
-    @test J12.A ≈ J1.A + J2.A
-    @test J12.B ≈ J1.B + J2.B
-    @test J12.C ≈ J1.C + J2.C
-    @test J12.D ≈ J1.D + J2.D
+    @test nlvls(J12) == 4                        # 通道 1 ⊕ 1 + 2 单位层
+    @test J12[1, 2] ≈ J1[1, 2] && J12[1, 3] ≈ J2[1, 2]     # C：两通道并置
+    @test J12[2, 2] ≈ J1[2, 2] && J12[3, 3] ≈ J2[2, 2]     # A：对角块并置
+    @test J12[2, 4] ≈ J1[2, 3] && J12[3, 4] ≈ J2[2, 3]     # B：两通道并置
+    @test J12[1, 4] ≈ J1[1, 3] + J2[1, 3]                   # D 角相加
     @test tompotensor(J12)[1, :, 1, :] ≈ Matrix{T}(I, 2, 2)
 
     # Schur 标量乘法：只缩放物理块，恒等角点保持

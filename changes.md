@@ -1,5 +1,43 @@
 # 变更记录（接口）
 
+## 2026-10-07 SchurMPOTensor / longrangeop / w1w2 复用 FMA 后端（去重）；TEBD GeneralGate 的 gaugefix! 前移
+
+- `src/operators/sparsempotensor.jl` 重写为薄适配层：SchurMPOTensor 类型本体
+  （struct、逻辑矩阵构造器、块访问、稠密化 tompotensor、copy/scalartype/
+  complex）全部由 FiniteMPSAlgorithms 提供（其实现由本包移植并扩展了矩形
+  通道空间 `space_l ≠ space_r`；本包平移不变单胞张量恒方形）。本包侧保留：
+  `nlvls`（= `space_l`，本包命名）与 `*(λ, W)`（物理块缩放 B/C/D、传播块 A
+  与恒等角不动——FMA 无对应语义）。**`+` 语义变化**：删除本包的元素级加法
+  （要求双方同通道结构），统一用 FMA 的**直和**（通道拼接、D 角相加，普适
+  于不同通道结构，对标 MPSKit H1+H2 的块拼接语义）——`SparseIMPO +
+  SparseIMPO` 随之普适化；`H + λs`（能量平移）改为直接注入各站 Schur 张量
+  的 D 角（不引入新通道，键维不变，行为与旧元素级实现数值一致）；
+- `src/operators/longrangeop.jl` 重写为薄适配层：ExpDecayOpTerm / ExpDecayOpSum
+  类型与 W-form 构造由 FMA 提供；本包侧保留无 on-site 项的单参便捷构造
+  `SchurMPOTensor(s)` / `SchurMPOTensor(t)`（= FMA `SchurMPOTensor(s, zeros)`）。
+  通道约定差异（算符值等价、张量位形不同）：FMA 把衰减因子置于通道开启端
+  （C = α·λ·a、B = b），本包旧版置于关闭端（C = α·a、B = λ·b）——
+  距离 d 的路径两者都恰积累 α·λ^d；test/operators/longrangeop.jl 的块级
+  断言按 FMA 约定更新（算符级断言两约定通用，不变）；
+- `src/algorithms/timeevo/w1w2.jl` 重写为薄包装：步进器类型 `WI`/`WII`（本包
+  再导出 FMA 类型）与张量级演化内核 `timeevompo`（WI 一阶展开、WII 的
+  4d×4d 块传播矩阵 `LinearAlgebra.exp`、实/复 √δ 分解）全部由 FMA 提供；
+  本包侧只保留 infinite 包装：δ 换算（`exp(-i·H·dt)` / `exp(-H·dt)`）与
+  `DenseIMPO` 装配（`make_time_mpo` 对 bulk/SparseIMPO 两入口，逐站演化，
+  支持任意单胞长）。删除本包重复的 `get_A/B/C/D`、`_sqrt2`、
+  `_timempo_dense` 内核（w1w2 对标 MPSKit 的 distance/fidelity 断言保证
+  内核切换数值不变，dt=0.1 全组合距离 0 ~ 6e-8 维持）；
+- 主文件 `import FiniteMPSAlgorithms: ..., tompotensor`（FMA 未导出的 Schur
+  稠密化；SchurMPOTensor/WI/WII/timeevompo/ExpDecayOp* 经既有 `using` 引入
+  并再导出，对外 API 名不变）；
+- `src/algorithms/timeevo/tebd.jl`：`apply!(::GeneralGate{2}, ...)` 的
+  `gaugefix!(; order = :RL)` 从回程 swap 之后**前移**到非幺正门应用
+  （`_nn_gate_apply!`）之后——回程 swap 的 Hastings 更新假设混合规范输入，
+  在规范破缺的双站张量上作用会累积误差；门后立即重正则化使回程作用在
+  规范态上；
+- 验证：全量测试四块（states 168、operators 86、algorithms 542、
+  MPSKit concordance 404）全部通过，共 1200/1200。
+
 ## 2026-10-06 `w1w2.jl` 移至 algorithms/timeevo；新增 `make_time_mpo`（WII）≡ MPSKit 对标测试
 
 - `src/operators/w1w2.jl` → `src/algorithms/timeevo/w1w2.jl`（W^I/W^II 时间

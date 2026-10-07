@@ -259,10 +259,13 @@ function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS;
 		swap!(ψ, b; trunc)
 	end
 	_nn_gate_apply!(g, ψ, i; trunc)
+	# re-canonicalize immediately after the non-unitary gate, so that the return
+	# swaps act on a canonical state (the Hastings update assumes mixed-canonical
+	# input; acting on the gauge-broken two-site tensor would accumulate error)
+	gaugefix!(ψ, parent(ψ.AR); order = :RL, kwargs...)
 	for b in i+1:j-1
 		swap!(ψ, b; trunc)
 	end
-	gaugefix!(ψ, parent(ψ.AR); order = :RL, kwargs...)
 	return ψ
 end
 

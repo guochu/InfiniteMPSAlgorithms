@@ -105,6 +105,8 @@ end
 
 function Base.:+(H₁::SparseIMPO, H₂::SparseIMPO)
     (length(H₁) == length(H₂)) || throw(DimensionMismatch("unit-cell lengths do not match"))
+    # 逐站 FMA 后端的 Schur 直和（通道拼接、D 角相加——普适于不同通道结构，
+    # 对标 MPSKit H1+H2 的块拼接语义）
     W = [H₁[i] + H₂[i] for i in 1:length(H₁)]
     return SparseIMPO(PeriodicVector(W))
 end
@@ -113,21 +115,19 @@ end
     H + λs::AbstractVector (or `λs + H`)
 
 Add `λᵢ·I` per site (mirrors MPSKit's `H + λs`). 逐站取物理维（unit cell 内各站
-物理维允许不同，例如 `phydims = [2, 3, 2]`）。
+物理维允许不同，例如 `phydims = [2, 3, 2]`）。直接注入各站 Schur 张量的 `D`
+角（on-site 项）——能量平移不引入新通道，键维保持不变。
 """
 function Base.:+(H::SparseIMPO, λs::AbstractVector{<:Number})
     (length(H) == length(λs)) || throw(DimensionMismatch("unit-cell lengths do not match"))
-    Ws = Vector{Matrix{Any}}(undef, length(H))
+    Ws = Vector{SchurMPOTensor{scalartype(H)}}(undef, length(H))
     for i in 1:length(H)
-        n = bonddim(H)
-        d = size(H[i].A, 2)         # 逐站物理维
-        W = Matrix{Any}(missing, n, n)
-        W[1, 1] = one(scalartype(H))
-        W[n, n] = one(scalartype(H))
-        W[1, n] = λs[i] isa AbstractMatrix ? λs[i] : Matrix(λs[i] * I, d, d)
+        W = copy(H[i])
+        d = size(W.D, 1)               # 逐站物理维
+        W.D .+= λs[i] * Matrix{scalartype(H)}(I, d, d)
         Ws[i] = W
     end
-    return H + SparseIMPO(Ws)
+    return SparseIMPO(PeriodicVector(Ws))
 end
 Base.:+(λs::AbstractVector{<:Number}, H::SparseIMPO) = H + λs
 

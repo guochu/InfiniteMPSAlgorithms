@@ -33,7 +33,10 @@ using FiniteMPSAlgorithms.Defaults: alg_orth_trunc
 # 方法扩展：distance/distance2 扩展 FiniteMPSAlgorithms 的同名函数（保持其
 # 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
 # TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。
-import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!
+# tompotensor：FMA 未导出的 Schur 稠密化（mpohamiltonian.jl 的 tompotensors 与
+# sparsempotensor.jl 适配层使用；SchurMPOTensor/WI/WII/timeevompo/
+# ExpDecayOp* 等已由上方 using 引入并由本包再导出）。
+import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!, tompotensor
 import TensorOperations: scalartype
 
 include("utility.jl")
