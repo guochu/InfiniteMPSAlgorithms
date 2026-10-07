@@ -112,7 +112,7 @@ end
 `heisenberg_hamiltonian`）。For J=Δ=1 the ground-state energy
 density is `1/4 − ln2`. Returns `(; mpo, bulk, hamiltonian)`: `mpo` is the
 periodic `DenseIMPO` (的周期 trace 完整收缩适合做**时间演化生成元**，见
-`make_time_mpo`)、`bulk` the Schur bulk，`hamiltonian` 是同一模型的
+`timeevompo`)、`bulk` the Schur bulk，`hamiltonian` 是同一模型的
 `SparseIMPO`（**求能量用这个**：闭列公式，见 [`DMRGCache`](@ref) 的 `DenseIMPO`
 版说明）。
 """
@@ -127,7 +127,7 @@ end
 
 Transverse-field Ising model `H = −J Σ σˣσˣ − h Σ σᶻ`. For J=h=1 the
 ground-state energy density is `−4/π`. `mpo` 是周期 `DenseIMPO`（适合做时间演化
-生成元，见 `make_time_mpo`）、`bulk` 是 Schur bulk、`hamiltonian` 是同一模型的
+生成元，见 `timeevompo`）、`bulk` 是 Schur bulk、`hamiltonian` 是同一模型的
 `SparseIMPO`（**求能量用这个**：闭列公式，见 [`DMRGCache`](@ref) 的 `DenseIMPO`
 版说明）。
 """

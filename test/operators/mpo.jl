@@ -81,8 +81,8 @@ end
     ψp = prodimps(T, [2], [1])   # 全 |0⟩（σz = +1）
     @test abs(real(expectationvalue(ψp, Ht)) - (-1.0)) < 1e-12
 
-    # make_time_mpo 路径（SparseIMPO 的逐 site Schur tensor 演化）
-    U = make_time_mpo(H, 0.01, WII(); imaginary_evolution = true)
+    # timeevompo 路径（SparseIMPO 的逐 site Schur tensor 演化，δ = -τ 虚时）
+    U = timeevompo(H, -0.01, WII())
     @test U isa DenseIMPO
 end
 
@@ -104,13 +104,13 @@ end
     # 构造与链式闭合检查
     H = SparseIMPO([W1, W2, W3])
     @test [size(H[i]) for i in 1:3] == [(2, 3), (3, 2), (2, 2)]
-    @test [bonddim(H, ℓ) for ℓ in 1:3] == [2, 3, 2]   # 键 ℓ-1 的层数
+    @test [bonddim(H, ℓ) for ℓ in 1:3] == [3, 2, 2]   # 键 ℓ（site ℓ 右侧）的层数
     @test max_bonddim(H) == 3
     @test_throws ArgumentError bonddim(H)              # 非均匀层数：0 参版报错
     @test_throws DimensionMismatch SparseIMPO([W1, W1, W3])  # 链式闭合破坏
     @test size(tompotensor(H[1])) == (2, 2, 3, 2)
     Hd = DenseIMPO(H)
-    @test [bonddim(Hd, ℓ) for ℓ in 1:3] == [2, 3, 2]   # 稠密化保持键 profile
+    @test [bonddim(Hd, ℓ) for ℓ in 1:3] == [3, 2, 2]   # 稠密化保持键 profile
 
     # 逐层环境：lefts 的 w 维 = 键 ℓ-1 层数、rights 的 = 键 ℓ 层数
     Random.seed!(2)
@@ -146,13 +146,13 @@ end
     # 直和加法（内层通道拼接、单位层共享）与能量平移
     H2 = H + H
     @test [size(H2[i]) for i in 1:3] == [(2, 4), (4, 2), (2, 2)]
-    @test [bonddim(H2, ℓ) for ℓ in 1:3] == [2, 4, 2]
+    @test [bonddim(H2, ℓ) for ℓ in 1:3] == [4, 2, 2]
     @test abs(real(expectationvalue(ψg, H2)) - 2 * E_exact) < 1e-8
     Hλ = H + [0.1, 0.2, 0.3]
     @test abs(real(expectationvalue(ψg, Hλ)) - (E_exact + 0.6)) < 1e-8
 
     # 逐站 Schur 演化（W^II）在矩形链上可装配
-    U = make_time_mpo(H, 0.01, WII(); imaginary_evolution = true)
+    U = timeevompo(H, -0.01, WII())
     @test U isa DenseIMPO
 end
 
@@ -160,11 +160,11 @@ end
     T = ComplexF64
     Random.seed!(4)
     Wd = DenseIMPO([randn(T, 2, 2, 3, 2), randn(T, 3, 2, 2, 2), randn(T, 2, 2, 2, 2)])
-    @test [bonddim(Wd, ℓ) for ℓ in 1:3] == [2, 3, 2]
+    @test [bonddim(Wd, ℓ) for ℓ in 1:3] == [3, 2, 2]
     @test max_bonddim(Wd) == 3
 
     # CanonicalIMPO：混合规范化保留非均匀键 profile（规范变换不改变射线）。
-    # bonddim 约定与 MPS 侧一致：C[ℓ] 在键 ℓ（site ℓ 右侧）
+    # 包内统一右键约定：各家族 bonddim(ℓ) 一致给出键 ℓ（site ℓ 右侧）的维数
     Wc = CanonicalIMPO([copy(w) for w in Wd.Ws])
     @test Wc isa CanonicalIMPO
     @test [bonddim(Wc, ℓ) for ℓ in 1:3] == [3, 2, 2]
@@ -173,7 +173,7 @@ end
 
     # vectorize / devectorize 往返保持键 profile
     Wrt = devectorize(vectorize(Wd))
-    @test [bonddim(Wrt, ℓ) for ℓ in 1:3] == [2, 3, 2]
+    @test [bonddim(Wrt, ℓ) for ℓ in 1:3] == [3, 2, 2]
     @test all(ℓ -> size(Wrt[ℓ]) == size(Wd[ℓ]), 1:3)
 
     # 非均匀键 DenseIMPO 的期望值通道（主本征向量环境）

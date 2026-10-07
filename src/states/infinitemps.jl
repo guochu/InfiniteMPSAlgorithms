@@ -61,8 +61,10 @@ phydim(ψ::DenseIMPS, i::Integer) = size(ψ[i], 2)
 phydims(ψ::DenseIMPS) = [size(ψ[ℓ], 2) for ℓ in 1:length(ψ)]
 "eachsite(ψ) = 1:length(ψ)（[`AbstractInfiniteMPS`](@ref) 泛型）。"
 eachsite(ψ::AbstractInfiniteMPS) = 1:length(ψ)
-"`bonddim(ψ, ℓ)`: the MPS bond dimension to the left of site ℓ."
-bonddim(ψ::DenseIMPS, ℓ::Integer) = size(ψ[ℓ], 1)
+"`bonddim(ψ, ℓ)`: the MPS bond dimension on the bond right of site ℓ——包内
+统一约定 `bonddim(x, ℓ) = 右键维`（`DenseIMPS` 即 `size(ψ[ℓ], 3)`，
+`CanonicalIMPS` 即 `size(C[ℓ], 1)`）。"
+bonddim(ψ::DenseIMPS, ℓ::Integer) = size(ψ[ℓ], 3)
 max_bonddim(ψ::DenseIMPS) = maximum(bonddim(ψ, ℓ) for ℓ in 1:length(ψ))
 
 "`dag(ψ)`: elementwise conjugation of every tensor."

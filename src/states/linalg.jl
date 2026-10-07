@@ -117,7 +117,8 @@ method — no canonicalization is performed on either side).
 function LinearAlgebra.dot(ψ1::DenseIMPS, ψ2::DenseIMPS;
                            krylovdim::Int = Defaults.krylovdim)
     T = promote_type(scalartype(ψ1), scalartype(ψ2))
-    v0 = vec(Matrix{T}(I, bonddim(ψ1, 1), bonddim(ψ2, 1)))
+    # 转移矩阵作用在键 N（site 1 左侧）上：右键约定下即 bonddim(·, 0)
+    v0 = vec(Matrix{T}(I, bonddim(ψ1, 0), bonddim(ψ2, 0)))
     tm = TransferMatrix(ψ2.As, ψ1.As)
     vals, _, _ = _eigsolve(tm, v0, 1, :LM; ishermitian = false, krylovdim = krylovdim)
     return vals[1]

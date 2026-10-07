@@ -502,7 +502,7 @@ materializes the naive target family**: for mpo·mps the local maps
 factorized engine consumes the `(W1, W2)` tensor pairs directly with
 bond-first contractions (the fused tensors are never formed). Intermediate
 memory is O(single site) in both cases. Applying a time-evolution MPO is
-`ψ′ = first(mult(make_time_mpo(H, dt, WII()), ψ, alg))`.
+`ψ′ = first(mult(timeevompo(H, -im * dt, WII()), ψ, alg))`.
 
 - `W`/`ψ`/`W2`：`AbstractInfiniteMPO`/`AbstractInfiniteMPS`——`DenseIMPO`/
   `CanonicalIMPO` 与 `DenseIMPS`/`CanonicalIMPS` 皆可直接输入（dense 类型经

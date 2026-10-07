@@ -124,16 +124,19 @@ compress(x, alg::Union{VOMPS,IDMRG}) -> y
 - All iterative engines return the optimized chain only; convergence is judged
   by the Galerkin residual (no overlap is computed anywhere).
 
-Applying a time-evolution MPO is `ψ′ = mult(make_time_mpo(H, dt, WII()), ψ)`.
+Applying a time-evolution MPO is `ψ′ = mult(timeevompo(H, -im * dt, WII()), ψ)`.
 
 ## Time-evolution MPOs (W^I / W^II)
 
 ```julia
-make_time_mpo(H, dt, alg::Union{WI,WII}) -> W ≈ exp(-im·H·dt)
+timeevompo(H, δ, alg::Union{WI,WII}) -> W ≈ exp(δ·H)
 ```
 
 Long-range time-evolution MPOs after Zaletel et al. (PRB 107, 035121
-(2023)), built on the Schur-structured `SparseIMPO` layer.
+(2023)), built on the Schur-structured `SparseIMPO` layer — the `SparseIMPO`
+method of FiniteMPSAlgorithms' `timeevompo`. `δ` is the exponent
+coefficient itself——实时演化 `δ = -im·t`（`exp(-i·H·t)`）、虚时冷却
+`δ = -τ`（`exp(-H·τ)`），同 `integrate` 的约定.
 
 ## Sparse MPO layer
 

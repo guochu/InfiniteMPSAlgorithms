@@ -13,7 +13,7 @@ implementation of the core MPSKit algorithms).
 - MPO site tensors follow TEMPO's convention: `W[wl, u, wr, d]` (bond indices
   in slots 1 and 3);
 - Algorithms: single-site VUMPS / IDMRG, TDVP (`timestep`/`time_evolve`),
-  W^I/W^II time-evolution MPOs (`make_time_mpo`) + iterative MPO
+  W^I/W^II time-evolution MPOs (`timeevompo`) + iterative MPO
   multiplication `mult` and MPO compression.
 """
 module InfiniteMPSAlgorithms
@@ -34,9 +34,11 @@ using FiniteMPSAlgorithms.Defaults: alg_orth_trunc
 # 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
 # TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。
 # tompotensor：FMA 未导出的 Schur 稠密化（mpohamiltonian.jl 的 tompotensors 与
-# sparsempotensor.jl 适配层使用；SchurMPOTensor/WI/WII/timeevompo/
-# ExpDecayOp* 等已由上方 using 引入并由本包再导出）。
-import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!, tompotensor
+# sparsempotensor.jl 适配层使用）；timeevompo：方法扩展（w1w2.jl 的
+# `SparseIMPO` 逐站演化入口）；SchurMPOTensor/WI/WII/ExpDecayOp* 等已由上方
+# using 引入并由本包再导出。
+import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!, tompotensor,
+                             timeevompo
 import TensorOperations: scalartype
 
 include("utility.jl")
@@ -55,7 +57,8 @@ include("operators/infinitempo.jl")
 include("operators/sparsempotensor.jl")
 include("operators/mpohamiltonian.jl")
 include("operators/linalg.jl")
-include("operators/longrangeop.jl")
+# SchurMPOTensor(::ExpDecayOpSum/ExpDecayOpTerm) 等长程算符构造由
+# FiniteMPSAlgorithms 直接提供并经上方 using 再导出（本包不再有本地适配层）
 
 # ---- transfer matrices ----
 include("transfermatrix.jl")
@@ -69,7 +72,7 @@ include("environments.jl")
 # groundstates/: environment solvers + DMRGCache + effective Hamiltonians and
 #                the VUMPS / IDMRG ground-state searches;
 # timeevo/: TDVP and TEBD time evolution, and the W^I/W^II time-evolution
-#            MPOs (make_time_mpo);
+#            MPOs (the `timeevompo(::SparseIMPO)` method);
 # arithmetics/: iterative MPO algebra (mult / hadamard / compress) sharing the
 #               VOMPS / IDMRG compression engines, and the exact_* debug
 #               constructors;
@@ -140,7 +143,7 @@ export
     ExpDecayOpTerm, ExpDecayOpSum,
     isidentitylevel, isemptylevel, nlvls,
     tompotensors, tompotensor,
-    WI, WII, make_time_mpo,
+    WI, WII, timeevompo,
     # observables
     expectationvalue, correlator, entropy, entanglement_spectrum,
     contract_mpo_expval,

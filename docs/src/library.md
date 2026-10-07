@@ -172,7 +172,7 @@ tompotensor
 infinite_mpo
 WI
 WII
-make_time_mpo
+timeevompo
 ```
 
 ## Observables

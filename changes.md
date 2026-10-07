@@ -1,5 +1,38 @@
 # 变更记录（接口）
 
+## 2026-10-07 SparseIMPO 矩形 Schur 链；timeevompo(::SparseIMPO) 接口收敛；bonddim 全家族统一右键约定
+
+- `SparseIMPO` 支持非方阵 SchurMPOTensor（对标 FMA `MPOHamiltonian` 的链式
+  闭合）：构造器检查 `space_r(W[i]) == space_l(W[i+1])` + 周期闭合，取代
+  「逐站方阵 + 全胞同层数」；unitcell > 1 时通道在不同键上开启/闭合的矩形
+  张量合法（键层数逐键可不同）。`bonddim(H, ℓ)` 逐键、0 参 `bonddim(H)` 仅
+  均匀链可用、新增 `max_bonddim(H::SparseIMPO)`；`isidentitylevel`/
+  `isemptylevel` 矩形化（越界块 = 结构零、闭合单位角 (m,n) 识别）；
+  `DMRGCache(SparseIMPO)` 逐键层结构求解：内层标号递增分轮、瞬态层（无环
+  返回通道）单次扫描定值、闭合通道轮处理 corner 流（闭合层逐键换标号、
+  角块恒 I ⇒ 环转移 = 纯 MPS 转移，须 regularize；均匀链上严格退化为原
+  i = nl 恒等层轮）；AC 作用/期望值闭合列逐站取 `space_r`；
+- **`make_time_mpo` → `timeevompo(::SparseIMPO)`**（breaking rename，直接重载
+  FMA 同名函数）：只保留 `SparseIMPO` 入口（删除单 bulk 张量方法），删除
+  `imaginary_evolution` keyword——`δ` 即指数系数本身（实时 `-im·t` / 虚时
+  `-τ`，同 FMA 约定与本包 TDVP `integrate` 的约定），输出 `exp(δ·H)` 的
+  `DenseIMPO`；主文件 `import FiniteMPSAlgorithms: timeevompo` 并再导出；
+  同时删除 `SparseIMPO` 的 `Base.eltype`/`Base.iterate`/三参 `Base.getindex`
+  定义（元素类型统一 `scalartype(H)`，后两者无包内消费者）；
+- 删除 `src/operators/longrangeop.jl`：`SchurMPOTensor(::ExpDecayOpSum/
+  ExpDecayOpTerm)` 便捷构造（hloc 缺省零）FMA 后端已提供（经 `using`
+  再导出，对外 API 不变；顺带消除加载时的方法覆写告警）；
+- **`bonddim` 全家族统一为 site 右键**：`bonddim(x, ℓ)` = 键 ℓ（site ℓ
+  右侧）的维数——`DenseIMPS` 由 `size(ψ[ℓ], 1)`（左键）改为 `size(ψ[ℓ], 3)`、
+  `DenseIMPO` 同、`SparseIMPO` 取 `space_r(H[ℓ])`；`CanonicalIMPS`/
+  `CanonicalIMPO`（`size(C[ℓ], 1)`，C[ℓ] 本就在键 ℓ 上）不变——原 Dense
+  家族左键 / Canonical 家族右键的错位在非均匀键链上不自洽（均匀链两者
+  相等、此前未暴露）。`dot(::DenseIMPS, ::DenseIMPS)` 的转移矩阵初值相应
+  改 `bonddim(·, 0)`（键 N）；均匀键链上所有断言数值不变；
+- 测试：矩形链 [2×3,3×2,2×2] 与同算符均匀方形表示期望值逐位一致、VUMPS
+  收敛解析能量；w1w2/twosite/tdvp/mpo/w1w2_concordance 的调用点与断言
+  按新接口更新；docs/README 同步。
+
 ## 2026-10-07 SchurMPOTensor / longrangeop / w1w2 复用 FMA 后端（去重）；TEBD GeneralGate 的 gaugefix! 前移
 
 - `src/operators/sparsempotensor.jl` 重写为薄适配层：SchurMPOTensor 类型本体

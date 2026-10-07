@@ -17,7 +17,7 @@ extend.
   infinite DMRG (`IDMRG`) with Galerkin-residual convergence criteria,
   dynamic tolerances, and warm-started environments.
 - **Time evolution** — single-site TDVP (`timestep` / `time_evolve`) and
-  W^I / W^II time-evolution MPOs (`make_time_mpo`, after
+  W^I / W^II time-evolution MPOs (`timeevompo`, after
   [arXiv:1407.1832](https://arxiv.org/abs/1407.1832)).
 - **Iterative MPO algebra** — `mult` (MPO·MPS application and MPO·MPO
   composition), `hadamard` (elementwise product), and `compress` (bond
@@ -66,7 +66,7 @@ dt = 0.1
 ### Time-evolution MPOs (W^I / W^II)
 
 ```julia
-W = make_time_mpo(H, dt, WII())            # exp(-i·H·dt) as an InfiniteMPO
+W = timeevompo(H, -im * dt, WII())        # exp(-i·H·dt) as an InfiniteMPO
 ψw, fidelity = mult(W, ψ)                  # apply it (exact, compute-on-the-fly)
 ```
 
@@ -134,7 +134,7 @@ states, same parameters).
 
 **Same names** (semantics mirror MPSKit unless noted): `PeriodicVector`,
 `PeriodicArray`, `find_groundstate`, `VUMPS`, `IDMRG`, `VOMPS`, `TDVP`,
-`timestep`, `time_evolve`, `make_time_mpo`, `WI`, `WII`, `environments`,
+`timestep`, `time_evolve`, `timeevompo`, `WI`, `WII`, `environments`,
 `leftenv`, `rightenv`, `AC_hamiltonian`, `C_hamiltonian`, `calc_galerkin`,
 `gaugefix!`, `regauge!`, `LeftCanonical`, `RightCanonical`, `MixedCanonical`,
 `TransferMatrix`, `regularize!`, `correlator`, `entropy`,

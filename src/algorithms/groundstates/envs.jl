@@ -234,7 +234,7 @@ a ground-state search, as well as in `expectationvalue(ψ, W)`.
     另外该通道的环境由算子通道转移矩阵的**主本征向量**给出：当态存在（近似）
     退耦合键时该本征空间（近似）退化，选取不由归一化唯一确定，因此对同一物理态的
     不同（例如零填充扩键的）表示不严格不变；`SparseIMPO` 通道用非齐次线性解，
-    无此歧义（零填充下逐位不变）。时间推进用的 `make_time_mpo` 生成元接近恒等，
+    无此歧义（零填充下逐位不变）。时间推进用的 `timeevompo` 生成元接近恒等，
     该标度约定与 1 的偏差为 O(dt)，实际使用不受影响。
 """
 function DMRGCache(ψ::CanonicalIMPS, operator::DenseIMPO; kwargs...)

@@ -82,14 +82,14 @@
     ψa = apply_exact(I2, ψg)
     @test abs(dot(ψa, ψg)) ≈ 1 atol = 1e-8
 
-    # WII 时间演化（make_time_mpo 直接接受 2-site Schur 哈密顿量）：能量守恒
+    # WII 时间演化（timeevompo 直接接受 2-site Schur 哈密顿量）：能量守恒
     # （D = nothing → 精确的朴素构造 + 规范存储，不压缩）
-    W2t = make_time_mpo(H, 0.01, WII())
+    W2t = timeevompo(H, -im * 0.01, WII())
     ψw = apply_exact(W2t, ψg)
     @test abs(real(expectationvalue(ψw, H) / 2) - eg) < 1e-4
 
     # WI 路径（阈值覆盖 WI MPO 自身 O(dt) 能量不守恒，同 1-site 测试）
-    W1t = make_time_mpo(H, 0.01, WI())
+    W1t = timeevompo(H, -im * 0.01, WI())
     ψw1 = apply_exact(W1t, ψg)
     @test abs(real(expectationvalue(ψw1, H) / 2) - eg) < 1e-4
 

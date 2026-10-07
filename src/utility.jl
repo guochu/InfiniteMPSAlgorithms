@@ -74,7 +74,7 @@ Abstract supertype of the infinite MPO representations: [`CanonicalIMPO`](@ref)
 接口由 `DenseIMPO`/`CanonicalIMPO` 提供（变分算术通道 compress/mult/hadamard
 据此直接消费两类输入）；`SparseIMPO` 不提供家族视图、不参与这些通道（需要
 dense/canonical 表示时显式 `DenseIMPO(H)`/`CanonicalIMPO(...)` 转换，或走其
-Schur 专用通道：DMRGCache/expectationvalue/make_time_mpo）。
+Schur 专用通道：DMRGCache/expectationvalue/timeevompo）。
 """
 abstract type AbstractInfiniteMPO{T<:Number} end
 

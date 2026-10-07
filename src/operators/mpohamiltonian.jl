@@ -26,7 +26,7 @@ level `k`; entries may be `Missing`, `Number`s, or `(d, d)` matrices.
 约束（对标 FMA 后端 `MPOHamiltonian` 的链式闭合）：相邻站
 `space_r(Ws[i]) == space_l(Ws[i+1])`、周期 `space_r(Ws[end]) == space_l(Ws[1])`。
 unitcell > 1 时各站 Schur 张量**可以为矩形**（通道在不同键上开启/闭合，
-键层数逐键可不同，如 `[2, 3, 2]`）；各站物理维也可以不同（`phydims(H)`
+键层数逐键可不同）；各站物理维也可以不同（`phydims(H)`
 逐站返回）。均匀（每站方形等层数）时 0 参 `bonddim(H)` 可用，一般情形请用
 `bonddim(H, ℓ)` / `max_bonddim(H)`。
 """
@@ -41,12 +41,11 @@ end
 
 Base.length(H::SparseIMPO) = length(H.Ws)
 Base.getindex(H::SparseIMPO, i::Int) = getindex(H.Ws, i)
-Base.getindex(H::SparseIMPO, i::Int, j::Int, k::Int) = H[i][j, k]
 Base.firstindex(H::SparseIMPO) = firstindex(H.Ws)
 Base.lastindex(H::SparseIMPO) = lastindex(H.Ws)
 Base.copy(H::SparseIMPO) = SparseIMPO(PeriodicVector([copy(w) for w in H.Ws]))
-Base.iterate(H::SparseIMPO, args...) = iterate(H.Ws, args...)
-Base.eltype(::Type{SparseIMPO{T}}) where {T} = SchurMPOTensor{T}
+# 元素类型统一走 scalartype(H)（SparseIMPO{T} → T）；迭代/三参 getindex
+# （H[i, j, k] = H[i][j, k]）无包内消费者，不提供。
 
 SparseIMPO(Ws::PeriodicVector{SchurMPOTensor{T}}) where {T} = SparseIMPO{T}(Ws)
 SparseIMPO(Ws::Vector{SchurMPOTensor{T}}) where {T} = SparseIMPO{T}(PeriodicVector(Ws))
@@ -67,10 +66,10 @@ function _check_level_chain(Ws)
     return Ws
 end
 
-"bonddim(H, ℓ): the number of Schur virtual levels on the bond left of
-site ℓ (= `space_l(H[ℓ])`; rectangular site tensors make the left/right
-level counts of a bond's two sides coincide only via the chain closure)."
-bonddim(H::SparseIMPO, ℓ::Integer) = space_l(H[ℓ])
+"bonddim(H, ℓ): the number of Schur virtual levels on the bond right of
+site ℓ (= `space_r(H[ℓ])`，包内统一右键约定；矩形张量上左/右层数不同，
+两侧经链式闭合衔接)."
+bonddim(H::SparseIMPO, ℓ::Integer) = space_r(H[ℓ])
 
 "bonddim(H): the uniform level count — only defined when every site tensor is
 square with identical level counts (the translation-invariant case); throws an
@@ -82,7 +81,7 @@ function bonddim(H::SparseIMPO)
                             "use bonddim(H, ℓ) or max_bonddim(H)"))
     return nl
 end
-max_bonddim(H::SparseIMPO) = maximum(space_l(W) for W in H.Ws)
+max_bonddim(H::SparseIMPO) = maximum(space_r(W) for W in H.Ws)
 
 "`phydim(H, i)`: site `i` 的物理维（unit cell 内允许逐站不同）。"
 phydim(H::SparseIMPO, i::Integer) = size(H[i].A, 2)

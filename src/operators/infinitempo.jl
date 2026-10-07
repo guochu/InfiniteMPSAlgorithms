@@ -58,8 +58,9 @@ end
 "`phydim(W, i)`: site `i` 的上物理维 `du`（unit cell 内允许逐站不同）。"
 phydim(W::DenseIMPO, i::Integer) = size(W[i], 2)
 phydims(W::DenseIMPO) = [size(W[ℓ], 2) for ℓ in 1:length(W)]
-"`bonddim(W, ℓ)`: the MPO bond dimension to the left of site ℓ."
-bonddim(W::DenseIMPO, ℓ::Integer) = size(W[ℓ], 1)
+"`bonddim(W, ℓ)`: the MPO bond dimension on the bond right of site ℓ
+（包内统一右键约定，见 `DenseIMPS` 版说明）。"
+bonddim(W::DenseIMPO, ℓ::Integer) = size(W[ℓ], 3)
 max_bonddim(W::DenseIMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 
 "`dag(W)`: elementwise conjugation of every tensor (for overlap-type

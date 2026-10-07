@@ -33,9 +33,9 @@
     e_exact = 0.25 - log(2)
     @test abs(real(expectationvalue(ψβ, Hm) / 2) - e_exact) < 2e-3
 
-    # 与 WII 演化的一致性（短时间）：能量守恒
+    # 与 WII 演化的一致性（短时间）：能量守恒（timeevompo 的 SparseIMPO 方法）
     _, bulk = heisenberg_xxz(T = T)
-    W2 = make_time_mpo(bulk, 0.01, WII())
+    W2 = timeevompo(SparseIMPO([bulk]), -im * 0.01, WII())
     # 严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）
     apply_exact(W, ψ) = CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As)
     outψ = apply_exact(W2, ψg)

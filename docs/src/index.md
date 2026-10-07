@@ -19,7 +19,7 @@ extend.
   dynamic tolerances, and warm-started environments.
 - **Time evolution** — single-site TDVP (`timestep` / `time_evolve`),
   two-site TEBD gates with the Hastings update (`apply!` / `swap!`), and
-  W^I / W^II time-evolution MPOs (`make_time_mpo`).
+  W^I / W^II time-evolution MPOs (`timeevompo`).
 - **Iterative MPO algebra** — `mult` (MPO·MPS application and MPO·MPO
   composition), `compress` (bond-dimension reduction), and `hadamard`
   (elementwise product), all with *compute-on-the-fly* variational
@@ -69,7 +69,7 @@ Exact reference for J = h = 1: `e₀ = -4/π ≈ -1.2732395`.
 ### Time-evolution MPOs (W^I / W^II)
 
 ```julia
-W = make_time_mpo(H, dt, WII())            # exp(-i·H·dt) as an InfiniteMPO
+W = timeevompo(H, -im * dt, WII())        # exp(-i·H·dt) as an InfiniteMPO
 ψw, fidelity = mult(W, ψ)                  # apply it (exact, compute-on-the-fly)
 ```
 
