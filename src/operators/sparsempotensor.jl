@@ -36,7 +36,6 @@ end
 
 Base.copy(W::SchurMPOTensor) = SchurMPOTensor(copy(W.A), copy(W.B), copy(W.C), copy(W.D))
 scalartype(::Type{SchurMPOTensor{T}}) where {T} = T
-scalartype(W::SchurMPOTensor) = scalartype(typeof(W))
 
 "nlvls(W): the number of virtual levels of the Schur tensor (= bond channels + 2
 unit levels)."

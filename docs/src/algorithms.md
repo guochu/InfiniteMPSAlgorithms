@@ -48,28 +48,30 @@ Both return `(ψ, envs, ϵ)` with `ϵ` the final convergence measure.
 ### TDVP
 
 ```julia
-timestep(ψ, H, t, dt, alg::TDVP = TDVP(),
-         envs = DMRGCache(ψ, H); imaginary_evolution = false) -> (ψ, envs)
+timestep(ψ, H, dt, alg::TDVP = TDVP(),
+         envs = DMRGCache(ψ, H)) -> (ψ, envs)
 
 time_evolve(ψ₀, H, t_span, alg::TDVP = TDVP(),
-            envs = DMRGCache(ψ₀, H);
-            verbosity = 0, imaginary_evolution = false, observer = nothing)
+            envs = DMRGCache(ψ₀, H); observer = nothing)
     -> (ψ, envs, history)
 ```
 
 Single-site TDVP (Haegeman et al.): every `AC` and `C` is evolved
 independently with the local exponentiate (`alg.integrator`, a KrylovKit
 solver), then re-canonicalized pairwise and rebuilt with a global
-`gaugefix!`. `imaginary_evolution = true` gives `exp(−H·dt)` (imaginary
-time). `observer(ψ, iter, t)` collects data at each step; `history` stores
-the collected values (or the energy when no observer is given).
+`gaugefix!`. `dt` is the exponent coefficient itself: real-time evolution
+passes `dt = -im·t` (e.g. `t_span = (-im) .* (0:0.01:1)`), imaginary-time
+cooling passes `dt = -τ` (e.g. `t_span = -(0:0.05:20)`). `observer(ψ, iter, t)`
+collects data at each step; `history` stores the collected values (or the
+energy when no observer is given); the iteration log is controlled by
+`alg.verbosity`.
 
 ### TEBD gates
 
 ```julia
-apply!(g::UnitaryGate{2}, ψ; trunc = NoTruncation()) -> ψ
-apply!(g::GeneralGate{2}, ψ; trunc = NoTruncation(), kwargs...) -> ψ
-swap!(ψ, i; trunc = NoTruncation()) -> ψ
+apply!(g::UnitaryGate{2}, ψ; trunc = alg_orth_trunc()) -> ψ
+apply!(g::GeneralGate{2}, ψ; trunc = alg_orth_trunc(), kwargs...) -> ψ
+swap!(ψ, i; trunc = alg_orth_trunc()) -> ψ
 ```
 
 Two-site gates with the Hastings update (aligned with TEMPO/GTEMPO): a

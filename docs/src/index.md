@@ -60,8 +60,10 @@ Exact reference for J = h = 1: `e₀ = -4/π ≈ -1.2732395`.
 ### Time evolution (TDVP)
 
 ```julia
-dt = 0.1
-ψt, envs, history = time_evolve(ψ, H, 0.0:dt:1.0, TDVP(); verbosity = 1)
+# real-time: pure imaginary steps, dt = -im·0.1
+ψt, envs, history = time_evolve(ψ, H, (-im) .* (0.0:0.1:1.0), TDVP(verbosity = 1))
+# imaginary-time cooling: negative real steps, dt = -0.1
+ψβ, envsβ, historyβ = time_evolve(ψ, H, -(0.0:0.1:10.0), TDVP())
 ```
 
 ### Time-evolution MPOs (W^I / W^II)

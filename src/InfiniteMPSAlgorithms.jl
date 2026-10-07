@@ -26,6 +26,10 @@ using KrylovKit
 # tensorops 层由 FiniteMPSAlgorithms 提供（本包仅调用、无方法扩展）；
 # 下方 export 将其再导出，对外 API 不变
 using FiniteMPSAlgorithms
+# FMA Defaults 的默认正则化截断方案（truncate!/TEBD gates 的 trunc 缺省）；
+# `using ...Defaults: f` 只引入函数名，不引入 Defaults 模块名（避免与本包
+# 的同名 Defaults 模块冲突）
+using FiniteMPSAlgorithms.Defaults: alg_orth_trunc
 # 方法扩展：distance/distance2 扩展 FiniteMPSAlgorithms 的同名函数（保持其
 # 普通 Array 方法与本包 DenseIMPS 方法在同一函数对象上）；scalartype 扩展
 # TensorOperations 的同名函数。集中在此声明，各子文件不再出现 using/import。

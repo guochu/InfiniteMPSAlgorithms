@@ -468,14 +468,14 @@ end
     # VOMPS 默认参数
     @test VOMPS(D = 2).tol == Defaults.tol
 
-    # integrate：对单位算符精确指数 exp(δ)·v
+    # integrate：对单位算符精确指数 exp(δ)·v（dt 即指数系数本身：
+    # -im·0.01 为实时、-0.1 为虚时）
     # 注：算符必须用矩阵（实测 KrylovKit 对裸函数算符的作用次数计数异常）
     D = Diagonal(ones(2))
     v0 = [1.0 + 0im, 2.0]
-    vr = integrate(D, v0, 0.0, 0.1, KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
+    vr = integrate(D, v0, -im * 0.1, KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
     @test vr ≈ exp(-im * 0.1) * v0
-    vi = integrate(D, v0, 0.0, 0.1, KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30);
-                   imaginary_evolution = true)
+    vi = integrate(D, v0, -0.1, KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
     @test vi ≈ exp(-0.1) * v0
 end
 
@@ -490,9 +490,9 @@ end
     @test info_g.itererr < 1e-9
 
     # timestep（对标 MPSKit Infinite TDVP 测试）：基态上演化 dt 后能量守恒
-    dt = 0.1
+    # （实时演化：dt = -im·0.1 纯虚系数）
     e0 = real(expectationvalue(ψg, H, envs_g))
-    ψt, _ = timestep(ψg, H, 0.0, dt, TDVP())
+    ψt, _ = timestep(ψg, H, -im * 0.1, TDVP())
     @test abs(real(expectationvalue(ψt, H)) - e0) < 1e-2
     @test abs(norm(ψt) - 1) < 1e-8
 

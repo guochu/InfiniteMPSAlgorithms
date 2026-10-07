@@ -62,7 +62,7 @@
     βs = collect(0:dβ:βmax)
     Es_ours = Float64[real(expectationvalue(ψ, Hsys))]
     for β in dβ:dβ:βmax
-        ψ, env = timestep(ψ, Hgen, β, dβ, TDVP(), env; imaginary_evolution = true)
+        ψ, env = timestep(ψ, Hgen, -dβ, TDVP(), env)   # dt = -dβ（负实步长即虚时）
         push!(Es_ours, real(expectationvalue(ψ, Hsys)))
     end
 

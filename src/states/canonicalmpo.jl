@@ -340,19 +340,20 @@ end
 # ---------------- truncate!（逐键 C 截断；语义对齐 InfiniteTEMPO 的 toipt!） ----------------
 
 """
-    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation,
-              alg_gauge = Defaults.alg_gauge()) -> (W, err)
+    truncate!(W::CanonicalIMPO; trunc = alg_orth_trunc(),
+              kwargs...) -> (W, err)
 
 [`truncate!`](@ref) 的 `CanonicalIMPO` 版（InfiniteTEMPO `toipt!` finalize 语义）：
 在 [`vectorize`](@ref) 的 MPS 视图 `(wl, u·d, wr)` 上执行 MPS 版的同一装配
 （`Û` 投影 `AL` 两侧键 + `gaugefix!(; order = :LR)` 完全重正则化，全程无
-除法），经 [`devectorize`](@ref) 写回 `W` 的四族；完整约定（正则性语义、
-`C` 重解、归一化）见 `CanonicalIMPS` 方法。
+除法，`kwargs...` 透传），经 [`devectorize`](@ref) 写回 `W` 的四族；完整约定
+（正则性语义、`C` 重解、归一化）见 `CanonicalIMPS` 方法。
 """
-function truncate!(W::CanonicalIMPO; trunc::TruncationScheme = DefaultTruncation,
-                   alg_gauge = Defaults.alg_gauge())
+function truncate!(W::CanonicalIMPO;
+                   trunc::TruncationScheme = alg_orth_trunc(),
+                   kwargs...)
     ψv = vectorize(W)
-    _, err = truncate!(ψv; trunc = trunc, alg_gauge = alg_gauge)
+    _, err = truncate!(ψv; trunc = trunc, kwargs...)
     W4 = devectorize(ψv)
     for ℓ in 1:length(W)
         W.AL[ℓ] = W4.AL[ℓ]

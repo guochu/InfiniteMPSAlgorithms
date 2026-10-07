@@ -130,7 +130,7 @@ end
     @test phydims(ψi) == dims
     @test isfinite(real(expectationvalue(ψv, Hs, ev)))
     @test isfinite(real(expectationvalue(ψi, Hs, ei)))
-    ψt, _, _ = time_evolve(ψ, Hs, 0:0.05:1, TDVP(); imaginary_evolution = true)
+    ψt, _, _ = time_evolve(ψ, Hs, -(0:0.05:1), TDVP())
     @test phydims(ψt) == dims
 
     # changebond! / compress / mult 保持 phydims

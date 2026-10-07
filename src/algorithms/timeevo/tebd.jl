@@ -164,7 +164,8 @@ end
 # truncation the window AC[i]·AR[i+1]·G is reproduced exactly, so the physical
 # state is preserved exactly for any gate, and identity gates (swaps) are
 # exact lossless re-gaugings.
-function _hastings_update!(ψ::CanonicalIMPS, gated::Array, i::Integer; trunc::TruncationScheme=NoTruncation())
+function _hastings_update!(ψ::CanonicalIMPS, gated::Array, i::Integer;
+                           trunc::TruncationScheme = alg_orth_trunc())
 	j = i + 1
 	gmat = reshape(gated, (size(gated, 1) * size(gated, 2), size(gated, 3) * size(gated, 4)))
 	u, s, v, err = tsvd(gmat; trunc)
@@ -192,13 +193,15 @@ function _hastings_update!(ψ::CanonicalIMPS, gated::Array, i::Integer; trunc::T
 	return err
 end
 
-function _nn_gate_apply!(g::AbstractGate{2}, ψ::CanonicalIMPS, i::Integer; trunc::TruncationScheme=NoTruncation())
+function _nn_gate_apply!(g::AbstractGate{2}, ψ::CanonicalIMPS, i::Integer;
+                         trunc::TruncationScheme = alg_orth_trunc())
 	@tensor gated[a, p′, q′, b] := ψ.AC[i][a, p, c] * g.op[p′, q′, p, q] * ψ.AR[i + 1][c, q, b]
 	return _hastings_update!(ψ, gated, i; trunc)
 end
 
 """
-	apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc=NoTruncation()) -> ψ
+	apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS;
+	       trunc = alg_orth_trunc()) -> ψ
 
 Apply a two-site unitary gate to `ψ` with the Hastings update (aligned with
 TEMPO/GTEMPO). The two gate sites may be any ascending pair `(i, j)` — with `j`
@@ -211,13 +214,15 @@ new spectrum to `C[i]` (never divided), and the center/seam tensors follow from
 the canonical identities (no global re-canonicalization sweep).
 
 No initialization is needed: on any mixed-canonical input the gate acts exactly
-(`NoTruncation` reproduces the post-gate window exactly) and the canonical form
+(the default `alg_orth_trunc()` only cleans numerically-zero spectral directions;
+`NoTruncation()` reproduces the post-gate window bit-for-bit) and the canonical form
 is preserved at machine precision — the seams are exactly orthogonal (`regauge!`
 gauge conversion) and the canonical identity `AC = C·AR` holds at all bonds
 (verified over random gate sequences, including the wrapping bond). The bond
 dimension may grow up to `min(Dl·d, d·Dr)` on the gate bond before truncation.
 """
-function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=NoTruncation())
+function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS;
+                trunc::TruncationScheme = alg_orth_trunc())
 	i, j = g.positions
 	L = length(ψ)
 	# positions may run one past the cell (bond wrapping: (L, L+1) ≡ the
@@ -234,7 +239,8 @@ function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=No
 end
 
 """
-	apply!(g::GeneralGate{2}, ψ::CanonicalIMPS; trunc=NoTruncation(), kwargs...) -> ψ
+	apply!(g::GeneralGate{2}, ψ::CanonicalIMPS;
+	       trunc = alg_orth_trunc(), kwargs...) -> ψ
 
 Apply a two-site gate (possibly non-unitary) to `ψ` with the Hastings update, identical
 to the [`UnitaryGate`](@ref) case; the two gate sites may be any ascending pair
@@ -243,7 +249,8 @@ applied, and moved back). Because a non-unitary gate does not preserve the canon
 form, the state is re-canonicalized with `gaugefix!` afterwards (`kwargs...` are
 forwarded). Initializes the canonical form if needed.
 """
-function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=NoTruncation(), kwargs...)
+function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS;
+                trunc::TruncationScheme = alg_orth_trunc(), kwargs...)
 	i, j = g.positions
 	L = length(ψ)
 	# positions may run one past the cell (bond wrapping, as in apply!(::UnitaryGate))
@@ -260,7 +267,8 @@ function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS; trunc::TruncationScheme=No
 end
 
 """
-	swap!(ψ::CanonicalIMPS, i::Integer; trunc=NoTruncation()) -> ψ
+	swap!(ψ::CanonicalIMPS, i::Integer;
+	      trunc = alg_orth_trunc()) -> ψ
 
 Exchange the physical content of the neighboring sites `i` and `i+1` of `ψ`
 with the Hastings SWAP gate: the bare block `AR[i]·AR[i+1]` is formed with the
@@ -273,7 +281,8 @@ unitary re-gauging on any mixed-canonical input: the physical state is
 preserved exactly and the canonical form at machine precision — no special
 initialization required.
 """
-function swap!(ψ::CanonicalIMPS, i::Integer; trunc::TruncationScheme=NoTruncation())
+function swap!(ψ::CanonicalIMPS, i::Integer;
+                trunc::TruncationScheme = alg_orth_trunc())
 	(1 <= i <= length(ψ)) || throw(BoundsError())
 	@tensor gated[a, q, p, b] := ψ.AC[i][a, p, c] * ψ.AR[i + 1][c, q, b]   # legs crossed
 	_hastings_update!(ψ, gated, i; trunc)

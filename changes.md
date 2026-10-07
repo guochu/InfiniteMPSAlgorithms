@@ -1,5 +1,49 @@
 # 变更记录（接口）
 
+## 2026-10-06 TDVP 接口清理：`dt` 即指数系数本身、删 `imaginary_evolution`/`verbosity` keyword、exponentiate 收敛告警；`alg_orth_trunc` 主文件 using；删冗余 scalartype 实例方法
+
+- **`integrate(H, x, dt, alg)`**：`dt` 即指数的系数本身（不做任何 `-im`
+  换算）——实时演化直接输入 `dt = -im·t`（`exp(-i·H·t)`）、虚时演化输入
+  `dt = -τ`（`exp(-H·τ)`，cooling）；删除 `t` 与 `imaginary_evolution`
+  输入；`exponentiate` 未收敛（`info.converged == 0`）时 `@warn`（原实现
+  丢弃 info 不检查）；
+- **`timestep(ψ, H, dt, [alg], [envs])`**：删 `t` 与 `imaginary_evolution`；
+  **`time_evolve(ψ₀, H, t_span, [alg], [envs]; observer)`**：删
+  `verbosity`/`imaginary_evolution` keyword——实时演化输入纯虚步长
+  （`t_span = (-im) .* (0:0.01:1)`）、虚时输入负实步长
+  （`t_span = -(0:0.05:20)`）；实数链仅在实时演化（`dt` 非实）时自动升复，
+  虚时保持实数域；`TDVP` 类型新增 `verbosity::Int = Defaults.verbosity`
+  field 控制迭代日志（对齐 VUMPS/IDMRG）；
+- 主文件 `using FiniteMPSAlgorithms.Defaults: alg_orth_trunc`（只引入函数
+  名、不引入 `Defaults` 模块名，避免与本包同名模块冲突），
+  `truncate!`/TEBD gates 的 `trunc` 缺省处直接写 `alg_orth_trunc()`；
+- 删除 `scalartype(W::SchurMPOTensor) = scalartype(typeof(W))` 冗余实例
+  方法（VectorInterface 已有通用实例 fallback `scalartype(x) =
+  scalartype(typeof(x))`；Type 方法保留——全 src 扫描无其他同类冗余）；
+- 测试同步：tdvp/twosite/envs/api/finite_t_concordance 的实时用例改
+  `(-im) .* tspan`、虚时用例改 `-(tspan)` / `dt = -dβ`；
+  docs（index.md/algorithms.md）签名与示例更新；
+- 验证：全量测试四块（states 168、operators 86、algorithms 541、
+  MPSKit concordance 359）全部通过，共 1154/1154。
+
+## 2026-10-06 `truncate!`/TEBD gate 接口的 `trunc` 默认改为 `FMA.Defaults.alg_orth_trunc()`；`truncate!` 的 `alg_gauge` keyword 改为 `kwargs...` 透传
+
+- `truncate!(::CanonicalIMPS/::CanonicalIMPO)` 的 `trunc` 缺省从
+  `DefaultTruncation`（`Defaults.D` 封顶 + 相对阈值 + `add_back = 1`）改为
+  `FiniteMPSAlgorithms.Defaults.alg_orth_trunc()`（= `truncrelerr(ϵ =
+  FMA.Defaults.tolgauge)` 相对阈值谱清理），对齐 FMA `truncate!`/
+  `canonicalize!` 的默认方案；不再含键维封顶（需要 `D` 封顶时显式传
+  `truncdim`/`truncdimcutoff`）；
+- `truncate!` 的 `alg_gauge` keyword 删除，改为 `kwargs...` 直接透传内部的
+  `gaugefix!(; order = :LR, kwargs...)`（如 `tol`/`maxiter`/`alg_orth`）；
+- TEBD gate 接口族（`apply!(::UnitaryGate)`/`apply!(::GeneralGate)`/`swap!`
+  及内部 `_hastings_update!`/`_nn_gate_apply!`）的 `trunc` 缺省从
+  `NoTruncation()` 改为 `FiniteMPSAlgorithms.Defaults.alg_orth_trunc()`——
+  默认只清理数值零谱方向（对随机态谱全显著时与 `NoTruncation` 无差），
+  `NoTruncation()` 仍可显式传入得到逐位无损的门应用；docstring 同步；
+- 验证：全量测试四块（states 168、operators 86、algorithms 541、
+  MPSKit concordance 359）全部通过，共 1154/1154。
+
 ## 2026-10-06 `truncate!` 装配改为「截断 + 完全重正则化」（与 `gaugefix!(::InfiniteOrthogonalize)` 同构）
 
 - 原实现的闭式装配（V 旋转 AR + `AL = AC/C` 右除）**强行保留**逐键截断谱：

@@ -98,16 +98,15 @@
     @test comp isa CanonicalIMPO && max_bonddim(comp) == 1
     @test fidelity(comp, CanonicalIMPO(I2)) ≈ 1 atol = 1e-8
 
-    # ---- tdvp ----
-    tspan = 0:0.01:0.1
+    # ---- tdvp ----（dt = -im·0.01：纯虚步长即实时演化）
+    tspan = (-im) .* (0:0.01:0.1)
     ψtv, _, history = time_evolve(ψg, H, tspan, TDVP();
                                   observer = (ψ, k, t) -> real(expectationvalue(ψ, H) / 2))
     @test length(history) == 11
     @test abs(history[end] - eg) < 1e-6                        # 实时间能量守恒
     @test abs(norm(ψtv) - 1) < 1e-8
 
-    # 虚时间：随机初态收敛到基态
-    ψβ, _, _ = time_evolve(randomimps(T, [2, 2]; D = 12), H, 0:0.05:20, TDVP();
-                           imaginary_evolution = true)
+    # 虚时间：随机初态收敛到基态（dt = -0.05 负实步长即虚时演化）
+    ψβ, _, _ = time_evolve(randomimps(T, [2, 2]; D = 12), H, -(0:0.05:20), TDVP())
     @test abs(real(expectationvalue(ψβ, H) / 2) - e_exact) < 1e-3
 end

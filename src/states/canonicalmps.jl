@@ -214,6 +214,14 @@ function Base.circshift(ψ::CanonicalIMPS, n)
                                 circshift(ψ.AR, n), circshift(ψ.AC, n))
 end
 
+"`complex(ψ)`：四族逐元素升复（`scalartype` 已是复数类型则原样返回）。"
+function Base.complex(ψ::CanonicalIMPS)
+    T = complex(scalartype(ψ))
+    scalartype(ψ) == T && return ψ
+    cast = As -> PeriodicVector([complex.(a) for a in As])
+    return CanonicalIMPS(cast(ψ.AL), cast(ψ.C), cast(ψ.AR), cast(ψ.AC))
+end
+
 "phydim(ψ, i): site `i` 的物理维度（unit cell 内允许逐站不同）。"
 phydim(ψ::CanonicalIMPS, i::Integer) = size(ψ.AL[i], 2)
 phydims(ψ::CanonicalIMPS) = [size(ψ.AL[ℓ], 2) for ℓ in 1:length(ψ)]
@@ -330,40 +338,43 @@ end
 # ---------------- truncate!（逐键 C 截断；语义对齐 InfiniteTEMPO 的 toiadt!） ----------------
 
 """
-    truncate!(ψ::CanonicalIMPS; trunc = DefaultTruncation,
-              alg_gauge = Defaults.alg_gauge()) -> (ψ, err)
-    truncate!(W::CanonicalIMPO; trunc = DefaultTruncation,
-              alg_gauge = Defaults.alg_gauge()) -> (W, err)
+    truncate!(ψ::CanonicalIMPS; trunc = alg_orth_trunc(),
+              kwargs...) -> (ψ, err)
+    truncate!(W::CanonicalIMPO; trunc = alg_orth_trunc(),
+              kwargs...) -> (W, err)
 
 In-place bond truncation of the mixed-canonical chain（语义对齐 InfiniteTEMPO
 的 `toiadt!`/`toipt!` finalize；装配模式与 `gaugefix!(::InfiniteOrthogonalize)`
 同构——**截断 + 完全重正则化**，全程无除法）：
 
 1. 逐键对中心矩阵 `C[ℓ]` 做 SVD 截断（方案 `trunc`：键维上限/谱下限等
-   [`TruncationScheme`](@ref)；默认 [`DefaultTruncation`](@ref) = `Defaults.D`
-   封顶 + `Defaults.tolgauge` 相对阈值 + `add_back = 1`），保留子空间的行
-   正交基 `Û` 投影 `AL` 的两侧键：`A'[ℓ] = Û_{ℓ-1}†·AL[ℓ]·Û_ℓ`——得到截断后
-   的**原始张量串**（合法周期态，键 profile 逐键压到保留维数）；
-2. `gaugefix!(; order = :LR)` 完全重正则化：`AL` 由 QR 扫掠装配、`AR` 由 LQ
-   扫掠重建（构造性正交，机器精度），`C` 由混合转移的 fixed point **重解**
-   收敛（`alg_gauge` 的 `tol`/`maxiter`），`AC = AL·C` 闭式乘法装配。
+   [`TruncationScheme`](@ref)；默认 `alg_orth_trunc()`
+   = `truncrelerr(ϵ = FMA.Defaults.tolgauge)` 相对阈值谱清理，对齐 FMA
+   `truncate!`/`canonicalize!` 的默认），保留子空间的行正交基 `Û` 投影 `AL`
+   的两侧键：`A'[ℓ] = Û_{ℓ-1}†·AL[ℓ]·Û_ℓ`——得到截断后的**原始张量串**
+   （合法周期态，键 profile 逐键压到保留维数）；
+2. `gaugefix!(; order = :LR)` 完全重正则化（`kwargs...` 透传，如 `tol`/
+   `maxiter`/`alg_orth`）：`AL` 由 QR 扫掠装配、`AR` 由 LQ 扫掠重建（构造性
+   正交，机器精度），`C` 由混合转移的 fixed point **重解**收敛，
+   `AC = AL·C` 闭式乘法装配。
 
 正则性：截断是键空间的非幺等投影，环形闭合方程超定——若**强行保留**逐键
 截断谱（闭式装配 + `/C` 右除），不自洽缺口 ~`err` 且被 `cond(C)` 放大。本
 实现的 `C` 重解使截断的不自洽**只进射线精度**（fidelity 损失 ~丢弃权重），
-不进正则性：三项 `mixedcanonical_error` 均在 `alg_gauge.tol`（默认 1e-13）
-量级。语义代价：输出的 `C` 是重解的 fixed point（谱 ≈ 截断谱 + O(err) 的
-自洽调整，不保证对角；需要谱时对 `C[ℓ]` 做一次 `tsvd` 即可读出），输出态
-归一（`norm(ψ) = 1`，`:LR` 路径 `C[N]` 的 Frobenius 归一约定）。返回值
-`err` 即最大逐键 `tsvd` 截断误差（丢弃权重的 2-范数），可直接作为射线精度
-的参考。
+不进正则性：三项 `mixedcanonical_error` 均在重正则化收敛容差（默认
+`Defaults.tolgauge` = 1e-13）量级。语义代价：输出的 `C` 是重解的 fixed point
+（谱 ≈ 截断谱 + O(err) 的自洽调整，不保证对角；需要谱时对 `C[ℓ]` 做一次
+`tsvd` 即可读出），输出态归一（`norm(ψ) = 1`，`:LR` 路径 `C[N]` 的 Frobenius
+归一约定）。返回值 `err` 即最大逐键 `tsvd` 截断误差（丢弃权重的 2-范数），
+可直接作为射线精度的参考。
 
 除压缩键维外，谱清理保证输出 `C` 谱严格正——逐轮变分流程（XTRG 式
 mult/compress 管线）以上一轮输出为输入时，秩亏方向的清理是保住后续迭代
-条件数的关键（`DefaultTruncation` 的相对阈值会自动截掉 ~0 奇异值）。
+条件数的关键（相对阈值方案会自动截掉 ~0 奇异值）。
 """
-function truncate!(ψ::CanonicalIMPS; trunc::TruncationScheme = DefaultTruncation,
-                   alg_gauge = Defaults.alg_gauge())
+function truncate!(ψ::CanonicalIMPS;
+                   trunc::TruncationScheme = alg_orth_trunc(),
+                   kwargs...)
     N = length(ψ)
     T = scalartype(ψ)
     # 逐键 SVD 截断 C：保留子空间的行正交基 U（谱基）；键 N 的保留谱作 C₀ 热启动
@@ -385,8 +396,6 @@ function truncate!(ψ::CanonicalIMPS; trunc::TruncationScheme = DefaultTruncatio
     end
     # 完全重正则化（与 gaugefix!(::InfiniteOrthogonalize) 同构）：AL 由 QR 精确
     # 装配、AR 由 LQ 重建、C 由 fixed point 重解——无 /C 除法，无不自洽放大
-    g = alg_gauge isa DynamicTol ? alg_gauge.alg : alg_gauge
-    gaugefix!(ψ, As, Matrix{T}(Diagonal(Ss[N])); order = :LR,
-              tol = g.tol, maxiter = g.maxiter)
+    gaugefix!(ψ, As, Matrix{T}(Diagonal(Ss[N])); order = :LR, kwargs...)
     return ψ, err
 end

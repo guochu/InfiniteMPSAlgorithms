@@ -3,23 +3,27 @@
 # The algorithm definition (the TDVP parameter object) lives in algdefs.jl.
 
 """
-    integrate(H, x, t, dt, alg; imaginary_evolution = false) -> x′
+    integrate(H, x, dt, alg) -> x′
 
-Local time evolution under the effective Hamiltonian `H`:
-`x′ = exp(δ·H)·x` with `δ = -im·dt` (real time) or `δ = -dt` (imaginary time).
-`alg` is a KrylovKit solver.
+Local time evolution under the effective Hamiltonian `H`: `x′ = exp(dt·H)·x`
+——**`dt` 即指数的系数本身**（不做任何 `-im` 换算）：实时演化直接输入
+`dt = -im·t`（`exp(-i·H·t)`），虚时演化（imaginary-time cooling）输入
+`dt = -τ`（τ > 0，`exp(-H·τ)`）。`alg` is a KrylovKit solver; exponentiate
+未收敛时 `@warn`。
 """
-function integrate(H, x, t::Number, dt::Number, alg::KrylovKit.KrylovAlgorithm;
-                   imaginary_evolution::Bool = false)
-    δ = imaginary_evolution ? -dt : -im * dt
-    return exponentiate(H, δ, x; ishermitian = alg isa KrylovKit.Lanczos,
-                        tol = alg.tol, krylovdim = alg.krylovdim, maxiter = alg.maxiter)[1]
+function integrate(H, x, dt::Number, alg::KrylovKit.KrylovAlgorithm)
+    x′, info = exponentiate(H, dt, x; ishermitian = alg isa KrylovKit.Lanczos,
+                            tol = alg.tol, krylovdim = alg.krylovdim, maxiter = alg.maxiter)
+    info.converged == 0 &&
+        @warn "TDVP integrate: exponentiate not converged" normres = info.normres dt
+    return x′
 end
 
 """
-    timestep(ψ, H, t, dt, [alg], [envs]; imaginary_evolution = false) -> (ψ, envs)
+    timestep(ψ, H, dt, [alg], [envs]) -> (ψ, envs)
 
-Evolve one step of size `dt` at time `t` (solving `i∂ψ/∂t = Hψ`).
+Evolve one step with coefficient `dt`（见 [`integrate`](@ref)）：实时演化
+`dt = -im·t`，虚时演化 `dt = -τ`（τ > 0）。
 
 **The bond dimension is preserved**: `TDVP` is a single-site integrator, so this
 step never changes `bonddim(ψ)`. `ψ` must already carry the bond dimension
@@ -27,17 +31,16 @@ required by the evolved state — see [`time_evolve`](@ref) for how to raise it
 (`changebond!`, or a few two-site `apply!` steps); a too-small initial bond
 dimension makes the result systematically inaccurate for any `dt`.
 """
-function timestep(ψ::CanonicalIMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(),
-                  envs::Environments = DMRGCache(ψ, H);
-                  imaginary_evolution::Bool = false)
+function timestep(ψ::CanonicalIMPS, H, dt::Number, alg::TDVP = TDVP(),
+                  envs::Environments = DMRGCache(ψ, H))
     N = length(ψ)
     temp_ACs = Vector{eltype(ψ.AC)}(undef, N)
     temp_Cs = Vector{eltype(ψ.C)}(undef, N)
     for loc in 1:N
         Hac = AC_hamiltonian(loc, ψ, H, ψ, envs)
-        temp_ACs[loc] = integrate(Hac, ψ.AC[loc], t, dt, alg.integrator; imaginary_evolution)
+        temp_ACs[loc] = integrate(Hac, ψ.AC[loc], dt, alg.integrator)
         Hc = C_hamiltonian(loc, ψ, H, ψ, envs)
-        temp_Cs[loc] = integrate(Hc, ψ.C[loc], t, dt, alg.integrator; imaginary_evolution)
+        temp_Cs[loc] = integrate(Hc, ψ.C[loc], dt, alg.integrator)
     end
     ALs = regauge!(temp_ACs, temp_Cs; alg = alg.alg_orth)
     # gauge 参数按 VOMPS 惯例存于 alg_gauge（(; tol, maxiter) 或 DynamicTol 包装），
@@ -50,13 +53,16 @@ function timestep(ψ::CanonicalIMPS, H, t::Number, dt::Number, alg::TDVP = TDVP(
 end
 
 """
-    time_evolve(ψ₀, H, t_span, [alg], [envs]; verbosity = 0, imaginary_evolution = false, observer = nothing)
-        -> (ψ, envs)
+    time_evolve(ψ₀, H, t_span, [alg], [envs]; observer = nothing) -> (ψ, envs, history)
 
-Step through the evolution over the time points `t_span` (mirrors MPSKit's
-`time_evolve`). With `imaginary_evolution = true` this is imaginary-time
-evolution `exp(-H·dt)`. The `observer(ψ, iter, t)` callback collects data at
-each step.
+Step through the evolution over the points `t_span`（mirrors MPSKit's
+`time_evolve`）：每步系数 `dt = t_span[iter+1] − t_span[iter]` **即指数的系数
+本身**（见 [`integrate`](@ref)）——实时演化输入纯虚步长（如
+`t_span = (-im) .* (0:0.01:1)`，`dt = -im·0.01` ⇒ `exp(-i·H·0.01)`），虚时
+演化输入负实步长（如 `t_span = -(0:0.05:20)`，`dt = -0.05` ⇒
+`exp(-H·0.05)`，cooling）。实数链在实时演化（非实 `dt`）时自动升复，虚时
+演化保持实数域。迭代日志由 `alg.verbosity` 控制；`observer(ψ, iter, t)`
+callback collects data at each step.
 
 **The bond dimension of `ψ₀` is preserved** (`TDVP` is a single-site
 integrator), and the evolution is confined to the MPS manifold of that bond
@@ -84,25 +90,24 @@ singular values silently corrupt the truncated two-site updates
 """
 function time_evolve(ψ₀::CanonicalIMPS, H, t_span::AbstractVector{<:Number},
                      alg::TDVP = TDVP(), envs::Environments = DMRGCache(ψ₀, H);
-                     verbosity::Int = 0, imaginary_evolution::Bool = false, observer = nothing)
+                     observer = nothing)
     ψ = copy(ψ₀)
-    if scalartype(ψ) <: Real && (!imaginary_evolution || !isreal(dt_span_diff(t_span)))
-        ψ = CanonicalIMPS(PeriodicVector(complex.(parent(ψ.AL))),
-                              PeriodicVector(complex.(parent(ψ.C))),
-                              PeriodicVector(complex.(parent(ψ.AR))),
-                              PeriodicVector(complex.(parent(ψ.AC))))
+    # 实数链 + 实时演化（dt 非实，即 t_span 为纯虚步长）→ 升复；虚时（dt 负实）
+    # 保持实数域
+    if scalartype(ψ) <: Real && !isreal(dt_span_diff(t_span))
+        ψ = complex(ψ)
     end
     history = Any[]
     push_history!(h, obs, ψ, iter, t) =
         push!(h, isnothing(obs) ? expectationvalue(ψ, H, envs) : obs(ψ, iter, t))
     push_history!(history, observer, ψ, 0, t_span[1])
     for iter in 1:(length(t_span) - 1)
-        t = t_span[iter]
-        dt = t_span[iter+1] - t
-        ψ, envs = timestep(ψ, H, t, dt, alg, envs; imaginary_evolution)
-        ψ, envs = alg.finalize(t, ψ, H, envs)
+        dt = t_span[iter+1] - t_span[iter]
+        ψ, envs = timestep(ψ, H, dt, alg, envs)
+        ψ, envs = alg.finalize(t_span[iter], ψ, H, envs)
         push_history!(history, observer, ψ, iter, t_span[iter+1])
-        verbosity > 0 && _logiter(stdout, "TDVP", iter, abs(dt), "t" => t_span[iter+1])
+        alg.verbosity > 0 &&
+            _logiter(stdout, "TDVP", iter, abs(dt), "t" => t_span[iter+1])
     end
     return ψ, envs, history
 end

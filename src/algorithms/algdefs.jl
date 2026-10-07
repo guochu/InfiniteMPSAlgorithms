@@ -113,7 +113,7 @@ the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
 end
 
 """
-    TDVP(; integrator, alg_gauge, alg_orth, finalize)
+    TDVP(; integrator, alg_gauge, alg_orth, verbosity, finalize)
 
 Single-site TDVP time evolution (Haegeman et al.; mirrors MPSKit's `TDVP`).
 Infinite-system version: each step evolves all `AC`s and `C`s independently
@@ -121,12 +121,14 @@ with the same `dt`, then re-canonicalizes pairwise via `regauge!` and rebuilds
 the state with a global `gaugefix!` (right-canonical). `alg_gauge` follows the
 `VUMPS`/`VOMPS` convention（`Defaults.alg_gauge()`：`(; tol, maxiter)` 或其
 `DynamicTol` 包装），其 `tol`/`maxiter` 以 keyword 形式喂给收尾的 `gaugefix!`；
-`alg_orth` is the QR/LQ factorization algorithm of the pairwise `regauge!`.
+`alg_orth` is the QR/LQ factorization algorithm of the pairwise `regauge!`;
+`verbosity` 控制迭代日志（`time_evolve` 的逐轮 `_logiter`，`> 0` 打印）。
 """
 @kwdef struct TDVP{I,G,O,F} <: Algorithm
     integrator::I = Defaults.alg_expsolve()
     alg_gauge::G = Defaults.alg_gauge()
     alg_orth::O = Defaults.alg_orth()
+    verbosity::Int = Defaults.verbosity
     finalize::F = Defaults._finalize
 end
 
