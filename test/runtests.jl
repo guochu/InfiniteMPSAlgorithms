@@ -54,6 +54,7 @@ end
         include("mpskit/groundstate_concordance.jl")
         include("mpskit/envs_concordance.jl")
         include("mpskit/finite_t_concordance.jl")
+        include("mpskit/w1w2_concordance.jl")
     end
     println("mpskit: ", round(t; digits = 2), " s")
 end

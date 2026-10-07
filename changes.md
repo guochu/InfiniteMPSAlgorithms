@@ -1,5 +1,42 @@
 # 变更记录（接口）
 
+## 2026-10-06 `w1w2.jl` 移至 algorithms/timeevo；新增 `make_time_mpo`（WII）≡ MPSKit 对标测试
+
+- `src/operators/w1w2.jl` → `src/algorithms/timeevo/w1w2.jl`（W^I/W^II 时间
+  演化 MPO 属 timeevo 语义组；include 相应调整，主文件 timeevo 注释同步）；
+- 新增 `test/mpskit/w1w2_concordance.jl`（此前 test/mpskit 无 WI/WII 对标）：
+  **算子级严格一致**对齐标准——包内 `distance(::DenseIMPO, ::DenseIMPO)`（无
+  相位/尺度自由），不做张量逐位比较——同一算符的 MPO 表示有键空间规范自由
+  （实测逐张量相对差 ~0.2-0.3 而稠密周期 trace 的直接差 ~1e-16）。用例：
+  TFIM（N=1，实时 + 虚时）与 Heisenberg XXX（N=1，多 Schur 通道）的
+  `make_time_mpo(H, dt, WII())` vs `MPSKit.make_time_mpo(H_k, dt,
+  MPSKit.WII())`，dt = 0.1 强步长（两侧相对严格解都不精确但对齐不受影响），
+  距离断言 < 1e-7（实测 0 ~ 6e-8——本包 LinearAlgebra.exp 块指数与 MPSKit
+  Arnoldi exponentiate 解同一块方程；阈值放宽因 Gram 消去 + eigsolve 容差给
+  距离留 √ε 量级地板）；输出键维两侧一致断言。MPSKit 只实现 WII（无 WI），
+  WI 无对标对象；
+- 新增包 API `distance2`/`distance` 与 `fidelity`/`infidelity`
+  （`::DenseIMPO, ::DenseIMPO`；`src/operators/linalg.jl`）：委托
+  `vectorize(W₁)`/`vectorize(W₂)` 的同名 DenseIMPS 函数——HS 内积的转移矩阵
+  主导本征值语义；`distance` 规范不变但对整体相位/尺度敏感（严格判"同一
+  算符、同一尺度"），`fidelity` 允许整体复比例（射线语义，与 `CanonicalIMPO`
+  版本互补）；
+- 对标测试的"两 Infinite 对象一致性"判据一律改为双轨：包内 `fidelity`/
+  `distance`（infinite 转移矩阵语义，**主判**）+ `_dense_mpo_repr`/
+  `_dense_mps_repr` 的 periodic-repr 射线残差/直接差（**辅助**——periodic
+  trace 把 Infinite MPO/MPS 当成有限环对象处理，概念上不完备，不能单独作
+  为一致判据）：w1w2（distance + fidelity + 直接差）、mult（严格乘法
+  distance + fidelity + ray；MPO·MPS 施加与变分复合 fidelity + ray）、
+  compress（fidelity + ray）、groundstate（fidelity + ray）；
+- `mpo_ray_residual`（testhelper）保留作辅助判据（变分不动点输出带归一化
+  自由——mult_concordance 实测变分解尺度比 0.508 而射线残差 1e-14；严格
+  乘法处 distance 的 eigsolve 地板 ~2e-6，阈值放宽到 1e-5）；
+- `testhelpers_mpskit.jl` 的 `mpo_from_mpskit` 兼容 BlockTensorKit 的
+  `SparseBlockTensorMap`（MPSKit `make_time_mpo` 的输出层，先 `TensorMap(t)`
+  合并块）；
+- 验证：全量测试四块（states 168、operators 86、algorithms 541、
+  MPSKit concordance 363）全部通过，共 1158/1158。
+
 ## 2026-10-06 TDVP 接口清理：`dt` 即指数系数本身、删 `imaginary_evolution`/`verbosity` keyword、exponentiate 收敛告警；`alg_orth_trunc` 主文件 using；删冗余 scalartype 实例方法
 
 - **`integrate(H, x, dt, alg)`**：`dt` 即指数的系数本身（不做任何 `-im`

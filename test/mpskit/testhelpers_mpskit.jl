@@ -60,8 +60,9 @@ end
 "TensorMap → 原始 Array（codomain 维在前、domain 维在后；复制数据）。"
 tensor_to_array(t::TensorMap) = copy(reshape(t.data, dim.(space(t))...))
 
-"MPOTensor → 本包 (wl, u, wr, d) 张量。"
-mpo_from_mpskit(Wk) = permutedims(tensor_to_array(Wk), (1, 2, 4, 3))
+"MPOTensor → 本包 (wl, u, wr, d) 张量。兼容 BlockTensorKit 的
+`SparseBlockTensorMap`（`make_time_mpo` 的输出层）：先 `TensorMap(t)` 合并块。"
+mpo_from_mpskit(Wk) = permutedims(tensor_to_array(TensorMap(Wk)), (1, 2, 4, 3))
 
 "本包 (Dl, d, Dr) → MPSKit TensorMap(Dl⊗d ← Dr)（复制数据；MPSKit 的算法多为
 in-place，绝不能与本包测试装置共享内存）。"
@@ -114,7 +115,10 @@ end
 "MPSKit DenseIMPO → 本包 DenseIMPO。"
 from_mpskit(O::MPSKit.InfiniteMPO) = DenseIMPO([mpo_from_mpskit(w) for w in parent(O)])
 
-"两 MPO 的稠密周期 trace 表示的复比例残差（0 = 平行，规范/尺度不变）"
+"两 MPO 的稠密周期 trace 表示的复比例残差（0 = 平行，规范/尺度不变）。只证
+共线：允许整体复比例（全局相位/尺度）差——变分不动点输出（归一化自由原则上
+存在）与 distance 地板过高的场合用这个；判『完全一致』优先用包内
+`distance(::DenseIMPO, ::DenseIMPO)`（vectorize 转移矩阵语义）。"
 mpo_ray_residual(O1, O2) = begin
     d1 = vec(_dense_mpo_repr(O1))
     d2 = vec(_dense_mpo_repr(O2))

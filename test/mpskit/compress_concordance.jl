@@ -7,7 +7,9 @@
 # - 完全相同的算法参数（tol / maxiter）；
 # - VOMPS / IDMRG：逐迭代对比（maxiter = k、tol = 0 强制两包都恰好跑 k 轮）；
 # - 收敛迭代数一致（info.niter ↔ MPSKit 的最小收敛轮数扫描）；
-# - 收敛终态在数值精度下一致（dense 周期 trace 表示的射线残差）。
+# - 收敛终态在数值精度下一致：包内 `fidelity`（转移矩阵主导本征值的
+#   infinite 射线语义，主判）+ dense 周期 trace 表示的射线残差（periodic
+#   repr，辅助证据）。
 # MPSKit 的 approximate 无 MPO 目标版本 ⇒ MPO 压缩按 `vectorize` 转成 MPS
 # 视图（恒等 MPO 通道）对比。
 #
@@ -34,13 +36,18 @@ x0 = randomimps(T, fill(d, N); D = D0)
 # 恒等 MPO（键维 1）：MPSKit 的 VOMPS/IDMRG 要求显式 (O, ψ) 元组
 Imk = MPSKit.InfiniteMPO([mkmpotensor(identityimpo(T, fill(d, N))[ℓ]) for ℓ in 1:N])
 
-"两包收敛态的射线残差（dense 周期 trace 表示，规范与尺度不变）。"
+"两包收敛态的射线残差（dense 周期 trace 表示，规范与尺度不变）——periodic
+repr 把 Infinite MPS 当成有限环 MPS 处理，概念上不完备，只作辅助证据。"
 function _compress_ray_residual(ya::CanonicalIMPS, yb::CanonicalIMPS)
     a = vec(_dense_mps_repr(ya))
     b = vec(_dense_mps_repr(yb))
     ls = dot(b, a) / dot(b, b)
     return norm(a .- ls .* b) / norm(a)
 end
+
+"两包收敛态的包内 fidelity（转移矩阵主导本征值的 infinite 射线语义主判；
+地板为 eigsolve 相对误差 ~1e-12 量级）。"
+_compress_fidelity(ya, yb) = fidelity(DenseIMPS(ya), DenseIMPS(yb))
 
 "MPSKit `approximate` 的最小收敛轮数（单调谓词 ϵ(k) ≤ tol 的指数括号 + 二分；
 MPSKit 在第 k 轮扫掠后 ϵ ≤ tol 即提前返回，故 ϵ(k) 随 k 单调下降且 k ≥ iter*
@@ -97,6 +104,7 @@ _mpskit_approx(algmk, k) = MPSKit.approximate(
         y = _ours_vomps(ψ, x0, k)
         ϕ = _mpskit_approx(MPSKit.VOMPS, k)
         @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+        @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8
     end
 end
 
@@ -105,6 +113,7 @@ end
         y = _ours_idmrg(ψ, x0, k)
         ϕ = _mpskit_approx(MPSKit.IDMRG, k)
         @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+        @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8
     end
 end
 
@@ -117,6 +126,7 @@ end
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.VOMPS, tol)
     @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+    @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8
 end
 
 @testset "compress IDMRG 收敛迭代数与终态 ≡ MPSKit" begin
@@ -128,6 +138,7 @@ end
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
     @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+    @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8
 end
 
 # ---- MPO 压缩（MPSKit 无 MPO 目标 approximate ⇒ 走 vectorize 的 MPS 视图）----
@@ -155,5 +166,6 @@ end
                                      verbosity = 0))[1]
         yview = vectorize(y)
         @test _compress_ray_residual(yview, from_mpskit(ϕ)) < 1e-8
+        @test _compress_fidelity(yview, from_mpskit(ϕ)) > 1 - 1.0e-8
     end
 end

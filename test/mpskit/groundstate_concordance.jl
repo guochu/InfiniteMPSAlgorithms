@@ -7,6 +7,8 @@
 # （局部映射、环境约定、规范恢复的可分派差异）都会在第一轮就体现为远超
 # round-off 的偏差。实测（TFIM/Heisenberg/DenseIMPO 通道，k = 1, 2, 5）：
 # - VUMPS：能量差 ~1e-14、态 ray 残差 ~1e-12（严格一致，round-off 量级）；
+#   态一致判据双轨：periodic-repr 射线残差（辅助）+ 包内 fidelity
+#   （转移矩阵主导本征值的 infinite 语义，主判）；
 # - IDMRG：能量差 ≤ 8e-5、态残差 ≤ 4e-3（Gauss–Seidel 顺序扫描 + 中间规范
 #   约定的实现差异，随 k 收敛：两者收敛到同一不动点）；
 # - DenseIMPO（InfiniteMPO 通道）：能量差 ≤ 2e-6；态**不**比对——恒等层
@@ -15,7 +17,8 @@
 #   环境的物理等价类不敏感。
 # =====================================================================
 
-"两包态的 ray 残差（dense 周期 trace 表示，规范与尺度不变）。"
+"两包态的 ray 残差（dense 周期 trace 表示，规范与尺度不变）——periodic repr
+把 Infinite MPS 当成有限环 MPS 处理，概念上不完备，只作辅助证据。"
 function _state_ray_residual(ψ_our::CanonicalIMPS, ψ_mk)
     a = vec(_dense_mps_repr(ψ_our))
     b = vec(_dense_mps_repr(from_mpskit(ψ_mk)))
@@ -23,14 +26,19 @@ function _state_ray_residual(ψ_our::CanonicalIMPS, ψ_mk)
     return norm(a .- ls .* b) / norm(a)
 end
 
+"两包态的包内 fidelity（转移矩阵主导本征值的 infinite 射线语义，主判；
+地板为 eigsolve 相对误差 ~1e-12 量级）。"
+_state_fidelity(ψ_our::CanonicalIMPS, ψ_mk) =
+    fidelity(DenseIMPS(ψ_our), DenseIMPS(from_mpskit(ψ_mk)))
+
 "同初态、固定迭代数（`tol = 0` ⇒ 恰好 k 轮）的 VUMPS/IDMRG 行为一致性：
 k 轮后的能量（与态）一致。容差按通道与算法的实测偏差量级给定。
 `alg_eigsolve`（可空）转发给本包侧 VUMPS/IDMRG——DenseIMPO 通道的投影有效
 哈密顿量因恒等层环境简并非严格厄米，传 Arnoldi 以免 Lanczos 逐 Krylov 步
 刷「might not be hermitian」告警。"
 function compare_groundstate_k(H_our, H_mk, ψ0, D; ks = (1, 2, 5),
-                               e_tol_v = 1e-10, ψ_tol_v = 1e-8,
-                               e_tol_i = 1e-3, ψ_tol_i = 1e-2,
+                               e_tol_v = 1e-10, ψ_tol_v = 1e-8, ψ_fid_v = 1e-8,
+                               e_tol_i = 1e-3, ψ_tol_i = 1e-2, ψ_fid_i = 1e-4,
                                compare_state = true, alg_eigsolve = nothing)
     L = length(ψ0)
     ours = alg_eigsolve === nothing ? NamedTuple() : (alg_eigsolve = alg_eigsolve,)
@@ -44,6 +52,7 @@ function compare_groundstate_k(H_our, H_mk, ψ0, D; ks = (1, 2, 5),
         @test abs(real(expectationvalue(ψ1, H_our, envs1) / L) -
                   real(MPSKit.expectation_value(ψ2, H_mk) / L)) < e_tol_v
         compare_state && @test _state_ray_residual(ψ1, ψ2) < ψ_tol_v
+        compare_state && @test _state_fidelity(ψ1, ψ2) > 1 - ψ_fid_v
         # ---- IDMRG：至多 k 轮（Dense 通道的恒等层结构会在少数几轮内到达
         # 精确不动点——C 漂移恰为 0 而提前收敛，属合法行为） ----
         ψ3, envs3, i3 = find_groundstate(ψ0, H_our,
@@ -54,6 +63,7 @@ function compare_groundstate_k(H_our, H_mk, ψ0, D; ks = (1, 2, 5),
         @test abs(real(expectationvalue(ψ3, H_our, envs3) / L) -
                   real(MPSKit.expectation_value(ψ4, H_mk) / L)) < e_tol_i
         compare_state && @test _state_ray_residual(ψ3, ψ4) < ψ_tol_i
+        compare_state && @test _state_fidelity(ψ3, ψ4) > 1 - ψ_fid_i
     end
     return nothing
 end

@@ -113,6 +113,50 @@ function devectorize(ψ::DenseIMPS)
     return DenseIMPO(devectorize(collect(ψ.As)))
 end
 
+# ---------------- 算子距离（vectorize 转移矩阵语义） ----------------
+
+"""
+    distance2(W₁::DenseIMPO, W₂::DenseIMPO) -> Real
+    distance(W₁::DenseIMPO, W₂::DenseIMPO) -> Real
+
+Operator distance of two MPOs, computed as the `distance` of the
+[`vectorize`](@ref)d MPS views（HS 内积 `⟨W₁, W₂⟩ = dot(vectorize(W₁),
+vectorize(W₂))`，转移矩阵主导本征值的单胞强度语义，同 `DenseIMPS` 版本，
+见 `src/states/linalg.jl`）：
+
+`‖W₁ − W₂‖² = ‖W₁‖² + ‖W₂‖² − 2·Re⟨W₁, W₂⟩_HS`; `distance = sqrt(distance2)`.
+
+Gauge-invariant but **not** invariant under overall phase/scale —— 严格判
+"同一算符、同一整体尺度"用这个；允许整体复比例（射线/共线）语义用
+[`fidelity`](@ref)/[`infidelity`](@ref)（`CanonicalIMPO` 版本）。注意 Gram 形式
+的浮点消去使两者机器精度一致时距离有 √ε ≈ 1e-8 量级的地板（对比阈值需相应
+放宽，而非 1e-12 级）；`kwargs` 透传 `dot`（如 `krylovdim`）.
+
+Extends the `distance`/`distance2` imported from FiniteMPSAlgorithms（`import`
+集中在主文件）——与 `DenseIMPS` 方法在同一函数对象上。
+"""
+distance2(W₁::DenseIMPO, W₂::DenseIMPO; kwargs...) =
+    distance2(vectorize(W₁), vectorize(W₂); kwargs...)
+distance(W₁::DenseIMPO, W₂::DenseIMPO; kwargs...) =
+    sqrt(distance2(W₁, W₂; kwargs...))
+
+"""
+    fidelity(W₁::DenseIMPO, W₂::DenseIMPO) -> Real
+    infidelity(W₁::DenseIMPO, W₂::DenseIMPO) -> Real
+
+Hilbert–Schmidt fidelity of two plain MPOs, as the [`fidelity`](@ref) of the
+[`vectorize`](@ref)d MPS views: `|⟨W₁, W₂⟩_HS| / (‖W₁‖·‖W₂‖) ∈ [0, 1]`
+（转移矩阵主导本征值的单胞强度语义，同 `DenseIMPS` 版本）. Invariant under
+gauge, overall phases and scalings —— 射线（共线）语义：变分不动点输出（归一化
+自由原则上存在）的一致性用这个，严格判"同一算符、同一整体尺度"用
+[`distance`](@ref)（两者互补，`CanonicalIMPO` 的 fidelity 版本见
+`src/states/canonicalmpo.jl`）; `kwargs` 透传 `dot`（如 `krylovdim`）.
+"""
+fidelity(W₁::DenseIMPO, W₂::DenseIMPO; kwargs...) =
+    fidelity(vectorize(W₁), vectorize(W₂); kwargs...)
+infidelity(W₁::DenseIMPO, W₂::DenseIMPO; kwargs...) =
+    1 - fidelity(W₁, W₂; kwargs...)
+
 """
     superoperator(W; side = :left) -> DenseIMPO
 

@@ -53,7 +53,6 @@ include("operators/sparsempotensor.jl")
 include("operators/mpohamiltonian.jl")
 include("operators/linalg.jl")
 include("operators/longrangeop.jl")
-include("operators/w1w2.jl")
 
 # ---- transfer matrices ----
 include("transfermatrix.jl")
@@ -66,7 +65,8 @@ include("environments.jl")
 # algdefs: VUMPS / IDMRG / VOMPS parameter objects;
 # groundstates/: environment solvers + DMRGCache + effective Hamiltonians and
 #                the VUMPS / IDMRG ground-state searches;
-# timeevo/: TDVP and TEBD time evolution;
+# timeevo/: TDVP and TEBD time evolution, and the W^I/W^II time-evolution
+#            MPOs (make_time_mpo);
 # arithmetics/: iterative MPO algebra (mult / hadamard / compress) sharing the
 #               VOMPS / IDMRG compression engines, and the exact_* debug
 #               constructors;
@@ -81,6 +81,7 @@ include("algorithms/arithmetics/mult.jl")
 include("algorithms/arithmetics/hadamard.jl")
 include("algorithms/arithmetics/compress.jl")
 include("algorithms/timeevo/tebd.jl")
+include("algorithms/timeevo/w1w2.jl")
 
 # ---- observables ----
 include("observables/expval.jl")
