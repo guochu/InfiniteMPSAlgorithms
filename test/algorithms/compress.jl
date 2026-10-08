@@ -3,23 +3,27 @@
 # svdguess_* 初始猜
 # =====================================================================
 
-@testset "_resize_dim" begin
+@testset "resize_bonds" begin
     T = ComplexF64
     Random.seed!(76)
     A = randn(T, 2, 3, 2)
 
-    # 扩容：保留首部子块，新增块零填充 / noise 填充
-    B = InfiniteMPSAlgorithms._resize_dim(A, 1, 4; noise = 0)
-    @test size(B) == (4, 3, 2) && B[1:2, :, :] == A && all(iszero, B[3:4, :, :])
-    Bn = InfiniteMPSAlgorithms._resize_dim(A, 1, 4; noise = 1e-3)
-    @test size(Bn) == (4, 3, 2) && Bn[1:2, :, :] == A && !all(iszero, Bn[3:4, :, :])
+    # 扩容：保留首部子块，新增块零填充 / 相对量级 noise 填充
+    B = InfiniteMPSAlgorithms.resize_bonds(A, 4; noise = 0)
+    @test size(B) == (4, 3, 4) && B[1:2, :, 1:2] == A && all(iszero, B[3:4, :, :])
+    Bn = InfiniteMPSAlgorithms.resize_bonds(A, 4; noise = 1e-3)
+    @test size(Bn) == (4, 3, 4) && Bn[1:2, :, 1:2] == A && !all(iszero, Bn[3:4, :, :])
+    @test maximum(abs, Bn) < (1 + 10 * 1e-3) * maximum(abs, A)   # 相对量级
 
-    # 缩键：只保留前导块
-    C_ = InfiniteMPSAlgorithms._resize_dim(A, 3, 1)
-    @test size(C_) == (2, 3, 1) && C_ == A[:, :, 1:1]
+    # 缩键：只保留前导块（无噪声块）
+    C_ = InfiniteMPSAlgorithms.resize_bonds(A, 1)
+    @test size(C_) == (1, 3, 1) && C_ == A[1:1, :, 1:1]
 
-    # 尺寸不变时原样返回
-    @test InfiniteMPSAlgorithms._resize_dim(A, 1, 2) === A
+    # 两键已等于 D 时原样返回；MPO（4 腿）张量 tail 维保持
+    @test InfiniteMPSAlgorithms.resize_bonds(A, 2) === A
+    A4 = randn(T, 2, 3, 2, 4)
+    B4 = InfiniteMPSAlgorithms.resize_bonds(A4, 5; noise = 0)
+    @test size(B4) == (5, 3, 5, 4) && B4[1:2, :, 1:2, :] == A4
 end
 
 @testset "changebond!" begin
@@ -65,6 +69,26 @@ end
     changebond!(ψcap; D = 32, noise = 0)
     @test all(bonddim(ψcap, ℓ) == 32 for ℓ in 1:2)
     @test ismixedcanonical(ψcap)
+
+    # kwargs 穿透重新包装的 CanonicalIMPS 构造器（gaugefix! 的 keyword）
+    ψkw = prodimps(T, [2, 3])
+    changebond!(ψkw; D = 4, noise = 0, tol = 1e-12, maxiter = 200)
+    @test all(bonddim(ψkw, ℓ) == 4 for ℓ in 1:2)
+    @test ismixedcanonical(ψkw)
+
+    # ---- Dense 版（DenseIMPS：纯张量串，键 profile 调整即全部工作） ----
+    ρ = DenseIMPS([randn(T, 3, 2, 3), randn(T, 3, 2, 3)])
+    ρref = deepcopy(ρ)
+    changebond!(ρ; D = 5, noise = 0)                # 扩键：零填充，态不变
+    @test all(bonddim(ρ, ℓ) == 5 for ℓ in 1:2)
+    @test abs(dot(ρ, ρref)) / (norm(ρ) * norm(ρref)) ≈ 1 atol = 1e-10
+    changebond!(ρ; D = 2)                           # 缩键：截取前导子块
+    @test all(bonddim(ρ, ℓ) == 2 for ℓ in 1:2)
+    # 已达标 ⇒ 提前返回，张量串不被改动
+    ρ2 = DenseIMPS([randn(T, 2, 2, 2), randn(T, 2, 2, 2)])
+    ref2 = deepcopy(ρ2)
+    changebond!(ρ2; D = 2)
+    @test ρ2.As[1] == ref2.As[1] && ρ2.As[2] == ref2.As[2]
 end
 
 @testset "changebond!（MPO 版）" begin
@@ -108,6 +132,15 @@ end
     changebond!(W6; D = 6)
     @test W6.AL[1] == ref6.AL[1] && W6.AR[1] == ref6.AR[1] &&
           W6.C[1] == ref6.C[1] && W6.AC[1] == ref6.AC[1]
+
+    # ---- Dense 版（DenseIMPO：纯张量串） ----
+    ω = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
+    ωref = deepcopy(ω)
+    changebond!(ω; D = 5, noise = 0)                # 扩键：零填充，态不变
+    @test all(bonddim(ω, ℓ) == 5 for ℓ in 1:2)
+    @test ov(ω, ωref) ≈ 1 atol = 1e-10
+    changebond!(ω; D = 2)                           # 缩键：截取前导子块
+    @test all(bonddim(ω, ℓ) == 2 for ℓ in 1:2)
 end
 
 @testset "compress" begin

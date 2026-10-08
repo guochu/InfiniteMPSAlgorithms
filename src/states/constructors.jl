@@ -95,30 +95,44 @@ randomimpo(L::Integer; kwargs...) = randomimpo(Float64, L; kwargs...)
 # ---------------- changebond! (bond-profile adjustment; reference: FiniteMPSAlgorithms) ----------------
 
 """
-`A` 沿维度 `dim` 调整到尺寸 `d`（首部子块保留；不足则扩容，超出则截取）。
+    resize_bonds(A::Union{MPSTensor,MPOTensor}, D::Integer; noise::Real = 0)
 
-新增块默认零填充（`noise = 0`，态不变）；`noise ≠ 0` 时填 `noise·randn`，用于
-打破扩容后的键退化：零填充得到秩亏的态（奇异值含一批精确零），规范不被唯一
-确定，单点 TDVP/VUMPS 等依赖规范的算法会给出表示依赖的结果。
+把 3 腿（`MPSTensor`）或 4 腿（`MPOTensor`）张量的两条键腿（第 1、3 维）
+**一次性** resize 到 `D`（首部子块保留；不足则扩容，超出则截取）——
+InfiniteTEMPO 的同名函数（只对这两种张量有定义）。
+
+扩容块以**相对量级** `noise·max|A|` 的随机元填充（`noise = 0` 即零填充，张量
+严格不变；缩键时整个输出都是前导子块、不含噪声块）；`noise ≠ 0` 用于打破
+扩容后的键退化：零填充得到秩亏的态（奇异值含一批精确零），规范不被唯一确定，
+单点 TDVP/VUMPS 等依赖规范的算法会给出表示依赖的结果。相对量级与张量自身
+尺度无关，比绝对量级 `noise·randn` 更稳健。两键已等于 `D` 时直接返回原数组。
 """
-function _resize_dim(A::AbstractArray{T,N}, dim::Int, d::Int; noise::Real = 0) where {T,N}
-    d0 = size(A, dim)
-    d == d0 && return A
-    sz = ntuple(i -> i == dim ? d : size(A, i), N)
-    B = iszero(noise) ? zeros(T, sz) : noise * randn(T, sz)
-    v = ntuple(i -> i == dim ? (1:min(d, d0)) : (1:size(A, i)), N)
-    B[v...] = A[v...]
+function resize_bonds(A::Union{AbstractArray{T,3},AbstractArray{T,4}}, D::Integer;
+                      noise::Real = 0) where {T}
+    s1, s2, s3 = size(A, 1), size(A, 2), size(A, 3)
+    tail = ntuple(i -> size(A, i), ndims(A))[4:end]
+    (s1 == D && s3 == D) && return A
+    amp = noise * maximum(abs, A)
+    sz = (D, s2, D, tail...)
+    B = iszero(amp) ? zeros(T, sz) : amp .* randn(T, sz)
+    # 双边前导子块赋值（缩键时源小于 B、扩键时 A 全量落入——InfiniteTEMPO 原版
+    # `B[...] .= A` 在缩键场景广播源大于目标会 DimensionMismatch，此处修正）
+    r = ntuple(i -> 1:min(size(A, i), size(B, i)), ndims(A))
+    B[r...] .= A[r...]
     return B
 end
 
 """
-    changebond!(ψ::CanonicalIMPS; D::Int, noise::Real = 1e-10) -> ψ
+    changebond!(ψ::CanonicalIMPS; D::Int, noise::Real = 1e-10, kwargs...) -> ψ
 
 把每个 site tensor 的键维**强制**改到 `D`（每个 bond 都是 `D`；参考
-FiniteMPSAlgorithms 的同名函数）：`AL` 的左右键直接 `_resize_dim` 到 `D`
-（不足则扩容、超出则截取前导子块），随后用 [`CanonicalIMPS`](@ref) 重新包装，
-恢复混合规范。各 bond 已等于 `D` 时直接返回、不做任何改动。
+FiniteMPSAlgorithms 的同名函数）：`AL` 串逐站经 [`resize_bonds`](@ref)
+调到 `D`（不足则扩容、超出则截取前导子块），随后用 [`CanonicalIMPS`](@ref)
+重新包装，恢复混合规范。各 bond 已等于 `D` 时直接返回、不做任何改动。
 用于构造迭代压缩（`mult!` / `compress!`）的初猜。
+
+`kwargs` 透传给重新包装的 [`CanonicalIMPS`](@ref) 构造器（即 `gaugefix!` 的
+keyword，如 `tol` / `maxiter`）。
 
 注意：**infinite MPS 的键维不受物理维乘积限制**（`D` 可以任意大，周期链上每个
 bond 都能取到 `D`），因此这里忠实按用户给的 `D`，不做 `min(D, ∏d)` 之类的截断；
@@ -129,20 +143,35 @@ bond 都能取到 `D`），因此这里忠实按用户给的 `D`，不做 `min(D
 算法会因此给出表示依赖的结果（FiniteMPSAlgorithms 的 `TDVP1` docstring 记录了
 同一现象）；默认 `1e-10` 足以打破退化。
 """
-function changebond!(ψ::CanonicalIMPS; D::Int, noise::Real = 1e-10)
+function changebond!(ψ::CanonicalIMPS; D::Int, noise::Real = 1e-10, kwargs...)
     N = length(ψ)
-    b = fill(D, N)
     # 各 bond 已等于 D ⇒ 无需改动，提前返回
-    all(bonddim(ψ, ℓ) == b[ℓ] for ℓ in 1:N) && return ψ
+    all(bonddim(ψ, ℓ) == D for ℓ in 1:N) && return ψ
     for ℓ in 1:N
-        ℓm = _mod1(ℓ - 1, N)
-        ψ.AL[ℓ] = _resize_dim(ψ.AL[ℓ], 1, b[ℓm]; noise = noise)
-        ψ.AL[ℓ] = _resize_dim(ψ.AL[ℓ], 3, b[ℓ]; noise = noise)
+        ψ.AL[ℓ] = resize_bonds(ψ.AL[ℓ], D; noise = noise)
     end
-    y = CanonicalIMPS(collect(ψ.AL))
+    y = CanonicalIMPS(collect(ψ.AL); kwargs...)
     copy!(ψ.AL, y.AL)
     copy!(ψ.AR, y.AR)
     copy!(ψ.C, y.C)
     copy!(ψ.AC, y.AC)
+    return ψ
+end
+
+"""
+    changebond!(ψ::DenseIMPS; D::Int, noise::Real = 1e-10) -> ψ
+
+[`changebond!`](@ref) 的 Dense 版：`As` 张量串逐站经 [`resize_bonds`](@ref)
+调到 `D`（不足则扩容、超出则截取前导子块）。Dense 家族不
+携带规范数据，无需重新包装——键 profile 调整即全部工作。各 bond 已等于 `D`
+时直接返回、不做任何改动。
+
+`noise` 语义同 [`CanonicalIMPS`](@ref) 版（`0` 即零填充，张量串严格不变）。
+"""
+function changebond!(ψ::DenseIMPS; D::Int, noise::Real = 1e-10)
+    all(bonddim(ψ, ℓ) == D for ℓ in 1:length(ψ)) && return ψ
+    for ℓ in 1:length(ψ)
+        ψ.As[ℓ] = resize_bonds(ψ.As[ℓ], D; noise = noise)
+    end
     return ψ
 end

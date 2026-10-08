@@ -63,6 +63,24 @@ phydims(W::DenseIMPO) = [size(W[ℓ], 2) for ℓ in 1:length(W)]
 bonddim(W::DenseIMPO, ℓ::Integer) = size(W[ℓ], 3)
 max_bonddim(W::DenseIMPO) = maximum(bonddim(W, ℓ) for ℓ in 1:length(W))
 
+"""
+    changebond!(W::DenseIMPO; D::Int, noise::Real = 1e-10) -> W
+
+[`changebond!`](@ref) 的 Dense MPO 版（语义同 [`CanonicalIMPO`](@ref) 版，
+见 `states/canonicalmpo.jl` 的完整 docstring）：`Ws` 张量串逐站经
+`resize_bonds`（InfiniteTEMPO 同名函数，两键一次调到 `D`，不足则扩容、
+超出则截取前导子块）。Dense 家族不携带
+规范数据，无需重新包装——键 profile 调整即全部工作。各 bond 已等于 `D`
+时直接返回、不做任何改动。
+"""
+function changebond!(W::DenseIMPO; D::Int, noise::Real = 1e-10)
+    all(bonddim(W, ℓ) == D for ℓ in 1:length(W)) && return W
+    for ℓ in 1:length(W)
+        W.Ws[ℓ] = resize_bonds(W.Ws[ℓ], D; noise = noise)
+    end
+    return W
+end
+
 "`dag(W)`: elementwise conjugation of every tensor (for overlap-type
 contractions; not the operator-adjoint network)."
 dag(W::DenseIMPO) = DenseIMPO(PeriodicVector([conj.(w) for w in W.Ws]))

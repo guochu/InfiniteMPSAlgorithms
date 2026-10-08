@@ -305,12 +305,15 @@ function regauge!(CL::AbstractMatrix{T}, AC::AbstractArray{T,4}; alg = Defaults.
     return permutedims(reshape(ARv, wl, u, d, wr), (1, 2, 4, 3))
 end
 """
-    changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10) -> W
+    changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10, kwargs...) -> W
 
 [`changebond!`](@ref) 的 MPO 版（MPS 视图 `(wl, u·d, wr)` 的键 profile 调整）：
-`AL` 的左右键直接 `_resize_dim` 到 `D`（不足则扩容、超出则截取前导子块），再用
+`AL` 串逐站经 `resize_bonds`（InfiniteTEMPO 同名函数，两键一次调到 `D`，
+不足则扩容、超出则截取前导子块），再用
 [`CanonicalIMPO`](@ref) 重新包装以恢复混合规范 —— 与 FiniteMPSAlgorithms 的同名
 函数一致。各 bond 已等于 `D` 时直接返回、不做任何改动。
+`kwargs` 透传给重新包装的 [`CanonicalIMPO`](@ref) 构造器（即 `gaugefix!` 的
+keyword，如 `tol` / `maxiter`）。
 
 同 MPS 版：**infinite MPO 的键维不受物理维乘积限制**，忠实按用户给的 `D`，
 不做 `min(D, ∏d)` 之类的截断。
@@ -319,17 +322,14 @@ end
 零填充得到秩亏的态，规范不被唯一确定，单点 TDVP/VUMPS 等依赖规范的算法会因此
 给出表示依赖的结果（FiniteMPSAlgorithms 的 `TDVP1` docstring 记录了同一现象）。
 """
-function changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10)
+function changebond!(W::CanonicalIMPO; D::Int, noise::Real = 1e-10, kwargs...)
     N = length(W)
-    b = fill(D, N)
     # 各 bond 已等于 D ⇒ 无需改动，提前返回
-    all(bonddim(W, ℓ) == b[ℓ] for ℓ in 1:N) && return W
+    all(bonddim(W, ℓ) == D for ℓ in 1:N) && return W
     for ℓ in 1:N
-        ℓm = _mod1(ℓ - 1, N)
-        W.AL[ℓ] = _resize_dim(W.AL[ℓ], 1, b[ℓm]; noise = noise)
-        W.AL[ℓ] = _resize_dim(W.AL[ℓ], 3, b[ℓ]; noise = noise)
+        W.AL[ℓ] = resize_bonds(W.AL[ℓ], D; noise = noise)
     end
-    y = CanonicalIMPO(collect(W.AL))
+    y = CanonicalIMPO(collect(W.AL); kwargs...)
     copy!(W.AL, y.AL)
     copy!(W.AR, y.AR)
     copy!(W.C, y.C)
