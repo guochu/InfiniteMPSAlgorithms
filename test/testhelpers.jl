@@ -1,5 +1,21 @@
 # ---- 周期 trace 表示的稠密辅助（algebra 与 api 共用）----
 
+# ---- TEBD 门的 Pair{Int,Int} 矩阵便捷构造（仅测试用；包内已移除该形式）----
+# 注意不能用与类型同名的函数定义（`function UnitaryGate(...)` 会在 Main 里创建
+# 新函数**遮蔽 using 进来的类型绑定**，NTuple 构造随之 MethodError），故 helper
+# 取独立名。`d²×d²` 矩阵按 Kronecker 约定 `(i1 i2)', (i1 i2)`（site i1 为慢
+# 指标），column-major reshape 得 (i2', i1', i2, i1)，permute 到张量约定
+# (i1', i2', i1, i2) 后委托 FMA 的 NTuple 构造（unitarity / positions 检查随
+# 之生效；两侧物理维需相同）。
+function pair_gate(positions::Pair{Int, Int}, op::AbstractMatrix)
+    d2 = size(op, 1)
+    d = isqrt(d2)
+    d^2 == d2 || throw(ArgumentError("operator dimension must be a perfect square"))
+    positions.first < positions.second || throw(ArgumentError("positions must be ascending"))
+    t = permutedims(reshape(Matrix{scalartype(op)}(op), d, d, d, d), (2, 1, 4, 3))
+    return UnitaryGate((positions.first, positions.second), t)
+end
+
 """
     shift_local_energies(H::SparseIMPO, λs) -> SparseIMPO
 

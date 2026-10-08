@@ -205,7 +205,7 @@ end
 @testset "calc_galerkin ≡ MPSKit（N = 1）" begin
     envs_our = DMRGCache(ψA1, H_our)
     envs_mk = MPSKit.environments(ψ_mk1, H_mk1)
-    @test all(mixedcanonical_error(ψA1) .< 1e-10)     # 共享固定装置未被污染
+    @test all(mixedcanonical_errors(ψA1) .< 1e-10)     # 共享固定装置未被污染
     ϵ_our = calc_galerkin(ψA1, H_our, envs_our)
     ϵ_mk = MPSKit.calc_galerkin(ψ_mk1, H_mk1, ψ_mk1, envs_mk)
     @test abs(ϵ_our - ϵ_mk) < 1e-6 * max(ϵ_our, ϵ_mk)

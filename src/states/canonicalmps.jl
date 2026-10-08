@@ -285,14 +285,39 @@ infidelity(ψ₁::CanonicalIMPS, ψ₂::CanonicalIMPS; kwargs...) =
 
 # ---------------- mixed-canonical diagnostics (after InfiniteTEMPO's ismixedcanonical) ----------------
 
-"Rank-3 shared kernel of the mixed-canonical error (`Cv[ℓ]` sits on the bond to
-the right of site ℓ, closed periodically)."
-function _mixedcanonical_error(ALv::AbstractVector{<:Array{T,3}},
-                               ARv::AbstractVector{<:Array{T,3}},
-                               Cv::AbstractVector{<:AbstractMatrix{T}}) where {T}
+"Rank-4 MPO 张量的融合物理腿视图：`(wl, u, wr, d) → (wl, u·d, wr)`（与
+`vectorize` 的单张量约定一致）。"
+_view3(W::AbstractArray{T,4}) where {T} =
+    reshape(permutedims(W, (1, 2, 4, 3)), size(W, 1), size(W, 2) * size(W, 4), size(W, 3))
+
+"""
+    mixedcanonical_errors(AL, C, AR) -> (ϵ_left, ϵ_right, ϵ_mixed)
+    mixedcanonical_errors(ψ/W) -> (ϵ_left, ϵ_right, ϵ_mixed)
+
+Mixed-canonical error diagnostics（after InfiniteTEMPO 的 `ismixedcanonical`，
+mainly for debugging）:
+
+- `ϵ_left`  = max_ℓ ‖Σ AL[ℓ]†·AL[ℓ] − I‖ (left orthogonality)
+- `ϵ_right` = max_ℓ ‖Σ AR[ℓ]·AR[ℓ]† − I‖ (right orthogonality)
+- `ϵ_mixed` = max_ℓ ‖AL[ℓ]·C[ℓ] − C[ℓ-1]·AR[ℓ]‖ (mixed-canonical consistency,
+  with `C[ℓ]` on the bond right of site ℓ, closed periodically)
+
+三参数方法的 `AL`/`AR` 为 `AbstractVector` of `MPSTensor`（rank-3）或
+`MPOTensor`（rank-4——在融合物理腿的 MPS 视图 `(wl, u·d, wr)` 上检查，与
+`vectorize` 约定一致），因此 [`CanonicalIMPO`](@ref) 的家族字段可直接输入
+`mixedcanonical_errors(W.AL, W.C, W.AR)`。链状态方法的 `CanonicalIMPO` 在
+vectorized MPS 视图上检查（kernel 与约定同 `CanonicalIMPS`）。
+"""
+function mixedcanonical_errors(ALv::AbstractVector{<:AbstractArray{T,N}},
+                               Cv::AbstractVector{<:AbstractMatrix{T}},
+                               ARv::AbstractVector{<:AbstractArray{T,N}}) where {T,N}
     L = length(ALv)
     (length(ARv) == length(Cv) == L) ||
-        throw(ArgumentError("inconsistent cell lengths of AL, AR, C: $(length(ALv)), $(length(ARv)), $(length(Cv))"))
+        throw(ArgumentError("inconsistent cell lengths of AL, C, AR: $(length(ALv)), $(length(Cv)), $(length(ARv))"))
+    if N == 4
+        ALv = Any[_view3(A) for A in ALv]
+        ARv = Any[_view3(A) for A in ARv]
+    end
     ϵ_left = ϵ_right = ϵ_mixed = 0.0
     for ℓ in 1:L
         @tensor g[a, b] := conj(ALv[ℓ][x, s, a]) * ALv[ℓ][x, s, b]
@@ -306,33 +331,35 @@ function _mixedcanonical_error(ALv::AbstractVector{<:Array{T,3}},
     return ϵ_left, ϵ_right, ϵ_mixed
 end
 
+"`ismixedcanonical` 的共享判定（`verbosity > 0` 打印三项误差）。"
+function _mc_canonical(ϵs::NTuple{3,<:Real}; tol::Real, verbosity::Int)
+    if verbosity > 0
+        println("ismixedcanonical: ‖ΣAL†AL−I‖ = ", ϵs[1],
+                ", ‖ΣAR·AR†−I‖ = ", ϵs[2],
+                ", ‖AL·C−C·AR‖ = ", ϵs[3], " (tol = ", tol, ")")
+    end
+    return max(ϵs...) ≤ tol
+end
+
+mixedcanonical_errors(ψ::CanonicalIMPS) =
+    mixedcanonical_errors(parent(ψ.AL), parent(ψ.C), parent(ψ.AR))
+
 """
-    mixedcanonical_error(ψ) -> (ϵ_left, ϵ_right, ϵ_mixed)
-    ismixedcanonical(ψ; tol = 1e-8, verbosity = 0) -> Bool
+    ismixedcanonical(AL, C, AR; tol = 1e-8, verbosity = 0) -> Bool
+    ismixedcanonical(ψ/W; tol = 1e-8, verbosity = 0) -> Bool
 
-Diagnostics of the mixed-canonical form (after InfiniteTEMPO's
-`ismixedcanonical`, mainly for debugging):
-
-- `ϵ_left`  = max_ℓ ‖Σ AL[ℓ]†·AL[ℓ] − I‖ (left orthogonality)
-- `ϵ_right` = max_ℓ ‖Σ AR[ℓ]·AR[ℓ]† − I‖ (right orthogonality)
-- `ϵ_mixed` = max_ℓ ‖AL[ℓ]·C[ℓ] − C[ℓ-1]·AR[ℓ]‖ (mixed-canonical consistency,
-  with C closed periodically)
-
-`CanonicalIMPO` is checked analogously in the MPS view
-`(wl, u·d, wr)`. `ismixedcanonical` returns `true` when all three errors are
-≤ `tol`; `verbosity > 0` prints the errors.
+`mixedcanonical_errors` 的布尔包装：三项误差全部 ≤ `tol` 时返回 `true`。
+三参数方法的 `AL`/`AR` 同样接受 rank-3/rank-4 张量串。
 """
-mixedcanonical_error(ψ::CanonicalIMPS) =
-    _mixedcanonical_error(parent(ψ.AL), parent(ψ.AR), parent(ψ.C))
+function ismixedcanonical(AL::AbstractVector{<:AbstractArray{T,N}},
+                          C::AbstractVector{<:AbstractMatrix{T}},
+                          AR::AbstractVector{<:AbstractArray{T,N}};
+                          tol::Real = 1.0e-8, verbosity::Int = 0) where {T,N}
+    return _mc_canonical(mixedcanonical_errors(AL, C, AR); tol, verbosity)
+end
 
 function ismixedcanonical(ψ::CanonicalIMPS; tol::Real = 1.0e-8, verbosity::Int = 0)
-    ϵ_left, ϵ_right, ϵ_mixed = mixedcanonical_error(ψ)
-    if verbosity > 0
-        println("ismixedcanonical: ‖ΣAL†AL−I‖ = ", ϵ_left,
-                ", ‖ΣAR·AR†−I‖ = ", ϵ_right,
-                ", ‖AL·C−C·AR‖ = ", ϵ_mixed, " (tol = ", tol, ")")
-    end
-    return max(ϵ_left, ϵ_right, ϵ_mixed) ≤ tol
+    return _mc_canonical(mixedcanonical_errors(ψ); tol, verbosity)
 end
 
 # ---------------- truncate!（逐键 C 截断；语义对齐 InfiniteTEMPO 的 toiadt!） ----------------

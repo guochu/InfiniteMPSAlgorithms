@@ -29,7 +29,7 @@ using FiniteMPSAlgorithms
 # FMA Defaults 的默认正则化截断方案（truncate!/TEBD gates 的 trunc 缺省）；
 # `using ...Defaults: f` 只引入函数名，不引入 Defaults 模块名（避免与本包
 # 的同名 Defaults 模块冲突）
-using FiniteMPSAlgorithms.Defaults: alg_orth_trunc
+using FiniteMPSAlgorithms.Defaults: alg_orth_trunc, alg_trunc
 # 方法扩展（集中在此声明，各子文件不再出现 using/import；scalartype 扩展
 # TensorOperations 的同名函数）。
 #
@@ -132,13 +132,13 @@ export
     # truncation and factorizations (tensorops)
     TruncationScheme, NoTruncation, TruncateDim, truncdim,
     TruncateRelError, truncrelerr, TruncateDimCutoff, truncdimcutoff,
-    DefaultTruncation, truncate!,
+    truncate!,
     tsvd, tsvd!, leftorth, leftorth!, rightorth, rightorth!,
     OrthogonalFactorizationAlgorithm, QR, QRpos, LQ, LQpos, SVD, SDD, Polar, tie,
     # data structures
     CanonicalIMPS, DenseIMPS, DenseIMPO, CanonicalIMPO,
     scalartype, phydim, phydims, max_bonddim, bonddim, dag, eachsite,
-    ismixedcanonical, mixedcanonical_error,
+    ismixedcanonical, mixedcanonical_errors,
     norm, normalize!, dot,
     # constructors
     randomimps, prodimps, identityimpo, randomimpo,

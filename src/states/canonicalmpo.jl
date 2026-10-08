@@ -243,25 +243,18 @@ infidelity(W₁::CanonicalIMPO, W₂::CanonicalIMPO; kwargs...) =
     1 - fidelity(W₁, W₂; kwargs...)
 
 """
-    mixedcanonical_error(W) -> (ϵ_left, ϵ_right, ϵ_mixed)
+    mixedcanonical_errors(W) -> (ϵ_left, ϵ_right, ϵ_mixed)
     ismixedcanonical(W; tol = 1e-8, verbosity = 0) -> Bool
 
-Mixed-canonical diagnostics for [`CanonicalIMPO`](@ref): checked in the
-vectorized MPS view `(wl, u·d, wr)` (kernel and conventions follow the
-`CanonicalIMPS` methods).
+Mixed-canonical diagnostics for [`CanonicalIMPO`](@ref): checked on the raw
+rank-4 families `(W.AL, W.C, W.AR)`（kernel 在融合物理腿的 MPS 视图上做检查，
+约定与实现见 `states/canonicalmps.jl`）。
 """
-mixedcanonical_error(W::CanonicalIMPO) =
-    (vψ = vectorize(W); _mixedcanonical_error(vψ.AL, vψ.AR, vψ.C))
+mixedcanonical_errors(W::CanonicalIMPO) = mixedcanonical_errors(W.AL, W.C, W.AR)
 
-function ismixedcanonical(W::CanonicalIMPO; tol::Real = 1.0e-8, verbosity::Int = 0)
-    ϵ_left, ϵ_right, ϵ_mixed = mixedcanonical_error(W)
-    if verbosity > 0
-        println("ismixedcanonical: ‖ΣAL†AL−I‖ = ", ϵ_left,
-                ", ‖ΣAR·AR†−I‖ = ", ϵ_right,
-                ", ‖AL·C−C·AR‖ = ", ϵ_mixed, " (tol = ", tol, ")")
-    end
-    return max(ϵ_left, ϵ_right, ϵ_mixed) ≤ tol
-end
+ismixedcanonical(W::CanonicalIMPO; kwargs...) =
+    _mc_canonical(mixedcanonical_errors(W); tol = get(kwargs, :tol, 1.0e-8),
+                  verbosity = get(kwargs, :verbosity, 0))
 
 # ---------------- gauge interface (delegation to the states/ortho.jl kernels in the MPO view) ----------------
 

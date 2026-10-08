@@ -70,7 +70,7 @@ end
     Random.seed!(9)
     ψ = randomimps(T, [2, 2]; D = 4)
     @test ismixedcanonical(ψ)
-    ϵs = mixedcanonical_error(ψ)
+    ϵs = mixedcanonical_errors(ψ)
     @test all(ϵs .< 1e-12)
 
     # 故意破坏规范：缩放单 site AL 破坏左正交性
@@ -84,6 +84,21 @@ end
 
     # verbosity 路径不报错
     @test ismixedcanonical(ψ; verbosity = 1) === true
+
+    # 三参数形式（AL, C, AR；kwargs 同样生效）
+    @test ismixedcanonical(collect(ψ.AL), collect(ψ.C), collect(ψ.AR))
+    @test !ismixedcanonical(collect(ψbad.AL), collect(ψbad.C), collect(ψbad.AR))
+    @test ismixedcanonical(collect(ψ.AL), collect(ψ.C), collect(ψ.AR);
+                           verbosity = 1) === true
+
+    # rank-4（MPOTensor）家族直接输入：kernel 在融合物理腿视图上检查，
+    # 与 vectorize 路径逐位一致
+    W = randomimpo(T, [2, 2]; D = 3)
+    Wg = gaugefix!(copy(W), collect(W.AR))
+    ϵ_v = mixedcanonical_errors(vectorize(Wg))
+    ϵ_r = mixedcanonical_errors(Wg.AL, Wg.C, Wg.AR)
+    @test collect(ϵ_r) ≈ collect(ϵ_v) atol = 1e-13
+    @test ismixedcanonical(Wg.AL, Wg.C, Wg.AR)
 end
 
 @testset "非均匀键 profile（unit cell > 1）" begin
@@ -96,7 +111,7 @@ end
     @test [bonddim(ψ, ℓ) for ℓ in 1:3] == [4, 2, 2]
     @test max_bonddim(ψ) == 4
     @test ismixedcanonical(ψ)
-    @test all(mixedcanonical_error(ψ) .< 1e-12)
+    @test all(mixedcanonical_errors(ψ) .< 1e-12)
     @test abs(norm(ψ) - 1) < 1e-8
     @test abs(dot(ψ, ψ) - 1) < 1e-8
 
@@ -139,7 +154,7 @@ end
     W = CanonicalIMPO(Ws)
     @test [bonddim(W, ℓ) for ℓ in 1:3] == [4, 2, 2]
     @test ismixedcanonical(W)
-    @test all(mixedcanonical_error(W) .< 1e-12)
+    @test all(mixedcanonical_errors(W) .< 1e-12)
 
     # ---- changebond! 的既有语义：强制拉成均匀 profile ----
     q = copy(ψ)
@@ -156,7 +171,7 @@ end
     ψp = _padbond!(copy(ψu), 2, 1)
     @test [bonddim(ψp, ℓ) for ℓ in 1:3] == [4, 5, 4]
     @test ismixedcanonical(ψp)
-    @test all(mixedcanonical_error(ψp) .< 1e-12)
+    @test all(mixedcanonical_errors(ψp) .< 1e-12)
     @test abs(dot(ψp, ψu) / (norm(ψp) * norm(ψu)) - 1) < 1e-12
 end
 
@@ -292,7 +307,7 @@ end
     _, err2 = truncate!(ψ; trunc = truncdim(2))
     @test bonddim(ψ, 1) == 2 && bonddim(ψ, 2) == 2
     @test ismixedcanonical(ψ; tol = 1e-10)
-    @test maximum(mixedcanonical_error(ψ)) < 1e-10
+    @test maximum(mixedcanonical_errors(ψ)) < 1e-10
     @test 0 < fidelity(ψ, ψ0) < 1                    # 真截断：射线改变
     @test err2 > 0
 
@@ -313,7 +328,7 @@ end
     _, errw2 = truncate!(W; trunc = truncdim(2))
     @test max_bonddim(W) == 2
     @test ismixedcanonical(W; tol = 1e-10)
-    @test maximum(mixedcanonical_error(W)) < 1e-10
+    @test maximum(mixedcanonical_errors(W)) < 1e-10
     @test 0 < fidelity(W, W0) < 1
     @test errw2 > 0
 end
@@ -369,7 +384,7 @@ end
     ψs = copy(ψs0)
     gaugefix!(ψs, Asg, InfiniteOrthogonalize(trunc = truncdim(2)))
     @test bonddim(ψs, 1) == 2 && bonddim(ψs, 2) == 2
-    @test maximum(mixedcanonical_error(ψs)) < 1e-10
+    @test maximum(mixedcanonical_errors(ψs)) < 1e-10
     @test 0 < fidelity(ψs, ψs0) < 1                   # 真截断：射线改变
 
     # ---- CanonicalIMPO：rank-4 串 + 随机规范（键腿 g·W·g⁻¹），MPS 视图正则化 ----

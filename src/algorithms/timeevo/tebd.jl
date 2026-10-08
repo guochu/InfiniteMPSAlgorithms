@@ -32,47 +32,6 @@
 # over random gate sequences (including the wrapping bond) directly on
 # states that never went through any special initialization.
 
-"""
-	UnitaryGate(positions::Pair{Int,Int}, op::AbstractMatrix; atol=1e-10)
-
-本包对 FMA [`UnitaryGate`](@ref) 的便捷构造扩展：`d²×d²` 矩阵按 Kronecker
-约定 `(i1 i2)', (i1 i2)`（site i1 为慢指标），permute 成张量约定
-`(i1', i2', i1, i2)` 后委托 FMA 的 NTuple 构造（含 unitarity 检查）。
-**该形式要求两侧物理维相同**（按 `d = isqrt` 拆开）；unit cell 内各站物理维
-不同时请直接用 rank-4 张量形式 `UnitaryGate((i, j), t)`（形状
-`(d_i, d_j, d_i, d_j)`）。
-"""
-function UnitaryGate(positions::Pair{Int, Int}, op::AbstractMatrix; atol::Real=1.0e-10)
-	d2 = size(op, 1)
-	d = isqrt(d2)
-	d^2 == d2 || throw(ArgumentError("operator dimension must be a perfect square"))
-	positions.first < positions.second || throw(ArgumentError("positions must be ascending"))
-	# matrix convention (i1 i2)',(i1 i2) with i1 the slowest index; the column-major
-	# reshape yields (i2', i1', i2, i1), so permute to the documented (i1', i2', i1, i2)
-	t = reshape(Matrix{scalartype(op)}(op), d, d, d, d)
-	t = permutedims(t, (2, 1, 4, 3))
-	return UnitaryGate((positions.first, positions.second), t; atol)
-end
-
-"""
-	GeneralGate(positions::Pair{Int,Int}, op::AbstractMatrix)
-
-本包对 FMA [`GeneralGate`](@ref) 的便捷构造扩展：`d²×d²` Kronecker 约定矩阵
-（site i1 为慢指标）permute 成张量约定后委托 FMA 的 NTuple 构造（不做
-unitarity 检查）。物理维不同的站点对请直接用 rank-4 张量形式。
-"""
-function GeneralGate(positions::Pair{Int, Int}, op::AbstractMatrix)
-	d2 = size(op, 1)
-	d = isqrt(d2)
-	d^2 == d2 || throw(ArgumentError("operator dimension must be a perfect square"))
-	positions.first < positions.second || throw(ArgumentError("positions must be ascending"))
-	# matrix convention (i1 i2)',(i1 i2) with i1 the slowest index; the column-major
-	# reshape yields (i2', i1', i2, i1), so permute to the documented (i1', i2', i1, i2)
-	t = reshape(Matrix{scalartype(op)}(op), d, d, d, d)
-	t = permutedims(t, (2, 1, 4, 3))
-	return GeneralGate((positions.first, positions.second), t)
-end
-
 # Hastings gate core (aligned with TEMPO/GTEMPO). The two-site window
 # AC[i]·G·AR[i+1] is decomposed with a single truncated SVD,
 #     AC[i]·G·AR[i+1] = U·S·V†,

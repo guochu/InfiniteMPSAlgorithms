@@ -9,7 +9,7 @@
 # 互补。入口为 `gaugefix!(ψ, As, alg::InfiniteOrthogonalize)`。
 
 """
-    InfiniteOrthogonalize(; trunc = DefaultTruncation, alg_gauge = Defaults.alg_gauge(),
+    InfiniteOrthogonalize(; trunc = alg_trunc(), alg_gauge = Defaults.alg_gauge(),
                           alg_environments = Defaults.alg_environments(),
                           alg_orth = Defaults.alg_orth(), verbosity = 0)
 
@@ -30,7 +30,7 @@ power sweep）。输出态恒归一（`‖ψ‖ = 1`；不设 `normalize` 开关
 - `verbosity`：`≥ 2` 时打印左右主导本征值。
 """
 @kwdef struct InfiniteOrthogonalize{T<:TruncationScheme, G, E, O} <: Algorithm
-    trunc::T = DefaultTruncation
+    trunc::T = alg_trunc()
     alg_gauge::G = Defaults.alg_gauge()
     alg_environments::E = Defaults.alg_environments()
     alg_orth::O = Defaults.alg_orth()

@@ -25,7 +25,7 @@
 
     @testset "gate 类型" begin
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
-        g = UnitaryGate(Pair(2, 3), G)
+        g = pair_gate(Pair(2, 3), G)
         @test positions(g) == (2, 3)
         @test size(g.op) == (d, d, d, d)
         @test scalartype(typeof(g)) == T
@@ -65,7 +65,7 @@
 
     @testset "UnitaryGate 作用" begin
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
-        g = UnitaryGate(Pair(2, 3), G)
+        g = pair_gate(Pair(2, 3), G)
         # 无截断：门改变态
         ψ1 = copy(ψ)
         ψ1 = apply!(g, ψ1)
@@ -76,7 +76,7 @@
         @test fidelity(ψ, ψ1) ≈ 1 atol = 1e-9
         # 非相邻门：swap 移动 + 门 + swap 移回，g† 后精确还原
         ψ2 = copy(ψ)
-        gn = UnitaryGate(Pair(1, 4), G)
+        gn = pair_gate(Pair(1, 4), G)
         ψ2 = apply!(gn, ψ2)
         ψ2 = apply!(adjoint(gn), ψ2)
         @test ismixedcanonical(ψ2)
@@ -99,7 +99,7 @@
         # 确认点 1：Hastings 技巧在 trunc err → 0 时无损；
         # g·g† 的保真度随截断键维放松单调趋于 1
         G = qr(randn(ComplexF64, d * d, d * d)).Q |> Matrix
-        g = UnitaryGate(Pair(2, 3), G)
+        g = pair_gate(Pair(2, 3), G)
         prev = 0.0
         for D in (2, 3, 4, 5, 6)
             ψD = copy(ψ)
@@ -121,7 +121,7 @@
         # AR[3]（SVD 右因子）严格行正交；C[2] 对角谱；
         # 恒等式网络 AC = AL·C（窗口键）严格；接缝 AR[2] 严格正交
         # （regauge! 规范转换语义）；接缝键的 AC = C·AR 机器精度保持。
-        gI = UnitaryGate(Pair(2, 3), Matrix{T}(I, d * d, d * d))
+        gI = pair_gate(Pair(2, 3), Matrix{T}(I, d * d, d * d))
         ψT = copy(ψ)
         ψT = apply!(gI, ψT; trunc = truncdim(2))
         @tensor XR[a, b] := ψT.AR[3][a, p, c] * conj(ψT.AR[3][b, p, c])
@@ -140,7 +140,7 @@
         # 正则形式机器精度保持（接缝严格正交、AC = C·AR 严格），门序列
         # （含 wrap 键 (4,5) 与非相邻 (1,4)）正则误差不增长，恒等门 /
         # swap² / g·g† 无损。
-        mc(ψx) = maximum(mixedcanonical_error(ψx))
+        mc(ψx) = maximum(mixedcanonical_errors(ψx))
         @test mc(ψ) < 1e-12
 
         # 单次 swap：正则形式机器精度保持；swap² 无损
@@ -155,8 +155,8 @@
 
         # 恒等门无损
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
-        g = UnitaryGate(Pair(2, 3), G)
-        gI = UnitaryGate(Pair(2, 3), Matrix{T}(I, d * d, d * d))
+        g = pair_gate(Pair(2, 3), G)
+        gI = pair_gate(Pair(2, 3), Matrix{T}(I, d * d, d * d))
         ψi = apply!(gI, copy(ψ))
         @test fidelity(ψ, ψi) ≈ 1 atol = 1e-12
         @test mc(ψi) < 1e-12
@@ -173,7 +173,7 @@
 
         # 非相邻门 g·g† 无损
         ψn = copy(ψ)
-        gn = UnitaryGate(Pair(1, 4), G)
+        gn = pair_gate(Pair(1, 4), G)
         apply!(gn, ψn)
         @test ismixedcanonical(ψn)
         apply!(adjoint(gn), ψn)
@@ -184,7 +184,7 @@
         # 门序列（相邻 / 非相邻 / wrap 键）：正则误差不增长，范数守恒
         ψseq = copy(ψ)
         for p in ((2, 3), (3, 4), (1, 2), (4, 5), (2, 3), (1, 4), (3, 4), (4, 5))
-            apply!(UnitaryGate(Pair(p...), qr(randn(T, d * d, d * d)).Q |> Matrix), ψseq)
+            apply!(pair_gate(Pair(p...), qr(randn(T, d * d, d * d)).Q |> Matrix), ψseq)
             @test mc(ψseq) < 1e-12
             @test ismixedcanonical(ψseq)
         end

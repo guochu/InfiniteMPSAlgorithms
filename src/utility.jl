@@ -352,10 +352,6 @@ function _eigsolve(f, x₀, howmany::Integer, which::Symbol;
     return vals, vecs, info
 end
 
-# 包级默认截断方案：以 Defaults.D 封顶、Defaults.tolgauge 为相对截断阈值、
-# 至少保留一个奇异值（对齐 FiniteMPSAlgorithms 的 DefaultTruncation）。
-const DefaultTruncation = truncdimcutoff(D = Defaults.D, ϵ = Defaults.tolgauge, add_back = 1)
-
 # ---------------- iteration logging ----------------
 
 function _logiter(io::IO, name::AbstractString, iter::Int, err::Real, extra::Pair...)
