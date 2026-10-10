@@ -54,6 +54,28 @@ end
 const _CHOL_SPLIT_TOL = 1.0e-12
 
 """
+    _chol_split_tol(trunc) -> Real
+
+Eigenvector-direction cutoff for [`_chol_split`](@ref), read from the **user
+truncation scheme** (`InfiniteOrthogonalize.trunc`). The boundary matrices
+`Vl`/`Vr` carry the chain's bond-space Gram structure: a small eigenvalue there
+does **not** imply the corresponding bond direction is physically empty — for a
+near-identity target `h ≈ I + ε·V` the perturbation direction sits at weight
+~ε²·(overlap) (measured 9.7e-10 on the Rabi PT stepper at dt=1/512, whose bond
+tensor weight is 0.0884), and dropping it silently projects the chain tensor
+component on that bond away: the canonicalized output loses the bond entirely
+(the old `10 * alg_environments.tol` cut — the environment *solver* tolerance —
+collapsed the same stepper to bond 1 vs bond 2 at dt=0.01, with the trim
+independent of `trunc.ϵ`). Schemes without a spectrum cutoff (dimension-only or
+none) fall through to `0.0`; the caller clamps the result at
+`_CHOL_SPLIT_TOL`, the numerical floor below which an eigen-direction is
+genuinely unresolvable.
+"""
+_chol_split_tol(trunc::TruncateDimCutoff) = trunc.ϵ
+_chol_split_tol(trunc::TruncateRelError) = trunc.ϵ
+_chol_split_tol(::TruncationScheme) = 0.0
+
+"""
     _chol_split(m, tol) -> Matrix
 
 谱截断 Cholesky 因子（InfiniteTEMPO 的 `chol_split`）：`eigen(Hermitian(m))`
@@ -129,8 +151,11 @@ InfiniteTEMPO `mixedcanonicalize2!`（Reference: PHYSICAL REVIEW B 78, 155117）
 function mixedcanonicalize2!(x::AbstractVector{<:Array{T,3}},
                              alg::InfiniteOrthogonalize) where {T}
     N = length(x)
+    # 白化的方向截断阈值取用户 trunc 方案（clamp 在数值下限）；**不得**用
+    # alg_environments 的求解容差——那会把边界矩阵里 ~1e-9 的真实键方向当
+    # 数值零丢掉（见 _chol_split_tol 的 docstring）
+    tolchol = max(_chol_split_tol(alg.trunc), _CHOL_SPLIT_TOL)
     g = alg.alg_environments isa DynamicTol ? alg.alg_environments.alg : alg.alg_environments
-    tolchol = g.tol * 10
     η, Vl, Vr = _overlap_leading_boundaries(x; tol = g.tol, maxiter = g.maxiter,
                                             verbosity = alg.verbosity)
 

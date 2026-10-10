@@ -405,6 +405,29 @@ end
         @test scalartype(W) == T
         @test fidelity(W, W0) > 1 - 1e-10        # Hilbert–Schmidt 保真度
     end
+
+    # ---- 近恒等目标的键方向保持（回归：白化截断阈值 belongs to trunc）----
+    # h ≈ I + ε·V 型链：主/次键方向在边界矩阵 Vl 里近共线（第二本征值 ~1e-9），
+    # 但链张量在次方向的分量是 O(ε) 的真实物理内容。白化的方向丢弃阈值必须取
+    # 用户 trunc（chol_split_tol），不得取环境求解容差 alg_environments.tol——
+    # 旧实现用 10·env-tol（1e-9）把 9.7e-10 的方向当数值零砍掉，同一链在
+    # dt=0.01（4.95e-9，活）与 dt=1/512（9.67e-10，死）之间键维随数值抖动。
+    # 构造：三键行向量 r₁（主）、r₂ = r₁ + 3e-5·δ（重叠² ~1e-9）、r₃ ~1e-6（数值零）。
+    let
+        Random.seed!(94)
+        r1 = randn(12)
+        r2 = r1 + 3.0e-5 * randn(12)
+        r2 ./= norm(r2)
+        Av = [reshape(vcat(r1', r2', (1.0e-6 * randn(12))'), 3, 4, 3)]  # 行堆叠 (3, 12) → 单站 (3, 4, 3)
+        ψref = CanonicalIMPS([copy(Av[1])])
+        for envtol in (1.0e-8, 1.0e-12)          # 键维不得依赖环境求解容差
+            ψ = CanonicalIMPS([copy(Av[1])])
+            gaugefix!(ψ, Av, InfiniteOrthogonalize(trunc = truncdimcutoff(D = 10, ϵ = 1.0e-12),
+                                                   alg_environments = (; tol = envtol, maxiter = 1000)))
+            @test bonddim(ψ, 1) == 2             # 次方向保留、数值零行丢弃
+            @test fidelity(ψ, ψref) > 1 - 1.0e-6
+        end
+    end
 end
 
 @testset "混合规范构造器 CanonicalIMPS(AL, C, AR[, AC]) / CanonicalIMPO(AL, C, AR[, AC])" begin
