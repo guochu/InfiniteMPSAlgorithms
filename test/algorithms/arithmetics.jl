@@ -193,6 +193,112 @@ end
     @test norm(tgtabs .- lsabs .* dHabs) / norm(tgtabs) < 1e-10
 end
 
+@testset "hadamard zip 核：非均匀键（矩形张量）" begin
+    # _zip_push_left / _mapAC_zip 的输出腿是因子的**右键**——旧实现误用左键维
+    # 分配/reshape，均匀键下恰好恒等（测试抓不到），矩形键下直接形状错。
+    # 此处用左右键维不同的张量对照逐物理片 staging 的直接收缩参照固化
+    # （@tensor 不支持同一未收缩指标跨两个操作数的 batched 形式，须切片）。
+    T = ComplexF64
+    Random.seed!(46)
+    A1 = randn(T, 3, 2, 4)      # A1[a, s, b]：左键 3、右键 4
+    A2 = randn(T, 5, 2, 2)      # A2[c, s, e]：左键 5、右键 2
+    below = randn(T, 6, 2, 7)   # below[bl, s, bl′]
+    L = randn(T, 6, 3, 5)       # L[bl, a, c]（site 左键侧环境）
+    GR = randn(T, 4, 2, 9)      # GR[b, e, xR]（site 右键侧环境）
+    GL = randn(T, 8, 3, 5)      # GL[xL, a, c]
+
+    Lp = InfiniteMPSAlgorithms._zip_push_left(L, below, A2, A1)
+    Lref = zeros(T, 7, 4, 2)
+    for s in 1:2
+        bs, A1s, A2s = below[:, s, :], A1[:, s, :], A2[:, s, :]
+        Lref .+= @tensor tmp[bl′, b, e] :=
+            conj(bs[bl, bl′]) * L[bl, a, c] * A2s[c, e] * A1s[a, b]
+    end
+    @test size(Lp) == (7, 4, 2)
+    @test Lp ≈ Lref atol = 1e-12
+
+    k = InfiniteMPSAlgorithms._mapAC_zip(GL, GR, A2, A1)
+    kref = zeros(T, 8, 2, 9)
+    for p in 1:2
+        A1p, A2p = A1[:, p, :], A2[:, p, :]
+        kref[:, p, :] .+= @tensor tmp[xL, xR] :=
+            GL[xL, a, c] * A2p[c, e] * A1p[a, b] * GR[b, e, xR]
+    end
+    @test size(k) == (8, 2, 9)
+    @test k ≈ kref atol = 1e-12
+end
+
+@testset "非均匀键：compress / mult / hadamard 端到端" begin
+    # 键 profile 逐站不同（周期闭合）的链/算符走全部三条变分通道——
+    # zip 核的矩形键修复（上一 testset）由此在引擎级固化：旧实现下
+    # hadamard 通道直接形状错；其余通道核逐站取维（审计无均匀键假设），
+    # 端到端覆盖 VOMPS（环境 fixedpoint 重解路径）与 IDMRG（增量推进路径）。
+    T = ComplexF64
+    Random.seed!(48)
+
+    # 键 profile [4,2,2]（phys [2,3,2]）；bond ℓ = site ℓ 右键
+    ψnu = CanonicalIMPS([randn(T, 2, 2, 4), randn(T, 4, 3, 2), randn(T, 2, 2, 2)])
+    # MPO 键 profile [4,2,3]
+    Ws = [randn(T, 3, 2, 4, 2), randn(T, 4, 3, 2, 3), randn(T, 2, 2, 3, 2)]
+    W = CanonicalIMPO(Ws)
+    # mult 的 ket：键 [3,2,2]；乘积键 = (wl·bl, wr·br) = [12,4,6] → D = 12 无损
+    As2 = [randn(T, 2, 2, 3), randn(T, 3, 3, 2), randn(T, 2, 2, 2)]
+    ψ2nu = CanonicalIMPS(As2)
+    # mpo·mpo 因子：键 [3,2,3] / [3,4,4]；乘积键 [12,8,12] → D = 12 无损
+    W1s = [randn(T, 3, 2, 3, 2), randn(T, 3, 3, 2, 3), randn(T, 2, 2, 3, 2)]
+    W1 = CanonicalIMPO(W1s)
+    W2s = [randn(T, 4, 2, 3, 2), randn(T, 3, 3, 4, 3), randn(T, 4, 2, 4, 2)]
+    W2 = CanonicalIMPO(W2s)
+    # hadamard 因子：键 [3,2,2] / [2,3,2]；zip 键 [6,6,4] → D = 6 无损
+    ψ1h = CanonicalIMPS([randn(T, 2, 2, 3), randn(T, 3, 3, 2), randn(T, 2, 2, 2)])
+    ψ2h = CanonicalIMPS([randn(T, 2, 2, 2), randn(T, 2, 3, 3), randn(T, 3, 2, 2)])
+
+    # ---- compress（MPS）：非均匀键 bra（D=4 ≥ 全部键 ⇒ 初猜即原链）跑通两引擎
+    for alg in (VOMPS(D = 4, maxiter = 300), IDMRG(D = 4, maxiter = 300))
+        y, _, _ = compress(ψnu, alg)
+        @test ismixedcanonical(y) && max_bonddim(y) == 4
+        @test abs(dot(y, ψnu)) > 1 - 1e-10
+    end
+    # 真截断（D=2）：变分不低于逐键谱截断参照
+    y2, _, _ = compress(ψnu, VOMPS(D = 2, maxiter = 300))
+    ref2, _ = truncate!(copy(ψnu); trunc = truncdim(2))
+    @test fidelity(y2, ψnu) ≥ fidelity(ref2, ψnu) - 1e-9
+    @test fidelity(y2, ψnu) < 1 - 1e-6
+
+    # ---- compress（MPO）：vectorize 的 MPS 视图通道（逐站融合物理腿）
+    Wc, _, _ = compress(W, VOMPS(D = 3, maxiter = 300))
+    refW, _ = truncate!(copy(W); trunc = truncdim(3))
+    @test Wc isa CanonicalIMPO && ismixedcanonical(Wc) && max_bonddim(Wc) == 3
+    @test fidelity(Wc, W) ≥ fidelity(refW, W) - 1e-9
+
+    # ---- mult（mpo·mps）：无损对照 = 朴素 fuse 乘积串
+    ref_mult = CanonicalIMPS([InfiniteMPSAlgorithms.fuse(Ws[ℓ], As2[ℓ]) for ℓ in 1:3])
+    for alg in (VOMPS(D = 12, maxiter = 300), IDMRG(D = 12, maxiter = 300))
+        ym, _, _ = mult(W, ψ2nu, alg)
+        @test ismixedcanonical(ym) && max_bonddim(ym) == 12
+        @test abs(dot(ym, ref_mult)) > 1 - 1e-8
+    end
+
+    # ---- mult（mpo·mpo）：无损对照 = 朴素乘积算符
+    ref_mm = CanonicalIMPO([InfiniteMPSAlgorithms._naive_mul_tensor(W1s[ℓ], W2s[ℓ])
+                            for ℓ in 1:3])
+    for alg in (VOMPS(D = 12, maxiter = 300), IDMRG(D = 12, maxiter = 300))
+        P, _, _ = mult(W1, W2, alg)
+        @test P isa CanonicalIMPO && ismixedcanonical(P) && max_bonddim(P) == 12
+        @test fidelity(P, ref_mm) > 1 - 1e-8
+    end
+
+    # ---- hadamard：无损对照 = 朴素 zip 串
+    ref_h = CanonicalIMPS([InfiniteMPSAlgorithms._naive_hadamard_tensor(ψ1h.AL[ℓ],
+                                                                        ψ2h.AL[ℓ])
+                           for ℓ in 1:3])
+    for alg in (VOMPS(D = 6, maxiter = 300), IDMRG(D = 6, maxiter = 300))
+        Hc, _, _ = hadamard(ψ1h, ψ2h, alg)
+        @test ismixedcanonical(Hc) && max_bonddim(Hc) == 6
+        @test abs(dot(Hc, ref_h)) > 1 - 1e-8
+    end
+end
+
 # ---------------- mult!/compress!/hadamard! 完全对齐 ----------------
 #
 # 收敛信息经由内部函数取得：`_mult`/`_compress`/`_hadamard` 返回

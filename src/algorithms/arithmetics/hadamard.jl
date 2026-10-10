@@ -142,11 +142,12 @@ O(Dx·D1·D2·d)，融合 zip 张量从不物化。"
 function _zip_push_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
                         A2::AbstractArray{Ta,3}, A1::AbstractArray{T1,3}) where {TL,Tb,Ta,T1}
     bl′ = size(below, 3)
-    D2, d = size(A2, 1), size(A2, 2)       # A2[c, s, e]
-    D1 = size(A1, 1)                       # A1[a, s, b]
+    d = size(A2, 2)                        # A2[c, s, e]：物理腿共享
+    D1r = size(A1, 3)                      # A1 右键（输出 b 腿）
+    D2r = size(A2, 3)                      # A2 右键（输出 e 腿）
     T = promote_type(scalartype(L), scalartype(below), scalartype(A2), scalartype(A1))
     belowC = conj(below)                   # (bl, s, bl′)
-    W = zeros(T, D2, D1, bl′)              # 各 s 片累加：(e, b, bl′)
+    W = zeros(T, D2r, D1r, bl′)            # 各 s 片累加：(e, b, bl′)
     for s in 1:d
         below_s = @view belowC[:, s, :]    # (bl, bl′)
         A1s = @view A1[:, s, :]            # (a, b)
@@ -185,26 +186,28 @@ end
 function _mapAC_zip(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
                     A2ac::AbstractArray{Ta,3}, A1ac::AbstractArray{T1,3}) where {Tg,Tgr,Ta,T1}
     Dx = size(GL, 1)
-    D2, d = size(A2ac, 1), size(A2ac, 2)   # A2ac[c, p, e]
-    D1 = size(A1ac, 1)                     # A1ac[a, p, b]
+    D2, d = size(A2ac, 1), size(A2ac, 2)   # A2ac[c, p, e]：左键 + 物理
+    D1 = size(A1ac, 1)                     # A1ac[a, p, b]：左键
+    D2r = size(A2ac, 3)                    # A2ac 右键（e 腿；非均匀键下 ≠ D2）
+    D1r = size(A1ac, 3)                    # A1ac 右键（b 腿；非均匀键下 ≠ D1）
     T = promote_type(scalartype(GL), scalartype(GR), scalartype(A2ac), scalartype(A1ac))
     # 步1（键 c）：Y[a, xL, p, e] = Σ_c GL[xL, a, c]·A2ac[c, p, e]
-    @tensor Y[a, xL, p, e] := GL[xL, a, c] * A2ac[c, p, e]      # 中间 Dx·D1·d·D2
+    @tensor Y[a, xL, p, e] := GL[xL, a, c] * A2ac[c, p, e]      # 中间 Dx·D1·d·D2r
     # 步2a（键 a；p 逐片——p 为两因子共享的开放指标，按物理片 batched GEMM）：
     # Z[p, b, e, xL] = Σ_a Y[a, xL, p, e]·A1ac[a, p, b]
-    Y3 = reshape(Y, D1, Dx, d, D2)                               # (a, xL, p, e)
-    Z = zeros(T, d, D1, D2, Dx)
+    Y3 = reshape(Y, D1, Dx, d, D2r)                              # (a, xL, p, e)
+    Z = zeros(T, d, D1r, D2r, Dx)
     for p in 1:d
         A1p = view(A1ac, :, p, :)                                # (a, b)
         Yp = @view Y3[:, :, p, :]                                # (a, xL, e)
         # GEMM → (b, (xL, e))，重排为 (b, e, xL) 后写入 Z[p, b, e, xL]
         Z[p, :, :, :] .= reshape(permutedims(
-            reshape(transpose(A1p) * reshape(Yp, D1, Dx * D2), D1, Dx, D2), (1, 3, 2)), D1, D2, Dx)
+            reshape(transpose(A1p) * reshape(Yp, D1, Dx * D2r), D1r, Dx, D2r), (1, 3, 2)), D1r, D2r, Dx)
     end
     # 步2b（键 b, e）：k[xL, p, xR] = Σ Z·GR
     xR = size(GR, 3)
-    Zp = reshape(permutedims(Z, (1, 4, 2, 3)), d * Dx, D1 * D2)  # (p, xL, b, e)：列 = b + (e-1)·D1
-    kR = Zp * reshape(GR, D1 * D2, xR)                            # (d·D1, xR)
+    Zp = reshape(permutedims(Z, (1, 4, 2, 3)), d * Dx, D1r * D2r)  # (p, xL, b, e)：列 = b + (e-1)·D1r
+    kR = Zp * reshape(GR, D1r * D2r, xR)                           # (d·D1, xR)
     return reshape(permutedims(reshape(kR, d, Dx, xR), (2, 1, 3)), Dx, d, xR)
 end
 
