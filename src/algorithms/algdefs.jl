@@ -80,6 +80,39 @@ IDMRG 引擎；`alg_environments`（环境求解算法，`fixedpoint` 分派，�
 end
 
 """
+    DMRG2(; trunc = alg_trunc(), tol, maxiter, verbosity, alg_gauge, alg_environments,
+          alg_eigsolve, alg_orth, finalize)
+
+Two-site variant of [`IDMRG`](@ref) for the variational compression
+([`compress`](@ref)/[`compress!`](@ref)；MPSKit `approximate` 家族的
+`IDMRG2`)。`trunc::TruncationScheme`（默认 `alg_trunc()`）取代 IDMRG 的固定
+`D`：两站窗口在当前环境下有**精确**线性最优（纯重叠通道的局部映射为直接
+收缩，无 eigsolve），每轮双向扫掠逐窗口施加两站映射后按 `trunc` 做 SVD
+截断并前移规范边界——两站更新可跨过单站 ALS 的鞍点，且键维随截断方案
+动态变化。收敛判据为最大逐站 Galerkin 残差（同 [`VOMPS`](@ref)）。初猜键维
+从 `trunc` 的维数上限提取（`TruncateDim`/`TruncateDimCutoff` 的 `D`；无维数
+语义的方案取目标链自身键 profile）。`alg_eigsolve` 为与 [`IDMRG`](@ref)
+定义一致的保留字段。
+
+!!! note "通道范围"
+    目前仅 [`compress`](@ref)（纯重叠通道）开放 DMRG2：其两站窗口的最优性
+    论证要求窗口外腿为不同键（度量 = 恒等），纯重叠通道满足；`mult`/
+    `hadamard` 的算符/zip 通道两站映射在 wrap 窗口上尚缺环度量修正
+    （N = 2 时全部窗口为 wrap），暂不开放。
+"""
+@kwdef struct DMRG2{S,G,N,A,O,F} <: Algorithm
+    trunc::S = alg_trunc()
+    tol::Float64 = Defaults.tol
+    maxiter::Int = Defaults.maxiter
+    verbosity::Int = Defaults.verbosity
+    alg_gauge::G = Defaults.alg_gauge()
+    alg_environments::N = Defaults.alg_environments()
+    alg_eigsolve::A = Defaults.alg_eigsolve()
+    alg_orth::O = Defaults.alg_orth()
+    finalize::F = Defaults._finalize
+end
+
+"""
     VOMPS(; D = Defaults.D, tol, maxiter, verbosity, alg_gauge, alg_environments,
           alg_orth, finalize)
 
@@ -88,7 +121,8 @@ MPO·MPS / MPO·MPO multiplication (named after MPSKit's `VOMPS` family).
 `D` (Int, default `Defaults.D`) fixes the bond dimension of the variational
 compression (overlap maximization over the variational manifold, consistent
 with MPSKit). The driver functions (`mult`, `compress`,
-`hadamard`) take the bond dimension from `alg.D`; the in-place drivers
+`hadamard`) take the bond dimension from `alg.D`（[`DMRG2`](@ref) 从
+`alg.trunc` 提取）; the in-place drivers
 (`mult!`, `compress!`, `hadamard!`) take it from the provided initial guess
 `out` and ignore `alg.D`. The strict compression-free constructions live as
 the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
@@ -131,6 +165,11 @@ the state with a global `gaugefix!` (right-canonical). `alg_gauge` follows the
     verbosity::Int = Defaults.verbosity
     finalize::F = Defaults._finalize
 end
+
+"变分压缩通道的算法并集（`mult`/`compress`/`hadamard` 及其 in-place 版本的
+positional `alg`；三引擎共享同一变分不动点——VOMPS 的 Jacobi-ALS、IDMRG 的
+单站 Gauss–Seidel、DMRG2 的两站 Gauss–Seidel）。"
+const CompressionAlgorithm = Union{VOMPS,IDMRG,DMRG2}
 
 struct IterativeConvergenceInfo
 	niter::Int

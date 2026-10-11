@@ -74,9 +74,9 @@ ring-trace fidelity sense). `DenseIMPS`/`CanonicalIMPS`（及 `DenseIMPO`/
 压缩目标（不做规范转换），输出类型恒为 `CanonicalIMPS`/`CanonicalIMPO`.
 The default initial guess is
 [`svdguess_compress`](@ref) (the input's own SVD truncation to `alg.D`). The
-positional `alg` dispatches [`VOMPS`](@ref) (ALS sweeps) or [`IDMRG`](@ref)
-(MPSKit sequential Gauss–Seidel sweeps with on-the-fly environment transfer),
-which share the same fixed point.
+positional `alg` dispatches [`VOMPS`](@ref) (Jacobi-ALS sweeps), [`IDMRG`](@ref)
+(single-site Gauss–Seidel sweeps) or [`DMRG2`](@ref) (two-site Gauss–Seidel
+sweeps with SVD truncation `alg.trunc`), which share the same fixed point.
 
 The second return is the engine's final environments（纯重叠通道的
 [`OverlapCache`](@ref)：bra = 被优化的压缩链、ket = 目标链；MPO 压缩在
@@ -84,13 +84,14 @@ The second return is the engine's final environments（纯重叠通道的
 [`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
 `converged` 收敛标志）。
 """
-function compress(ψ::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG})
-    envs = OverlapCache(svdguess_compress(ψ, alg.D), ψ, alg.alg_environments)
+function compress(ψ::AbstractInfiniteMPS, alg::CompressionAlgorithm)
+    D = something(_alg_guess_dim(alg), max_bonddim(ψ))
+    envs = OverlapCache(svdguess_compress(ψ, D), ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
-function compress(W::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG})
+function compress(W::AbstractInfiniteMPO, alg::CompressionAlgorithm)
     # 目标 MPS 的 ray 必须取 **AL 家族**（左正则串）：其周期 trace 才是算符串的
     # wavefunction（相似变换不变）；AC 家族在张量间携带 C 加权
     # （AC[ℓ] = AL[ℓ]·C[ℓ]），周期 trace 是规范依赖的加权量，作为压缩目标会
@@ -98,7 +99,8 @@ function compress(W::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG})
     # `vectorize`：CanonicalIMPO 逐家族携带规范数据（其 AL 家族正是该 ray 的
     # 左正则串）；DenseIMPO 为纯融合视图（不做规范转换）。
     ket = vectorize(W)
-    envs = OverlapCache(svdguess_compress(ket, alg.D), ket, alg.alg_environments)
+    D = something(_alg_guess_dim(alg), max_bonddim(ket))
+    envs = OverlapCache(svdguess_compress(ket, D), ket, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return devectorize(envs.bra), envs, info
 end
@@ -106,12 +108,13 @@ end
 # ---------------- compress! (in-place) ----------------
 
 """
-    compress!(out, ψ::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
-    compress!(out, W::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
+    compress!(out, ψ::AbstractInfiniteMPS, alg::CompressionAlgorithm) -> (out, envs, info)
+    compress!(out, W::AbstractInfiniteMPO, alg::CompressionAlgorithm) -> (out, envs, info)
 
 In-place [`compress`](@ref): `out` is the user-provided chain to be optimized
 as the initial guess; its bond profile is first brought to uniform
-`D = alg.D` with [`changebond!`](@ref). The target accepts `DenseIMPS`/
+`D = alg.D`（[`DMRG2`](@ref) 从 `alg.trunc` 提取）with [`changebond!`](@ref).
+The target accepts `DenseIMPS`/
 `CanonicalIMPS`（及 `DenseIMPO`/`CanonicalIMPO`，dense 类型经 `getproperty`
 家族视图直接参与，不做规范转换）. The optimized result is written back
 into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时（如实 `out` 遇复
@@ -121,16 +124,18 @@ into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时
 [`IterativeConvergenceInfo`](@ref)。
 """
 function compress!(out::CanonicalIMPS, ψ::AbstractInfiniteMPS,
-                   alg::Union{VOMPS,IDMRG})
-    changebond!(out; D = alg.D)
+                   alg::CompressionAlgorithm)
+    D = _alg_guess_dim(alg)
+    D === nothing || changebond!(out; D)
     envs = OverlapCache(out, ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
 function compress!(out::CanonicalIMPO, W::AbstractInfiniteMPO,
-                   alg::Union{VOMPS,IDMRG})
-    changebond!(out; D = alg.D)
+                   alg::CompressionAlgorithm)
+    D = _alg_guess_dim(alg)
+    D === nothing || changebond!(out; D)
     envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, devectorize(envs.bra)), envs, info
@@ -416,6 +421,24 @@ _local_AC(envs::OverlapCache, ℓ::Int) =
 _local_C(envs::OverlapCache, ℓ::Int) =
     _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs))), rightenv(envs, ℓ),
           envs.ket.C[ℓ])
+
+"`_local_AC2(envs, pos)`：`(pos, pos+1)` 窗口的两站局部映射（[`DMRG2`](@ref)
+用；rank-2 环境）。ket 两站张量取 `:ACAR` 形态（`ket.AC[pos]·ket.AR[pos+1]`，
+MPSKit `AC2` 的同款约定——AC 携带键权重、AR 延续右规范），以
+`leftenv(pos)`/`rightenv(pos+1)` 收缩——线性通道的窗口精确变分最优——以
+rank-4 `(aL, s1, s2, aR)` 返回（物理腿逐站保留，供 `_svd2!` 的两站分割）。"
+function _local_AC2(envs::OverlapCache, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    k1, k2 = envs.ket.AC[pos], envs.ket.AR[next]
+    GL, GR = leftenv(envs, pos), rightenv(envs, next)
+    T = promote_type(scalartype(GL), scalartype(GR), scalartype(k1), scalartype(k2))
+    k12 = similar(k1, T, size(k1, 1), size(k1, 2), size(k2, 2), size(k2, 3))
+    @tensor k12[bL, s1, s2, bR] := k1[bL, s1, m] * k2[m, s2, bR]
+    Θ = similar(k12, T, size(GL, 1), size(k12, 2), size(k12, 3), size(GR, 2))
+    @tensor Θ[aL, s1, s2, aR] := GL[aL, bL] * k12[bL, s1, s2, bR] * GR[bR, aR]
+    return Θ
+end
 
 "扫掠 finalize 回调的通道目标（[`compression_sweeps!`](@ref) 用）：compress
 通道 = ket。"
