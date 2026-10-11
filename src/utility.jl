@@ -181,7 +181,7 @@ function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Lanczos)
     vals, vecs, _ = _eigsolve(operator, x₀, 1, which;
                               ishermitian = true, tol = alg.tol,
                               krylovdim = alg.krylovdim, maxiter = alg.maxiter,
-                              eager = true)
+                              eager = alg.eager)
     return vals[1], vecs[1]
 end
 
@@ -226,11 +226,17 @@ InfiniteTEMPO 的 `largest_eigenpair` 委托等）：走标准 `KrylovKit.eigsol
 不是本征向量，实输入下甚至会以实向量配复本征值——本征方程残差 O(1)）；
 实数域保持的场景（规范谱固定点，主导本征值恒实正）用
 [`gauge_fixedpoint`](@ref)。
+
+`eager` 透传 `alg.eager`（KrylovKit 0.9+ 默认 `false`，MPSKit `fixedpoint`
+同款）：**不得**像旧实现那样硬编码 `eager = true`——近平坦谱（时间演化链的
+转移谱在 1 附近密集）下首个 `normres < tol` 的 Ritz 值的**本征值误差**被谱隙
+放大（Rabi 乘积通道实测 normres 5e-9 而 λ 误差 5.6e-6、随机流依赖下可达
+1e-4），环境质量抖动直接进入下游观测量的系统误差。
 """
 function fixedpoint(operator, x₀, which::Symbol, alg::KrylovKit.Arnoldi)
     vals, vecs, _ = _eigsolve(operator, x₀, 1, which; ishermitian = false,
                               tol = alg.tol, krylovdim = alg.krylovdim,
-                              maxiter = alg.maxiter, eager = true)
+                              maxiter = alg.maxiter, eager = alg.eager)
     return vals[1], vecs[1]
 end
 
@@ -244,13 +250,17 @@ fixedpoint(operator, x₀, which::Symbol, alg::DynamicTol) =
 mult/compress/hadamard 的环境通道在实输入下融合转移的 leading vector 可为复
 （MPSKit 对齐：环境按解的实际 eltype 存放、通道升为复算术——eigsolve 的
 复 Ritz 向量承载该提升；schursolve 的实 Schur 形式无法表示复本征对）。
-`krylovdim` 取 `Defaults.krylovdim`。"
+`krylovdim` 取 `Defaults.krylovdim`；`eager` 可用 `alg.eager` 覆盖，默认
+`true`（与 IMA 引擎既有行为及 MPSKit `approximate` 逐迭代对齐一致；调用方
+（如 InfiniteTEMPO 的 native IDMRG1 环境通道）如需完整收敛语义可显式传
+`eager = false`——近平坦谱下提前返回的本征值误差被谱隙放大，见
+`fixedpoint(::KrylovKit.Arnoldi)` 的说明。"
 function fixedpoint(operator, x₀, which::Symbol, alg::NamedTuple;
                     krylovdim::Int = Defaults.krylovdim)
     vals, vecs, _ = _eigsolve(operator, x₀, 1, which;
                               ishermitian = get(alg, :ishermitian, false),
                               tol = alg.tol, krylovdim = krylovdim,
-                              maxiter = alg.maxiter, eager = true)
+                              maxiter = alg.maxiter, eager = get(alg, :eager, true))
     return vals[1], vecs[1]
 end
 
