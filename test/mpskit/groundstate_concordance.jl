@@ -114,3 +114,54 @@ end
                               alg_eigsolve = Defaults.alg_eigsolve(; ishermitian = false))
     end
 end
+
+@testset "IDMRG2 行为一致性 ≡ MPSKit（同初态固定小迭代）" begin
+    # 两站基态 IDMRG2（严格对标 MPSKit `_localupdate_sweep_idmrg2!`）：同初态、
+    # 同参数（trunc 截断键维、动态容差），`tol = 0` 强制两包恰好跑 k 轮。判据
+    # 沿用 IDMRG 一致性测试：k 轮后的能量与态一致（Gauss–Seidel 环境顺序的
+    # 实现差异随 k 收敛到同一不动点）。要求单胞 ≥ 2（两站窗口定义，两包同限）。
+    T = ComplexF64
+    d = 2
+
+    function compare_idmrg2_k(H_our, H_mk, ψ0, D; ks = (1, 2, 3),
+                              e_tol = 1e-3, ψ_fid = 1e-3)
+        L = length(ψ0)
+        for k in ks
+            ψ1, envs1, i1 = find_groundstate(ψ0, H_our,
+                        InfiniteMPSAlgorithms.IDMRG2(; trunc = truncdim(D), maxiter = k,
+                                                     tol = 0.0, verbosity = 0))
+            ψ2, envs2, ϵ2 = MPSKit.find_groundstate(mkinfinitemps(ψ0), H_mk,
+                        MPSKit.IDMRG2(trscheme = MPSKit.truncrank(D),
+                                      maxiter = k, tol = 0.0, verbosity = 0))
+            @test i1.niter ≤ k
+            @test abs(real(expectationvalue(ψ1, H_our, envs1) / L) -
+                      real(MPSKit.expectation_value(ψ2, H_mk) / L)) < e_tol
+            @test _state_fidelity(ψ1, ψ2) > 1 - ψ_fid
+        end
+    end
+
+    # ---- TFIM（2-site 单胞：1-site W 重复两次） ----
+    J, h = 1.0, 1.0
+    lattice2 = fill(ℂ^d, 2)
+    W1 = tfim_hamiltonian(J = J, h = h, T = T)[1]
+    Random.seed!(1234)
+    ψ_tfim = CanonicalIMPS([randn(T, 8, d, 8), randn(T, 8, d, 8)])
+    @testset "TFIM" begin
+        compare_idmrg2_k(SparseIMPO([W1, W1]),
+                         MPSKit.InfiniteMPOHamiltonian(lattice2,
+                             1 => -h * σz_tk(T), 2 => -h * σz_tk(T),
+                             (1, 2) => -J * (σx_tk(T) ⊗ σx_tk(T)),
+                             (2, 3) => -J * (σx_tk(T) ⊗ σx_tk(T))),
+                         ψ_tfim, 4)
+    end
+
+    # ---- Heisenberg XXX（2-site 单胞） ----
+    hh = (1 / 4) * (σx_tk(T) ⊗ σx_tk(T) + σy_tk(T) ⊗ σy_tk(T) + σz_tk(T) ⊗ σz_tk(T))
+    Random.seed!(1234)
+    ψ_heis = CanonicalIMPS([randn(T, 12, d, 12), randn(T, 12, d, 12)])
+    @testset "Heisenberg" begin
+        compare_idmrg2_k(heisenberg_hamiltonian(T = T),
+                         MPSKit.InfiniteMPOHamiltonian(lattice2, (1, 2) => hh, (2, 3) => hh),
+                         ψ_heis, 12)
+    end
+end

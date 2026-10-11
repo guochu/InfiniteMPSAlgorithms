@@ -299,8 +299,8 @@ end
     end
 end
 
-@testset "DMRG2：两站变分压缩（compress）" begin
-    # MPSKit `approximate` 家族的 IDMRG2 移植（当前仅纯重叠通道开放）：
+@testset "IDMRG2：两站变分压缩（compress）" begin
+    # MPSKit `approximate` 家族的 IIDMRG2 移植（当前仅纯重叠通道开放）：
     # 两站窗口精确映射 + trunc 截断。与 VOMPS 共享同一变分不动点
     # ⇒ 结果逐射线一致；默认 trunc（alg_trunc 的 1e-13 cutoff）下无损。
     T = ComplexF64
@@ -308,32 +308,32 @@ end
     ψ = randomimps(T, [2, 2]; D = 6)
 
     # compress：截断键维与 VOMPS 同不动点
-    y2, _, _ = compress(ψ, DMRG2(trunc = truncdim(4)))
+    y2, _, _ = compress(ψ, IDMRG2(trunc = truncdim(4)))
     @test y2 isa CanonicalIMPS && ismixedcanonical(y2) && max_bonddim(y2) == 4
     ref4, _ = truncate!(copy(ψ); trunc = truncdim(4))
     @test abs(dot(y2, ψ)) ≥ abs(dot(ref4, ψ)) - 1e-9      # 变分 ≥ 谱截断
     yv, _, _ = compress(ψ, VOMPS(D = 4, maxiter = 300))
     @test abs(dot(y2, yv)) > 1 - 1e-8
     # 默认 trunc（cutoff 1e-13，初猜维数自动提取 ⇒ 不截断）无损
-    yd, _, _ = compress(ψ, DMRG2())
+    yd, _, _ = compress(ψ, IDMRG2())
     @test abs(dot(yd, ψ)) > 1 - 1e-10
     # in-place：changebond 预处理从 alg.trunc 提取
     out = CanonicalIMPS(collect(ψ.AL))
-    yo, _, _ = compress!(out, ψ, DMRG2(trunc = truncdim(4)))
+    yo, _, _ = compress!(out, ψ, IDMRG2(trunc = truncdim(4)))
     @test max_bonddim(yo) == 4 && abs(dot(yo, yv)) > 1 - 1e-8
     # L = 3：三站胞同样收敛到 VOMPS 不动点
     ψ3 = randomimps(T, [2, 2, 2]; D = 6)
-    y3, _, _ = compress(ψ3, DMRG2(trunc = truncdim(4), maxiter = 300))
+    y3, _, _ = compress(ψ3, IDMRG2(trunc = truncdim(4), maxiter = 300))
     yv3, _, _ = compress(ψ3, VOMPS(D = 4, maxiter = 300))
     @test max_bonddim(y3) == 4 && abs(dot(y3, yv3)) > 1 - 1e-8
     # 单胞约束（两站窗口定义）
     ψ1s = randomimps(T, [2]; D = 3)
-    @test_throws ArgumentError compress(ψ1s, DMRG2(trunc = truncdim(2)))
-    # 通道范围守卫：mult/hadamard 的 DMRG2 未开放（驱动签名不含 DMRG2）
+    @test_throws ArgumentError compress(ψ1s, IDMRG2(trunc = truncdim(2)))
+    # 通道范围守卫：mult/hadamard 的 IDMRG2 未开放（驱动签名不含 IDMRG2）
     W = randomimpo(T, [2, 2]; D = 3)
-    @test_throws MethodError mult(W, ψ, DMRG2(trunc = truncdim(4)))
+    @test_throws MethodError mult(W, ψ, IDMRG2(trunc = truncdim(4)))
     ψa = randomimps(T, [2, 2]; D = 3)
-    @test_throws MethodError hadamard(ψa, ψ, DMRG2(trunc = truncdim(4)))
+    @test_throws MethodError hadamard(ψa, ψ, IDMRG2(trunc = truncdim(4)))
 end
 
 # ---------------- mult!/compress!/hadamard! 完全对齐 ----------------

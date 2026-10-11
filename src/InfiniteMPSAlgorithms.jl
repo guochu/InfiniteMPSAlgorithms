@@ -155,7 +155,7 @@ export
     AbstractInfiniteMPS, AbstractInfiniteMPO, BondView,
     AC_hamiltonian, C_hamiltonian, calc_galerkin,
     # ground-state and time-evolution algorithms
-    Algorithm, VUMPS, IDMRG, DMRG2, TDVP, VOMPS, IterativeConvergenceInfo,
+    Algorithm, VUMPS, IDMRG, IDMRG2, TDVP, VOMPS, IterativeConvergenceInfo,
     find_groundstate, timestep, time_evolve, integrate,
     mult, hadamard, ⊙,
     fuse, copyphyims,

@@ -75,7 +75,7 @@ ring-trace fidelity sense). `DenseIMPS`/`CanonicalIMPS`（及 `DenseIMPO`/
 The default initial guess is
 [`svdguess_compress`](@ref) (the input's own SVD truncation to `alg.D`). The
 positional `alg` dispatches [`VOMPS`](@ref) (Jacobi-ALS sweeps), [`IDMRG`](@ref)
-(single-site Gauss–Seidel sweeps) or [`DMRG2`](@ref) (two-site Gauss–Seidel
+(single-site Gauss–Seidel sweeps) or [`IDMRG2`](@ref) (two-site Gauss–Seidel
 sweeps with SVD truncation `alg.trunc`), which share the same fixed point.
 
 The second return is the engine's final environments（纯重叠通道的
@@ -113,7 +113,7 @@ end
 
 In-place [`compress`](@ref): `out` is the user-provided chain to be optimized
 as the initial guess; its bond profile is first brought to uniform
-`D = alg.D`（[`DMRG2`](@ref) 从 `alg.trunc` 提取）with [`changebond!`](@ref).
+`D = alg.D`（[`IDMRG2`](@ref) 从 `alg.trunc` 提取）with [`changebond!`](@ref).
 The target accepts `DenseIMPS`/
 `CanonicalIMPS`（及 `DenseIMPO`/`CanonicalIMPO`，dense 类型经 `getproperty`
 家族视图直接参与，不做规范转换）. The optimized result is written back
@@ -422,7 +422,7 @@ _local_C(envs::OverlapCache, ℓ::Int) =
     _mapC(leftenv(envs, _mod1(ℓ + 1, length(envs))), rightenv(envs, ℓ),
           envs.ket.C[ℓ])
 
-"`_local_AC2(envs, pos)`：`(pos, pos+1)` 窗口的两站局部映射（[`DMRG2`](@ref)
+"`_local_AC2(envs, pos)`：`(pos, pos+1)` 窗口的两站局部映射（[`IDMRG2`](@ref)
 用；rank-2 环境）。ket 两站张量取 `:ACAR` 形态（`ket.AC[pos]·ket.AR[pos+1]`，
 MPSKit `AC2` 的同款约定——AC 携带键权重、AR 延续右规范），以
 `leftenv(pos)`/`rightenv(pos+1)` 收缩——线性通道的窗口精确变分最优——以

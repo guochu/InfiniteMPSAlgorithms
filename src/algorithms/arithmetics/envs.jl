@@ -174,9 +174,9 @@ function _mulR(A::AbstractArray{T,4}, C::AbstractMatrix) where {T}
 end
 
 """
-    compression_sweeps!(envs::CompressionEnvironments, alg::DMRG2) -> (envs, info)
+    compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2) -> (envs, info)
 
-统一扫掠引擎的两站模板（MPSKit `approximate` 家族的 `IDMRG2`；当前仅
+统一扫掠引擎的两站模板（MPSKit `approximate` 家族的 `IIDMRG2`；当前仅
 [`compress`](@ref) 的纯重叠通道 [`OverlapCache`](@ref) 开放——两站窗口的
 条件最优性要求窗口外腿为不同键（度量 = 恒等），wrap 窗口（N = 2 的全部
 窗口与 N ≥ 3 的 `(N, 1)`）的环闭合度量修正待补，算符/zip 通道暂不开放）。
@@ -189,11 +189,11 @@ end
 收敛判据为最大逐站 Galerkin 残差（同 VOMPS）。返回值契约同
 [`compression_sweeps!`](@ref) 的 IDMRG 方法。
 """
-function compression_sweeps!(envs::CompressionEnvironments, alg::DMRG2)
+function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
     envs isa OverlapCache ||
-        throw(ArgumentError("DMRG2 目前仅支持 compress（纯重叠通道）；mult/hadamard 待环度量修正后开放"))
+        throw(ArgumentError("IDMRG2 目前仅支持 compress（纯重叠通道）；mult/hadamard 待环度量修正后开放"))
     N = length(envs)
-    (N ≥ 2) || throw(ArgumentError("DMRG2 requires unit cell length >= 2"))
+    (N ≥ 2) || throw(ArgumentError("IDMRG2 requires unit cell length >= 2"))
     x = envs.bra
     ϵ = calc_galerkin(envs, x)
     iter = 0
@@ -227,7 +227,7 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::DMRG2)
         # 收敛判据：最大逐站 Galerkin 残差（同 VOMPS）
         ϵ = calc_galerkin(envs, x)
         push!(losses, ϵ)
-        alg.verbosity > 0 && _logiter(stdout, "DMRG2", iter, ϵ)
+        alg.verbosity > 0 && _logiter(stdout, "IDMRG2", iter, ϵ)
         # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
         x, envs = alg.finalize(iter, x, _finalize_target(envs), envs)
         envs.bra ≡ x || _copyinto!(envs.bra, x)
@@ -272,12 +272,12 @@ function _svd2!(x::CanonicalIMPO, pos::Int, Θ::AbstractArray{<:Any,4},
     return x
 end
 
-"`DMRG2` 驱动函数的初猜键维：算法级分派——`VOMPS`/`IDMRG` 取固定 `alg.D`；
-`DMRG2` 从 `alg.trunc` 提取（维数语义的方案取其上限 `D`；无维数语义
+"`IDMRG2` 驱动函数的初猜键维：算法级分派——`VOMPS`/`IDMRG` 取固定 `alg.D`；
+`IDMRG2` 从 `alg.trunc` 提取（维数语义的方案取其上限 `D`；无维数语义
 （`NoTruncation`/`TruncateRelError`）返回 `nothing`——调用方回退到目标链的
 无损键维上界（初猜不截断，截断完全由扫掠内的 SVD 方案执行））。"
 _alg_guess_dim(alg::Union{VOMPS,IDMRG}) = alg.D
-_alg_guess_dim(alg::DMRG2) = _alg_guess_dim(alg.trunc)
+_alg_guess_dim(alg::IDMRG2) = _alg_guess_dim(alg.trunc)
 _alg_guess_dim(trunc::TruncateDim) = trunc.D
 _alg_guess_dim(trunc::TruncateDimCutoff) = trunc.D
 _alg_guess_dim(::TruncationScheme) = nothing
