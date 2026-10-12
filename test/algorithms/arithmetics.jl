@@ -87,9 +87,9 @@ end
     end
 end
 
-"严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）。"
-apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
-    CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As))
+"严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）。构造器的
+gaugefix 幂迭代自带归一化（uniform_leftorth! 每轮 normalize!(C)）。"
+apply_exact(W, ψ) = CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As)
 
 @testset "mult：结果类型与正则性（含 naive 兜底）" begin
     # 确认点 1：mult 的所有 MPO 输出（精确 / lazy / naive 兜底）一律
@@ -99,8 +99,9 @@ apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
     W1 = rand_denseimpo(T, [2, 2]; D = 2)
     W2 = rand_denseimpo(T, [2, 2]; D = 3)
     I2 = identityimpo(T, [2, 2])
-    # 精确（无 alg）：严格 `*` + 规范化（mult 的两参数 mpo·mpo 版本已删除）
-    Pe = InfiniteMPSAlgorithms._global_normalize!(CanonicalIMPO(W1 * W2))
+    # 精确（无 alg）：严格 `*` + 构造器规范代表（自带归一化；mult 的两参数
+    # mpo·mpo 版本已删除）
+    Pe = CanonicalIMPO(W1 * W2)
     @test Pe isa CanonicalIMPO && ismixedcanonical(Pe) && bonddim(Pe, 1) == 6
     # mpo·mps 精确路径
     ψ = randomimps(T, [2, 2]; D = 3)

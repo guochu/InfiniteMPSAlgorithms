@@ -77,8 +77,7 @@
     # ---- mult / w1w2 ----
     I2 = identityimpo(T, [2, 2])
     # 严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）
-    apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
-        CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As))
+    apply_exact(W, ψ) = CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As)
     ψa = apply_exact(I2, ψg)
     @test abs(dot(ψa, ψg)) ≈ 1 atol = 1e-8
 

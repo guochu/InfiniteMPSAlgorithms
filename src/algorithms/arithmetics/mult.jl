@@ -252,18 +252,6 @@ rank-4 → CanonicalIMPO）。"
 _rebuild(ARs::Vector{<:AbstractArray{<:Any,3}}; kwargs...) = CanonicalIMPS(ARs; kwargs...)
 _rebuild(ARs::Vector{<:AbstractArray{<:Any,4}}; kwargs...) = CanonicalIMPO(ARs; kwargs...)
 
-"Uniform norm normalization (AC and C are scaled together, preserving the
-consistency of `AC = AL·C` and `AR = C[ℓ-1]⁻¹·AC`)."
-function _global_normalize!(x::CanonicalIMPS)
-    n = norm(x)
-    n == 0 && error("mult: zero-norm state")
-    for ℓ in 1:length(x)
-        x.AC[ℓ] .= x.AC[ℓ] ./ n
-        x.C[ℓ] .= x.C[ℓ] ./ n
-    end
-    return x
-end
-
 "通道标量类型提升（MPSKit 对齐）：实输入下融合转移的 leading vector 可为复，
 环境按 eigsolve 的实际 eltype 存放（复）；随后的 ALS 扫掠在复算术上进行——
 将演动态 `x` 提升到通道标量类型 `T`（已是 `T` 则原样返回）。"
@@ -463,17 +451,6 @@ end
 function _promote_scalar(::Type{T}, ψ::DenseIMPS) where {T}
     scalartype(ψ) == T && return ψ
     return DenseIMPS([T.(a) for a in ψ.As])
-end
-
-"Uniform norm normalization（CanonicalIMPO：AC 与 C 同除，保持 `AC = AL·C` 一致）。"
-function _global_normalize!(W::CanonicalIMPO)
-    n = norm(W)
-    n == 0 && error("mult: zero-norm state")
-    for ℓ in 1:length(W)
-        W.AC[ℓ] .= W.AC[ℓ] ./ n
-        W.C[ℓ] .= W.C[ℓ] ./ n
-    end
-    return W
 end
 
 "gauge_step! 的 CanonicalIMPO 版：候选 `AL` 串写入 `W.AL` 后

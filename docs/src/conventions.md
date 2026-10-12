@@ -81,29 +81,28 @@ ring normalization `⟨ψ, ψ⟩ = 1` with `norm(ψ) = norm(ψ.AC[1]) = 1`.
 The same method is defined for `CanonicalIMPO` on the MPS view
 (`⟨W, W⟩ = 1`).
 
-### 3. `norm`-preserving global normalization of algebra results
+### 3. `norm` preservation by construction
 
 The variational algebra engines (`mult`, `hadamard`, `compress`,
 ...) converge to a **ray**: the result is only defined up to a
-global phase and scale. Internally every engine terminates with
-`_global_normalize!(x)` ([`mult.jl`](../../src/algorithms/mult.jl)):
+global phase and scale. No explicit global normalization step is needed:
+every intermediate state stays normalized **by construction**, because each
+update step ends in a canonical re-gauging whose primitives enforce the
+package-wide invariant `‖AC[1]‖ = ‖C[0]‖ = 1`:
 
-```julia
-n = norm(x)                    # = ‖x.AC[1]‖
-x.AC[ℓ] ./= n   and   x.C[ℓ] ./= n   for all ℓ in 1:N
-```
+- `gaugefix!` / `uniform_leftorth!` normalize the bond center every sweep
+  (`C[N] = normalize!(C[N])`), so any state built or re-gauged through them
+  satisfies `norm(x) = ‖x.AC[1]‖ = 1`;
+- two-site updates factorize through an SVD with normalized singular values
+  (`s ./= norm(s)`), which carries the bond norm through the split;
+- the same factorizations maintain the pointwise identity `AC = AL·C`
+  exactly, so normalization never requires a separate re-canonicalization
+  pass afterwards.
 
-i.e. **one common scalar** is divided out of the `AC` and `C` families
-simultaneously. The common scalar (rather than a per-site normalization) is
-essential:
-
-- it commutes with all gauge structures and preserves the pointwise identity
-  `AC = AL·C` exactly — no re-canonicalization is needed afterwards;
-- it forces `‖AC[1]‖ = 1`, the package-wide norm convention.
-
-Per-site rescaling of a partially canonical state would instead break
+Per-site rescaling of a partially canonical state would break
 `AC = AL·C`, which is why the algebra engines never use per-site
-normalization on their intermediate results.
+rescaling on their intermediate results — normalization is always
+performed by (or together with) the gauge-restoring factorization.
 
 ### 4. Ray semantics: amplitudes are deliberately dropped
 

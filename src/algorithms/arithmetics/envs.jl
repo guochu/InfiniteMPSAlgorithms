@@ -81,7 +81,6 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::VOMPS)
             break
         end
     end
-    _global_normalize!(x)
     return envs, IterativeConvergenceInfo(iter, losses, converged)
 end
 
@@ -141,11 +140,12 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
         end
     end
     # 规范恢复：从 AR 重建混合规范（_rebuild，容差取 alg_gauge 的动态适配），
-    # 环境对终态重解
+    # 环境对终态重解。构造器的 gaugefix! 迭代自带 normalize!(C)（
+    # uniform_leftorth! 的每轮不变量），扫掠内逐站 normalize!(AC) + 等距
+    # 分解亦逐键保持 ‖C‖=1，无需额外全局归一化。
     alg_g = updatetol(alg.alg_gauge, iter, ϵ)
     x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
                  maxiter = alg_g.maxiter)
-    _global_normalize!(x)
     recalculate!(envs, x, alg.alg_environments)
     return envs, IterativeConvergenceInfo(iter, losses, converged)
 end
@@ -219,7 +219,6 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
         x.AC[N] = _mulFront(x.C[N-1], x.AR[N])
         x.AL[N], x.C[N] = _leftsplit(x.AC[N], alg.alg_orth)
         _, x.AR[1] = _rightsplit(x.AC[1], alg.alg_orth)
-        _global_normalize!(x)
         # 环境对终态重解（热启动 + 动态容差，同 VOMPS 的 envs_step!）
         alg_envs = updatetol(alg.alg_environments, iter, ϵ)
         recalculate!(envs, x, alg_envs)

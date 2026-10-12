@@ -140,8 +140,7 @@ end
     y, _, _ = compress(ψ, VOMPS(D = 6, maxiter = 10))
     @test phydims(y) == dims
     # 严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）
-    apply_exact(W, ψ) = InfiniteMPSAlgorithms._global_normalize!(
-        CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As))
+    apply_exact(W, ψ) = CanonicalIMPS((W * DenseIMPS(collect(ψ.AL))).As)
     ym = apply_exact(H1, ψ)
     @test phydims(ym) == dims
     @test phydims(superoperator(H1)) == [dims[ℓ]^2 for ℓ in 1:3]
