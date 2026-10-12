@@ -113,6 +113,14 @@ function Base.circshift(W::CanonicalIMPO, n)
                                    circshift(W.AR, n), circshift(W.AC, n))
 end
 
+"`complex(W)`：四族逐元素升复（`scalartype` 已是复数类型则原样返回）。"
+function Base.complex(W::CanonicalIMPO)
+    T = complex(scalartype(W))
+    scalartype(W) == T && return W
+    cast = Ws -> PeriodicVector([complex.(w) for w in Ws])
+    return CanonicalIMPO(cast(W.AL), cast(W.C), cast(W.AR), cast(W.AC))
+end
+
 "phydim(W, i): site `i` 的物理维（unit cell 内允许逐站不同；包内约定并强制
 方算符 `du == dd`）。"
 phydim(W::CanonicalIMPO, i::Integer) = size(W.AL[i], 2)
