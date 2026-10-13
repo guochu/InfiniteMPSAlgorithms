@@ -87,7 +87,7 @@ function dominant_env(op::Union{Nothing,DenseIMPO}, ψ::CanonicalIMPS;
     identity = isnothing(op)
     D = size(ψ.AL[1], 1)
     dim = identity ? D * D : D * size(op[1], 1) * D
-    T = scalartype(ψ)
+    T = identity ? scalartype(ψ) : promote_type(scalartype(ψ), scalartype(op))
     matvec = _dominant_env_matvec(op, ψ, side)
     v0 = ones(T, dim)
     λs, vs, _ = _eigsolve(matvec, v0, 1, which; ishermitian = false, tol = tol,
@@ -282,7 +282,7 @@ a ground-state search, as well as in `expectationvalue(ψ, W)`.
 """
 function DMRGCache(ψ::CanonicalIMPS, operator::DenseIMPO; kwargs...)
     N = length(ψ)
-    T = scalartype(ψ)
+    T = promote_type(scalartype(ψ), scalartype(operator))
     lefts = Vector{Array{T,3}}(undef, N)
     rights = Vector{Array{T,3}}(undef, N)
     _, L0 = dominant_env(operator, ψ; side = :left, kwargs...)

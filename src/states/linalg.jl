@@ -64,7 +64,7 @@ independent, so the periodic trace factorizes:
 waveform product `c12 = c1 .* c2` (physical dimension unchanged, bond dimension
 = product of the two bond dimensions).
 """
-function _naive_hadamard_tensor(A1::AbstractArray{T,3}, A2::AbstractArray{T,3}) where {T}
+function _naive_hadamard_tensor(A1::AbstractArray{T,3}, A2::AbstractArray{U,3}) where {T,U}
     a, s, b = size(A1)
     c, s2, e = size(A2)
     (s2 == s) || throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
@@ -73,7 +73,7 @@ function _naive_hadamard_tensor(A1::AbstractArray{T,3}, A2::AbstractArray{T,3}) 
     # form where s appears uncontracted in both operands). The slices are
     # rank-3: FiniteMPSAlgorithms extends Base.kron to same-rank N-d arrays
     # (no such method in Base itself before Julia 1.11).
-    out = similar(A1, a * c, s, b * e)
+    out = similar(A1, promote_type(T, U), a * c, s, b * e)
     for k in 1:s
         out[:, k, :] = kron(A2[:, k, :], A1[:, k, :])
     end

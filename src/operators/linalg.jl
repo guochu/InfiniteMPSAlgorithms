@@ -11,7 +11,7 @@
 Per-site fusion of an MPO tensor with a left-orthogonal MPS tensor:
 `B[(wl·bl), u, (wr·br)] = Σ_d W[wl, u, wr, d] · AL[bl, d, br]`.
 """
-function fuse(W::AbstractArray{T,4}, AL::AbstractArray{T,3}) where {T}
+function fuse(W::AbstractArray{T,4}, AL::AbstractArray{U,3}) where {T,U}
     wl, u, wr, _ = size(W)
     bl, _, br = size(AL)
     @tensor B5[wl, bl, u, wr, br] := W[wl, u, wr, d] * AL[bl, d, br]
@@ -29,7 +29,7 @@ dimension = product of the two bond dimensions (they need not be equal):
 W12[(wl1, wl2), u, (wr1, wr2), d] = Σ_m W1[wl1, u, wr1, m] · W2[wl2, m, wr2, d]
 ```
 """
-function _naive_mul_tensor(W1::AbstractArray{T,4}, W2::AbstractArray{T,4}) where {T}
+function _naive_mul_tensor(W1::AbstractArray{T,4}, W2::AbstractArray{U,4}) where {T,U}
     size(W1, 4) == size(W2, 2) ||
         throw(DimensionMismatch("MPO multiplication requires W1's physical in (d) to match W2's physical out (u)"))
     # this package's TensorOperations version does not support tuple composite

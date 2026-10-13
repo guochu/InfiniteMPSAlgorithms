@@ -235,6 +235,18 @@ function devectorize(ψ::CanonicalIMPS)
 end
 
 """
+    LinearAlgebra.dot(W₁, W₂; kwargs...)
+
+Hilbert–Schmidt inner product of two operators stored as
+[`CanonicalIMPO`](@ref): the ring overlap of the vectorized MPS views
+（`kwargs` 透传 vectorized 态的 `dot`，如 `krylovdim`；mixed scalar types
+promoted）.
+"""
+function LinearAlgebra.dot(W₁::CanonicalIMPO, W₂::CanonicalIMPO; kwargs...)
+    return dot(vectorize(W₁), vectorize(W₂); kwargs...)
+end
+
+"""
     fidelity(W₁, W₂) -> Real
     infidelity(W₁, W₂) -> Real
 

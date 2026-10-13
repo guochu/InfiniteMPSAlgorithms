@@ -121,8 +121,9 @@ function Base.getindex(tm::TransferMatrix{T}, i::Integer, j::Integer) where {T}
 end
 
 function TransferMatrix(above::AbstractVector{<:AbstractArray{T,3}},
-                        below::AbstractVector{<:AbstractArray{T,3}};
-                        side::Symbol = :left) where {T}
+                        below::AbstractVector{<:AbstractArray{U,3}};
+                        side::Symbol = :left) where {T,U}
+    T2 = promote_type(T, U)
     N = length(above)
     (length(below) == N) || throw(DimensionMismatch("above and below must have equal lengths"))
     if side === :left
@@ -145,15 +146,16 @@ function TransferMatrix(above::AbstractVector{<:AbstractArray{T,3}},
         end
     end
     d = size(above[1], 1) * size(below[1], 1)
-    return TransferMatrix{T,typeof(f)}(f, (d, d), side)
+    return TransferMatrix{T2,typeof(f)}(f, (d, d), side)
 end
 
-function TransferMatrix(a::AbstractArray{T,3}, b::AbstractArray{T,3}; side::Symbol = :left) where {T}
+function TransferMatrix(a::AbstractArray{T,3}, b::AbstractArray{U,3}; side::Symbol = :left) where {T,U}
     return TransferMatrix([a], [b]; side = side)
 end
 
-function TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{T,4},
-                        b::AbstractArray{T,3}; side::Symbol = :left) where {T}
+function TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{W,4},
+                        b::AbstractArray{U,3}; side::Symbol = :left) where {T,W,U}
+    T2 = promote_type(T, W, U)
     N = 1
     f = function (v::AbstractVector)
         if side === :left
@@ -167,7 +169,7 @@ function TransferMatrix(a::AbstractArray{T,3}, w::AbstractArray{T,4},
         end
     end
     d = size(a, 1) * size(w, 1) * size(b, 1)
-    return TransferMatrix{T,typeof(f)}(f, (d, d), side)
+    return TransferMatrix{T2,typeof(f)}(f, (d, d), side)
 end
 
 TransferMatrix(ψ::CanonicalIMPS) = TransferMatrix(ψ.AL, ψ.AL)
