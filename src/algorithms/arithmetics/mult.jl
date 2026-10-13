@@ -351,6 +351,230 @@ end
 operator。"
 _finalize_target(envs::MultCache) = envs.operator
 
+# ---------------- zip_sweeps! 融合核（InfiniteTEMPO get_left_xy 机制） ----------------
+#
+# 每站一次融合 (GL·operator.AL·ket.AL)——输入物理腿收缩、算符输出物理 u 与
+# 两条右键开放——同一融合张量双用：map 侧折 C 权重（Canonical 链；Dense 链
+# AC ≡ AL 纯视图恒等）后与 GR 收缩出局部 AC（逐腿 2 张量 GEMM），push 侧与
+# conj(新 bra) 单 GEMM 出下一站环境。与 `_local_AC`/`transfer_leftenv!` 同一
+# 收缩图的分解重排。
+
+"左融合（mpo·mps）：`K0[bl, u, r, m] = Σ GL[bl, w, al]·O.AL[w, u, r, d]·
+ket.AL[al, d, m]`。"
+function _fuse_left(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                   <:AbstractInfiniteMPS,<:Any}, ℓ::Int)
+    GL = envs.lefts[ℓ]                                              # (bl, w, al)
+    O = envs.operator.AL[_mod1(ℓ, length(envs.operator))]           # (w, u, r, d)
+    k = envs.ket.AL[ℓ]                                              # (al, d, m)
+    @tensor K0[bl, u, r, m] := GL[bl, w, al] * O[w, u, r, d] * k[al, d, m]
+    return K0
+end
+
+"左融合（mpo·mpo）：`K0[jL, u, r1, r2, dd] = Σ GL[jL, w1, w2]·W1.AL[w1, u, r1, mm]·
+W2.AL[w2, mm, r2, dd]`。"
+function _fuse_left(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                   <:AbstractInfiniteMPO,<:Any}, ℓ::Int)
+    GL = envs.lefts[ℓ]                                              # (jL, w1, w2)
+    W1 = envs.operator.AL[_mod1(ℓ, length(envs.operator))]          # (w1, u, r1, mm)
+    W2 = envs.ket.AL[ℓ]                                             # (w2, mm, r2, dd)
+    @tensor K0[jL, u, r1, r2, dd] := GL[jL, w1, w2] * W1[w1, u, r1, mm] * W2[w2, mm, r2, dd]
+    return K0
+end
+
+"map（mpo·mps，L→R）：`AC[aL, u, aR] = Σ K0·O.C[r, w′]·ket.C[m, bR]·
+GR[bR, w′, aR]`（`_local_AC` 的 `GL·ket.AC·O.AC·GR` 经 AC = AL·C 分解重排）。"
+function _local_AC_fused(K0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                                    <:AbstractInfiniteMPS,<:Any}, ℓ::Int)
+    Lop = length(envs.operator)
+    GR = envs.rights[ℓ]                                             # (bR, w′, aR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.operator, _mod1(ℓ, Lop)))  # r ← O.C[r, w′]
+    K = _fold_bond(K, Val(4), _bondC(envs.ket, ℓ))                    # m ← ket.C[m, bR]
+    return @tensor AC[aL, u, aR] := K[aL, u, w′, bR] * GR[bR, w′, aR]
+end
+
+"map（mpo·mpo，L→R）：`AC4[jL, u, jR, dd] = Σ K0·W1.C[r1, c1]·W2.C[r2, c2]·
+GR[c2, c1, jR]`。"
+function _local_AC_fused(K0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                                    <:AbstractInfiniteMPO,<:Any}, ℓ::Int)
+    Lop = length(envs.operator)
+    GR = envs.rights[ℓ]                                             # (c2, c1, jR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.operator, _mod1(ℓ, Lop)))  # r1 ← C1[r1, c1]
+    K = _fold_bond(K, Val(4), _bondC(envs.ket, ℓ))                    # r2 ← C2[r2, c2]
+    return @tensor AC4[jL, u, jR, dd] := K[jL, u, c1, c2, dd] * GR[c2, c1, jR]
+end
+
+"push（L→R，mpo·mps/mpo·mpo 统一）：`lefts[ℓ+1][bl′, …] =
+Σ conj(x.AL[ℓ])·K0`——bra 的 (左键, 物理) 与 K0 的 (bl, u) 单 GEMM（K0 的
+开放腿序 = 融合时保留的 bra 侧腿，直接对齐）。"
+function _push_left_fused!(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                          <:AbstractInfiniteMPS,<:Any}, K0, x, ℓ::Int)
+    below = x.AL[ℓ]                                   # (bl, u, bl′)
+    Bmat = adjoint(reshape(below, :, size(below, 3)))  # (bl′, bl·u)
+    new = reshape(Bmat * reshape(K0, size(below, 1) * size(below, 2), :),
+                  size(below, 3), size(K0, 3), size(K0, 4))          # (bl′, w′, al′)
+    envs.lefts[_mod1(ℓ + 1, length(envs))] = new
+    return envs
+end
+
+function _push_left_fused!(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                          <:AbstractInfiniteMPO,<:Any}, K0, x, ℓ::Int)
+    below = x.AL[ℓ]                                   # (jL, u, jR, dd)
+    # 共享指标 (jL, u, dd)、输出新键 jR：bra 需先 permute 把 jR 挪到末位
+    #（reshape 不跳腿，4 维 bra 直接 reshape 会把 jR 交织进行序）
+    Bmat = adjoint(reshape(permutedims(below, (1, 2, 4, 3)),
+                           :, size(below, 3)))         # (jR, jL·u·dd)
+    Kmat = reshape(permutedims(K0, (1, 2, 5, 3, 4)),
+                   size(below, 1) * size(below, 2) * size(below, 4), :)  # (jL·u·dd, r1·r2)
+    new = reshape(Bmat * Kmat, size(below, 3), size(K0, 3), size(K0, 4))  # (jR, r1, r2)
+    envs.lefts[_mod1(ℓ + 1, length(envs))] = new
+    return envs
+end
+
+"右融合（mpo·mps）：`S0[q, u, p, aR] = Σ GR[al, w, aR]·O.AR[p, u, w, d]·
+ket.AR[q, d, al]`。"
+function _fuse_right(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                    <:AbstractInfiniteMPS,<:Any}, ℓ::Int)
+    GR = envs.rights[ℓ]                                             # (al, w, aR)
+    O = envs.operator.AR[_mod1(ℓ, length(envs.operator))]           # (p, u, w, d)
+    k = envs.ket.AR[ℓ]                                              # (q, d, al)
+    @tensor S0[q, u, p, aR] := GR[al, w, aR] * O[p, u, w, d] * k[q, d, al]
+    return S0
+end
+
+"右融合（mpo·mpo）：`S0[a2, a1, u, jR, dd] = Σ GR[c2, c1, jR]·W2.AR[a2, mm, c2, dd]·
+W1.AR[a1, u, c1, mm]`。"
+function _fuse_right(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                    <:AbstractInfiniteMPO,<:Any}, ℓ::Int)
+    GR = envs.rights[ℓ]                                             # (c2, c1, jR)
+    W2 = envs.ket.AR[ℓ]                                             # (a2, mm, c2, dd)
+    W1 = envs.operator.AR[_mod1(ℓ, length(envs.operator))]          # (a1, u, c1, mm)
+    @tensor S0[a2, a1, u, jR, dd] := GR[c2, c1, jR] * W2[a2, mm, c2, dd] * W1[a1, u, c1, mm]
+    return S0
+end
+
+"map（mpo·mps，R→L）：`AC[aL, u, aR] = Σ GL·O.C[w, p]·ket.C[bL, q]·S0[q, u, p, aR]`
+（AC = C·AR 的左键 C 折入 GL）。"
+function _local_AC_fusedR(S0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                                     <:AbstractInfiniteMPS,<:Any}, ℓ::Int)
+    Lop = length(envs.operator)
+    GL = envs.lefts[ℓ]                                              # (aL, w, bL)
+    G = _fold_bond(GL, Val(2), _bondC(envs.operator, _mod1(ℓ - 1, Lop)))  # w ← C_op[w, p]
+    G = _fold_bond(G, Val(3), _bondC(envs.ket, _mod1(ℓ - 1, length(envs))))  # bL ← C_k[bL, q]
+    return @tensor AC[aL, u, aR] := G[aL, p, q] * S0[q, u, p, aR]
+end
+
+"map（mpo·mpo，R→L）：`AC4[jL, u, jR, dd] = Σ GL·C1[w1, a1]·C2[w2, a2]·
+S0[a2, a1, u, jR, dd]`。"
+function _local_AC_fusedR(S0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                                     <:AbstractInfiniteMPO,<:Any}, ℓ::Int)
+    Lop = length(envs.operator)
+    GL = envs.lefts[ℓ]                                              # (jL, w1, w2)
+    G = _fold_bond(GL, Val(2), _bondC(envs.operator, _mod1(ℓ - 1, Lop)))  # w1 ← C1[w1, a1]
+    G = _fold_bond(G, Val(3), _bondC(envs.ket, _mod1(ℓ - 1, length(envs))))  # w2 ← C2[w2, a2]
+    return @tensor AC4[jL, u, jR, dd] := G[jL, a1, a2] * S0[a2, a1, u, jR, dd]
+end
+
+"两站 map（IDMRG2 zip 融合，mpo·mps）：`Θ[aL, u1, u2, aR] = Σ K0·C_O·C_k·
+O2.AR[r, u2, r2, s2]·ket2.AR[m, s2, b2]·GR`（`_local_AC2` 的 `GL·O.AC[pos]·
+O.AR[next]·ket.AC[pos]·ket.AR[next]·GR` 经 K0 = GL·AL·AL 融合 + AC = AL·C
+分解重排；K0 由 `_fuse_left(envs, pos)` 双用——map 与左推共享）。"
+function _local_AC2_fused(K0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                              <:AbstractInfiniteMPS,<:Any}, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    Lop = length(envs.operator)
+    O2 = envs.operator.AR[_mod1(next, Lop)]                         # (r, u2, r2, s2)
+    k2 = envs.ket.AR[next]                                          # (m, s2, b2)
+    GR = envs.rights[next]                                          # (b2, r2, aR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.operator, _mod1(pos, Lop)))  # r′ ← C_O[r′, r]
+    K = _fold_bond(K, Val(4), _bondC(envs.ket, pos))                    # m′ ← C_k[m′, m]
+    @tensor Y[aL, u1, r, s2, b2] := K[aL, u1, r, m] * k2[m, s2, b2]
+    @tensor Z[aL, u1, u2, r2, b2] := Y[aL, u1, r, s2, b2] * O2[r, u2, r2, s2]
+    return @tensor Θ[aL, u1, u2, aR] := Z[aL, u1, u2, r2, b2] * GR[b2, r2, aR]
+end
+
+"两站 map（IDMRG2 zip 融合，mpo·mpo）：`Θ4 = K0·C_O·C_k·ket2.AR·O2.AR·GR`
+（融合物理腿 `(vo·d)` 视图输出，同 `_svd2!(::CanonicalIMPO)` 的分割约定；
+K0 的 (r1, r2) 键腿折窗口 C 权重后分别接 O2/ket2 的左键）。"
+function _local_AC2_fused(K0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                              <:AbstractInfiniteMPO,<:Any}, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    Lop = length(envs.operator)
+    k2 = envs.ket.AR[next]                                          # (m, u2, b2, d2)
+    O2 = envs.operator.AR[_mod1(next, Lop)]                         # (r1, vo2, r2, do2)
+    GR = envs.rights[next]                                          # (b2, r2, jR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.operator, _mod1(pos, Lop)))  # r1′ ← C_O[r1′, r1]
+    K = _fold_bond(K, Val(4), _bondC(envs.ket, pos))                    # r2′ ← C_k[r2′, m]
+    # K legs (jL, vo1, r1, m, d1)
+    @tensor Y[jL, vo1, d1, r1, u2, d2, b2] := K[jL, vo1, r1, m, d1] * k2[m, u2, b2, d2]
+    @tensor Z[jL, vo1, d1, vo2, d2, r2, b2] := Y[jL, vo1, d1, r1, u2, d2, b2] * O2[r1, vo2, r2, u2]
+    @tensor Θ4[jL, vo1, d1, vo2, d2, jR] := Z[jL, vo1, d1, vo2, d2, r2, b2] * GR[b2, r2, jR]
+    # 融合物理腿 (vo·d)（列主序 vo 最快，同 `_local_AC2` 的 vectorize 约定）
+    return reshape(Θ4, size(Θ4, 1), size(Θ4, 2) * size(Θ4, 3),
+                   size(Θ4, 4) * size(Θ4, 5), size(Θ4, 6))
+end
+
+"两站 map（IDMRG2 zip 融合，R→L，mpo·mps）：`Θ = GL·O.AL[pos]·ket.AL[pos]·
+C_O·C_k·S0`（`_local_AC2_fused` 的镜像：融合在 next 站——S0 由
+`_fuse_right(envs, next)` 双用，map 与右推共享；窗口 C 权重折入 S0 的键腿）。"
+function _local_AC2_fusedR(S0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                               <:AbstractInfiniteMPS,<:Any}, pos::Int)
+    N = length(envs)
+    Lop = length(envs.operator)
+    O1 = envs.operator.AL[_mod1(pos, Lop)]                          # (w, u1, r, d1)
+    k1 = envs.ket.AL[pos]                                           # (m, d1, r′)
+    GL = envs.lefts[pos]                                            # (aL, w, m)
+    S = _fold_bond(S0, Val(1), _bondCT(_bondC(envs.ket, pos)))          # q ← C_kᵀ[q, q′]
+    S = _fold_bond(S, Val(3), _bondCT(_bondC(envs.operator, _mod1(pos, Lop))))  # p ← C_Oᵀ[p, p′]
+    @tensor X[aL, m, u1, r, d1] := GL[aL, w, m] * O1[w, u1, r, d1]
+    @tensor Y[aL, u1, r, r′] := X[aL, m, u1, r, d1] * k1[m, d1, r′]
+    return @tensor Θ[aL, u1, u2, aR] := Y[aL, u1, r, r′] * S[r′, u2, r, aR]
+end
+
+"两站 map（IDMRG2 zip 融合，R→L，mpo·mpo）：`Θ4 = GL·O1·k1·S0·C`（融合物理腿
+`(vo·d)` 视图输出；S0 的 (a2, a1) 键腿折窗口 C 权重后分别接 k1/O1 的右键）。"
+function _local_AC2_fusedR(S0, envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                               <:AbstractInfiniteMPO,<:Any}, pos::Int)
+    Lop = length(envs.operator)
+    O1 = envs.operator.AL[_mod1(pos, Lop)]                          # (w1, vo1, r1, u1)
+    k1 = envs.ket.AL[pos]                                           # (w2, u1, r2, d1)
+    GL = envs.lefts[pos]                                            # (jL, w1, w2)
+    S = _fold_bond(S0, Val(1), _bondCT(_bondC(envs.ket, pos)))          # a2 ← C_kᵀ[a2, r2]
+    S = _fold_bond(S, Val(2), _bondCT(_bondC(envs.operator, _mod1(pos, Lop))))  # a1 ← C_Oᵀ[a1, r1]
+    @tensor X[jL, w2, vo1, r1, u1] := GL[jL, w1, w2] * O1[w1, vo1, r1, u1]
+    @tensor Y[jL, vo1, r1, r2, d1] := X[jL, w2, vo1, r1, u1] * k1[w2, u1, r2, d1]
+    # S legs (r2, r1, vo2, jR, d2)：折叠后的键腿在前、物理 (vo2, d2) 开放
+    @tensor Θ4[jL, vo1, d1, vo2, d2, jR] := Y[jL, vo1, r1, r2, d1] * S[r2, r1, vo2, jR, d2]
+    # 融合物理腿 (vo·d)（列主序 vo 最快，同 `_local_AC2` 的 vectorize 约定）
+    return reshape(Θ4, size(Θ4, 1), size(Θ4, 2) * size(Θ4, 3),
+                   size(Θ4, 4) * size(Θ4, 5), size(Θ4, 6))
+end
+
+"push（R→L，mpo·mps）：`rights[ℓ-1][q, p, bl′] = Σ conj(x.AR[ℓ][bl′, u, bl])·
+S0[q, u, p, bl]`（共享 (u, bl) 单 GEMM）。"
+function _push_right_fused!(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                           <:AbstractInfiniteMPS,<:Any}, S0, x, ℓ::Int)
+    below = x.AR[ℓ]                                   # (bl′, u, bl)
+    Bmat = reshape(conj(below), size(below, 1), :)     # (bl′, u·bl)：bra 共轭（同 general push）
+    Smat = reshape(permutedims(S0, (2, 4, 1, 3)), :, size(S0, 1) * size(S0, 3))  # (u·bl, q·p)
+    new = reshape(Bmat * Smat, size(below, 1), size(S0, 1), size(S0, 3))         # (bl′, q, p)
+    envs.rights[_mod1(ℓ - 1, length(envs))] = permutedims(new, (2, 3, 1))        # (q, p, bl′)
+    return envs
+end
+
+"push（R→L，mpo·mpo）：`rights[ℓ-1][a2, a1, jL] = Σ conj(x.AR[ℓ][jL, u, jR, dd])·
+S0[a2, a1, u, jR, dd]`（共享 (u, jR, dd) 单 GEMM）。"
+function _push_right_fused!(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                           <:AbstractInfiniteMPO,<:Any}, S0, x, ℓ::Int)
+    below = x.AR[ℓ]                                   # (jL, u, jR, dd)
+    Bmat = reshape(conj(below), size(below, 1), :)     # (jL, u·jR·dd)：bra 共轭（同 general push）
+    Smat = reshape(permutedims(S0, (3, 4, 5, 1, 2)), :, size(S0, 1) * size(S0, 2))  # (u·jR·dd, a2·a1)
+    new = reshape(Bmat * Smat, size(below, 1), size(S0, 1), size(S0, 2))            # (jL, a2, a1)
+    envs.rights[_mod1(ℓ - 1, length(envs))] = permutedims(new, (2, 3, 1))           # (a2, a1, jL)
+    return envs
+end
+
 "Maximum per-site Galerkin residual (mirrors MPSKit's
 `calc_galerkin(below, operator, above, envs)`，语义同 `_galerkin(AL, AC_map)`：
 local-map 输出在当前态 `x.AL` 切空间上的正交分量范数)。mpo·mps / mpo·mpo

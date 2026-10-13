@@ -372,6 +372,157 @@ function transfer_rightenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
     return envs
 end
 
+# ---------------- zip_sweeps! 融合核（InfiniteTEMPO get_left_xy 机制） ----------------
+#
+# 每站一次融合 (GL·A2.AL·A1.AL)——共享物理腿 s 收缩进融合张量（zip 的物理腿
+# 三方共享，map 中开放、push 中随 bra 收缩）——同一融合张量双用：map 侧折
+# C1/C2 权重后与 GR 收缩出局部 AC，push 侧与 conj(新 bra) 单 GEMM 出下一站
+# 环境。与 `_mapAC_zip`/`_zip_push_left` 同一收缩图的分解重排。
+
+"左融合：`K0[xL, s, n, m] = Σ GL[xL, a, c]·A1.AL[a, s, n]·A2.AL[c, s, m]`
+（Ket[(c,a), s, (e,b)] 的因子化部分，(n, m) = 两因子右键开放）。物理腿 s 为
+A1/A2 共享的开放指标——不存在合法的二元收缩树 ⇒ 键 a 先单步收缩，再按物理
+片 batched GEMM（同 `_mapAC_zip` 步 2a 方案），最大中间张量 O(Dx·D1·D2·d)。"
+function _fuse_left(envs::HadamardCache, ℓ::Int)
+    GL = envs.lefts[ℓ]                    # (xL, a, c)
+    A2 = envs.ket2.AL[ℓ]                  # (c, s, m)
+    A1 = envs.ket1.AL[ℓ]                  # (a, s, n)
+    xL, d, n1, m2 = size(GL, 1), size(A1, 2), size(A1, 3), size(A2, 3)
+    D2 = size(A2, 1)
+    T = promote_type(scalartype(GL), scalartype(A2), scalartype(A1))
+    # 步1（键 a，合法二元收缩）：Y[xL, c, s, n] = Σ_a GL[xL, a, c]·A1[a, s, n]
+    @tensor Y[xL, c, s, n] := GL[xL, a, c] * A1[a, s, n]
+    # 步2（键 c；s 逐片）：K0[xL, s, n, m] = Σ_c Y[xL, c, s, n]·A2[c, s, m]
+    K0 = zeros(T, xL, d, n1, m2)
+    for s in 1:d
+        Ym = reshape(permutedims((@view Y[:, :, s, :]), (1, 3, 2)), xL * n1, D2)  # ((xL n), c)
+        K0[:, s, :, :] .= reshape(Ym * (@view A2[:, s, :]), xL, n1, m2)
+    end
+    return K0
+end
+
+"map（L→R）：`AC[xL, p, xR] = Σ K0·C1[n, b]·C2[m, e]·GR[b, e, xR]`（`_mapAC_zip`
+的 `GL·A2.AC·A1.AC·GR` 经 AC = AL·C 分解重排）。"
+function _local_AC_fused(K0, envs::HadamardCache, ℓ::Int)
+    GR = envs.rights[ℓ]                   # (b, e, xR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.ket1, ℓ))    # n ← C1[n, b]
+    K = _fold_bond(K, Val(4), _bondC(envs.ket2, ℓ))     # m ← C2[m, e]
+    return @tensor AC[xL, p, xR] := K[xL, p, b, e] * GR[b, e, xR]
+end
+
+"push（L→R）：`lefts[ℓ+1][bl′, n, m] = Σ conj(x.AL[ℓ][bl, s, bl′])·K0[bl, s, n, m]`
+（共享 (bl, s) 单 GEMM）。"
+function _push_left_fused!(envs::HadamardCache, K0, x, ℓ::Int)
+    below = x.AL[ℓ]                       # (bl, s, bl′)
+    Bmat = adjoint(reshape(below, :, size(below, 3)))   # (bl′, bl·s)
+    new = reshape(Bmat * reshape(K0, size(below, 1) * size(below, 2), :),
+                  size(below, 3), size(K0, 3), size(K0, 4))             # (bl′, n, m)
+    envs.lefts[_mod1(ℓ + 1, length(envs))] = new
+    return envs
+end
+
+"右融合：`S0[m, n, s, xR] = Σ GR[b, e, xR]·A2.AR[m, s, e]·A1.AR[n, s, b]`。
+物理腿 s 为 A1/A2 共享的开放指标 ⇒ 键 b 先单步收缩，再按物理片 batched
+GEMM（同 `_mapAC_zip` 步 2a 方案），最大中间张量 O(D1·D2·Dx·d)。"
+function _fuse_right(envs::HadamardCache, ℓ::Int)
+    GR = envs.rights[ℓ]                   # (b, e, xR)
+    A2 = envs.ket2.AR[ℓ]                  # (m, s, e)
+    A1 = envs.ket1.AR[ℓ]                  # (n, s, b)
+    m2, d, e2, n1 = size(A2, 1), size(A2, 2), size(A2, 3), size(A1, 1)
+    xR = size(GR, 3)
+    T = promote_type(scalartype(GR), scalartype(A2), scalartype(A1))
+    # 步1（键 b，合法二元收缩）：X[n, s, e, bR] = Σ_b A1[n, s, b]·GR[b, e, bR]
+    @tensor X[n, s, e, bR] := A1[n, s, b] * GR[b, e, bR]
+    # 步2（键 e；s 逐片）：S0[m, n, s, bR] = Σ_e A2[m, s, e]·X[n, s, e, bR]
+    S0 = zeros(T, m2, n1, d, xR)
+    for s in 1:d
+        Xm = reshape(permutedims((@view X[:, s, :, :]), (2, 1, 3)), e2, n1 * xR)  # (e, (n bR))
+        S0[:, :, s, :] .= reshape((@view A2[:, s, :]) * Xm, m2, n1, xR)
+    end
+    return S0
+end
+
+"map（R→L）：`AC[xL, p, xR] = Σ GL·C1[a, n]·C2[c, m]·S0[m, n, p, xR]`（AC = C·AR
+的左键 C 折入 GL）。"
+function _local_AC_fusedR(S0, envs::HadamardCache, ℓ::Int)
+    N = length(envs)
+    GL = envs.lefts[ℓ]                    # (xL, a, c)
+    G = _fold_bond(GL, Val(2), _bondC(envs.ket1, _mod1(ℓ - 1, N)))  # a ← C1[a, n]
+    G = _fold_bond(G, Val(3), _bondC(envs.ket2, _mod1(ℓ - 1, N)))   # c ← C2[c, m]
+    return @tensor AC[xL, p, xR] := G[xL, n, m] * S0[m, n, p, xR]
+end
+
+"两站 map（IDMRG2 zip 融合）：`Θ[xL, s1, s2, xR] = Σ K0·C1·C2·A1.AR[next]·
+A2.AR[next]·GR`（`_local_AC2` 的 `GL·t2·t1·GR`（t = AC·AR 两站因子）经
+K0 = GL·A1.AL·A2.AL 融合 + AC = AL·C 分解重排；K0 由 `_fuse_left(envs, pos)`
+双用——map 与左推共享）。next 站两因子的物理腿 s2 共享开放（同 `_local_AC2`
+的 batched 限制）⇒ 键 (n′, m′) 先单步折 C，再按 s2 片 GEMM，最大中间张量
+O(Dx·D1·D2·Dx·d)。"
+function _local_AC2_fused(K0, envs::HadamardCache, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    A1 = envs.ket1.AR[next]               # (n′, s2, b)
+    A2 = envs.ket2.AR[next]               # (m′, s2, e)
+    GR = envs.rights[next]                # (b, e, xR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.ket1, pos))   # n ← C1[n, n′]
+    K = _fold_bond(K, Val(4), _bondC(envs.ket2, pos))    # m ← C2[m, m′]
+    # 步1（键 b，合法二元收缩）：R1[n′, s2, e, xR] = Σ_b A1[n′, s2, b]·GR[b, e, xR]
+    @tensor R1[n′, s2, e, xR] := A1[n′, s2, b] * GR[b, e, xR]
+    # 步2（键 e；s2 逐片）：R2[n′, m′, s2, xR] = Σ_e R1[n′, s2, e, xR]·A2[m′, s2, e]
+    # 步3：Θ[:, :, s2, :] = Σ_{n′, m′} K·R2（K 行序 (xL·s1)、R2 行序 (n′·m′)）
+    xL, d = size(K, 1), size(K, 2)
+    n2, m2, e2, xR = size(A1, 1), size(A2, 1), size(A2, 3), size(GR, 3)
+    T = promote_type(scalartype(K), scalartype(R1), scalartype(A2))
+    Θ = zeros(T, xL, d, d, xR)
+    Km = reshape(K, xL * d, n2 * m2)
+    for s2 in 1:d
+        R1m = reshape(permutedims((@view R1[:, s2, :, :]), (1, 3, 2)), n2 * xR, e2)  # ((n′ xR), e)
+        R2 = reshape(R1m * transpose((@view A2[:, s2, :])), n2, xR, m2)             # (n′, xR, m′)
+        R2m = reshape(permutedims(R2, (1, 3, 2)), n2 * m2, xR)                      # ((n′ m′), xR)
+        Θ[:, :, s2, :] .= reshape(Km * R2m, xL, d, xR)
+    end
+    return Θ
+end
+
+"两站 map（IDMRG2 zip 融合，R→L）：`Θ = GL·A1.AL[pos]·A2.AL[pos]·C1·C2·S0`
+（`_local_AC2_fused` 的镜像：融合在 next 站——S0 由 `_fuse_right(envs, next)`
+双用，map 与右推共享；窗口 C 权重折入 S0 的 (m, n) 键腿）。pos 站两因子物理腿
+s1 共享开放 ⇒ 键 (n′, m′) 先两步收缩，再按 s1 片 GEMM。"
+function _local_AC2_fusedR(S0, envs::HadamardCache, pos::Int)
+    A1a = envs.ket1.AL[pos]               # (a, s1, n′)
+    A2a = envs.ket2.AL[pos]               # (c, s1, m′)
+    GL = envs.lefts[pos]                  # (xL, a, c)
+    S = _fold_bond(S0, Val(1), _bondCT(_bondC(envs.ket2, pos)))   # m ← C2ᵀ[m′, m]
+    S = _fold_bond(S, Val(2), _bondCT(_bondC(envs.ket1, pos)))    # n ← C1ᵀ[n′, n]
+    # 步1（键 a，合法二元收缩，4 腿，s1 批量）：Z[xL, c, s1, n′] = Σ_a GL·A1a
+    @tensor Z[xL, c, s1, n′] := GL[xL, a, c] * A1a[a, s1, n′]
+    # 步2（键 (c, n′, m′)；s1 逐片——s1 为两因子共享开放指标，与
+    # `_local_AC2_fused` 的 per-s 方案镜像）：
+    #   Θs[xL, s2, xR] = Σ_{c, n′, m′} Z[:, s1, :]·A2a[:, s1, :]·S
+    xL, d, n2 = size(Z, 1), size(Z, 3), size(Z, 4)
+    m2, s2d, xR = size(S, 1), size(S, 3), size(S, 4)
+    T = promote_type(scalartype(Z), scalartype(S), scalartype(A2a))
+    Θ = zeros(T, xL, d, s2d, xR)
+    for s1 in 1:d
+        Zs = @view Z[:, :, s1, :]                       # (xL, c, n′)
+        A2s1 = @view A2a[:, s1, :]                      # (c, m′)
+        @tensor Θs[xL, s2, xR] := Zs[xL, c, n′] * A2s1[c, m′] * S[m′, n′, s2, xR]
+        Θ[:, s1, :, :] = Θs
+    end
+    return Θ
+end
+
+"push（R→L）：`rights[ℓ-1][n, m, bl′] = Σ conj(x.AR[ℓ][bl′, s, bl])·
+S0[n, m, s, bl]`（共享 (s, bl) 单 GEMM）。"
+function _push_right_fused!(envs::HadamardCache, S0, x, ℓ::Int)
+    below = x.AR[ℓ]                       # (bl′, s, bl)
+    Bmat = reshape(conj(below), size(below, 1), :)       # (bl′, s·bl)：bra 共轭（同 general push）
+    Smat = reshape(permutedims(S0, (3, 4, 1, 2)), :, size(S0, 1) * size(S0, 2))  # (s·bl, n·m)
+    new = reshape(Bmat * Smat, size(below, 1), size(S0, 1), size(S0, 2))         # (bl′, m, n)
+    envs.rights[_mod1(ℓ - 1, length(envs))] = permutedims(new, (3, 2, 1))        # (n, m, bl′)
+    return envs
+end
+
 "zip 通道的环境重标定（MPSKit `normalize!` 语义：GR Frobenius 归一、GL[ℓ+1]
 按局部 C 通道 overlap λ 缩放；kron(C2, C1) 从不物化）。"
 function normalize_envs!(envs::HadamardCache, x::CanonicalIMPS)

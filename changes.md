@@ -1,5 +1,90 @@
 # 变更记录（接口）
 
+## 2026-10-13 zip_sweeps! 三通道化 + 严格等价：compress（OverlapCache）接入与 IDMRG2 轨迹级对齐
+
+- **接口**：`zip_sweeps!` 两个方法（IDMRG/IDMRG2）的通道签名拓宽为
+  `Union{MultCache, HadamardCache, OverlapCache}`——**compress 驱动经
+  IDMRG/IDMRG2 自动走融合快路径**（OverlapCache 新增 8 个融合核：
+  `_fuse_left`/`_local_AC_fused`/`_push_left_fused!`/`_fuse_right`/
+  `_local_AC_fusedR`/`_push_right_fused!`/`_local_AC2_fused`/
+  `_local_AC2_fusedR`，rank-2 矩阵环境 `(bra bond, ket bond)`、bra/键维
+  可不同）；dispatch shim 同步拓宽（VOMPS 与 general 模板不受影响）；
+- **严格等价（本轮核心）**：zip 与 general `compression_sweeps!` 的 push
+  **活写序列逐位对齐**——
+  - IDMRG：general 每 pass 本就单方向 push，zip 已严格一致；
+  - IDMRG2：general 每窗口双向 push，其中对侧（同 pass 内）的写均为死写
+    （值总在被读前覆盖），**唯二跨 pass 活写**为 L→R pass 窗口 1 的右推
+    （`rights[1]`——被 L→R 窗口 N 的 map 与 R→L 窗口 N 消费）与 R→L pass
+    窗口 N 的左推（`lefts[1]`——被窗口 1 消费）；zip 以逐 pass 单方向
+    push + 这两处窗口特例 push 复现全部活写（此前缺这两处，未收敛轨迹
+    会缓慢漂移、收敛轮数 ±2）；
+- **验证**（[debug/zip_strict.jl]）：三通道 × {IDMRG, IDMRG2} × N ∈ {2, 3}
+  共 14 个场景、tol=0 不收敛 6 轮——终态全槽位（AL/AR Gram + C）最大
+  6.6e-14、逐轮 losses 最大 1.6e-15（纯浮点收缩序噪声）；收敛解
+  fidelity = 1.0 且 **iters 全部严格一致**（compress 44/44、18/18 等，
+  [debug/zip_sweeps_check.jl]）；小规模计时 compress IDMRG 1.7×/
+  IDMRG2 与 general 持平、mult 1.1–3.3×、hadamard ~2×。
+
+## 2026-10-13 zip_sweeps! 扩展 IDMRG2：MultCache/HadamardCache 的两站融合快路径
+
+- **接口**：`zip_sweeps!` 新增 `(::Union{MultCache, HadamardCache}, ::IDMRG2)`
+  方法（[src/algorithms/arithmetics/compress.jl] 末尾）+ dispatch shim
+  `compression_sweeps!(::Union{MultCache, HadamardCache}, ::IDMRG2)`——
+  mult/hadamard 驱动经 IDMRG2 自动走快路径（shim 与 IDMRG 的分列定义——
+  合并为 `Union{IDMRG, IDMRG2}` 签名会与 general 模板产生方法歧义）；
+- **机制**：IDMRG 融合的两站推广——L→R pass 每窗口把
+  `(GL·operator.AL·ket.AL)`（zip 通道 `GL·A1.AL·A2.AL`）一次融合为 K0，
+  折窗口键权重（AC = AL·C）后与 next 站 AR 因子、`rights[next]` 收缩出
+  两站 `Θ`（rank-4，物理腿逐站保留），`_svd2!` 按 `alg.trunc` SVD 截断；
+  R→L pass 镜像（S0 = `_fuse_right` 在 next 站融合，窗口 C 权重经
+  **`_bondCT` 转置折叠**折入 S0 的 AR 基键腿，再与 pos 站 AL 因子收缩）。
+  融合张量每窗口双用（map + 单方向 push）；general 模板的对侧 push 为
+  死写（其值总在消费前被反向 pass 覆盖）——单方向化不改变任何 map 输入
+  （60 轮未收敛轨迹与双 push 版逐位一致）；
+- **正确性要点**：R→L 的 S0 键腿在 AR 左键基（= C 的**列**），`_fold_bond`
+  消费行 ⇒ 须传 `Cᵀ`（新增 `_bondCT` 辅助，Dense 链恒 nothing）——单站
+  `_local_AC_fusedR` 折的是 GL 的 AL 基腿故无需转置，两站镜像 map 折 S0
+  侧则必须转置；hadamard 通道 next 站两因子共享开放物理腿 s2（R→L 为 s1）
+  ⇒ per-s 切片 GEMM（同单站方案）；
+- **等价性**：三通道单步 map/push rel-diff ~1e-16
+  （[debug/zip2_step.jl]，mult mpo·mps Canonical/Dense、mpo·mpo、
+  hadamard 双 pass 全核）；收敛解 fidelity = 1.0（iters 19/19、25/23、
+  17/19——单方向 push 的轨迹差 ±1-2 轮，不动点相同）；
+- **性能**（D=16/Dw=8 级 60 轮）：mpo·mps 1.0x、mpo·mpo 1.05x、
+  hadamard 1.06x——IDMRG2 无固定点求解可省，收益上界 = 死写 push 消除，
+  与 general 相当略优（hadamard 首版 6 腿中间张量 0.48x，重构 per-s
+  切片后修复）。
+
+## 2026-10-13 zip_sweeps!：MultCache/HadamardCache 的 IDMRG 融合快路径（InfiniteTEMPO get_left_xy 机制）
+
+- **接口**：新增 `zip_sweeps!(envs::Union{MultCache, HadamardCache}, alg::IDMRG)`
+  （[src/algorithms/arithmetics/compress.jl] 末尾，签名置于 cache struct
+  定义之后——导入绑定约束）+ dispatch shim
+  `compression_sweeps!(::Union{MultCache, HadamardCache}, ::IDMRG) = zip_sweeps!`
+  ——mult/hadamard 驱动经 IDMRG 时自动走快路径；general
+  `compression_sweeps!` 保留（`invoke` 可达，VOMPS/IDMRG2 与其余通道不变）；
+- **机制**（InfiniteTEMPO 的 `get_left_xy`/`get_xy_right`）：每站把
+  `(GL·operator.AL·ket.AL)`（或 hadamard 的 `GL·A1·A2`）一次融合为 K0——
+  输入物理腿收缩、算符输出物理与右键开放——同一融合张量双用：map 侧折 C
+  权重（`_fold_bond`，AC = AL·C / C·AR 分解；Dense 链无 C 恒等）后与 GR
+  收缩出局部 AC，push 侧与 `conj(新 bra)` 单 GEMM 出下一站环境。融合 zip
+  张量不落地，每站每方向省一次 AC 分解与固定点求解；
+- **hadamard 融合核的共享物理腿**：zip 通道 A1/A2 三方共享物理腿 s
+  （开放指标），不存在合法的二元收缩树（任意拆法 s 均出现 3 次）——
+  `_fuse_left`/`_fuse_right` 按物理片 batched GEMM（键腿单步收缩 + per-s
+  切片，同 `_mapAC_zip`/`_zip_push_*` 方案），最大中间张量 O(Dx·D1·D2·d)；
+- **配套修复**：`_fold_bond` 的 perm 公式尾段错（`ntuple(i -> i + 1, N - leg)`
+  应为 `ntuple(i -> leg + i, N - leg)`）——mult 通道只折末腿时恰好退化为
+  恒等未暴露，hadamard 折中间腿即崩；
+- **等价性**：全通道（mult mpo·mps Canonical/Dense 链、mult mpo·mpo、
+  hadamard）fused vs general（`invoke` 强制）fidelity = 1.0、迭代数一致，
+  单步 map/push rel-diff ~1e-16（[debug/zip_pair_step.jl]/
+  [debug/zip_had_step.jl]/[debug/zip_sweeps_check.jl]，多轮扫描逐站一致）；
+  小问题规模计时 1.2–5.1×；
+- **数值注记**：融合 push 与 general push 的 `conj(bra)` 因子逐位对齐
+  （push_left 经 adjoint 自带、push_right 显式 `reshape(conj(below), ...)`
+  ——缺共轭是首版 R→L 数值分歧的根因）。
+
 ## 2026-10-12 forcereal：实输入的环境实数域投影开关（alg_environments）
 
 - **接口**：`alg_environments`（NamedTuple 形态）新增 `forcereal::Bool = false`

@@ -154,6 +154,43 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
     return envs, IterativeConvergenceInfo(iter, losses, converged)
 end
 
+# ---------------- zip_sweeps!（MultCache/HadamardCache 的 IDMRG 融合快路径） ----------------
+
+"链在键 ℓ 的中心矩阵（Canonical 链的 `AC = AL·C` / `AC = C·AR` 分解用）；
+Dense 链的 AC ≡ AL/AR 纯视图（同一数据、无 C 分解）返回 `nothing`。"
+_bondC(chain::Union{CanonicalIMPS,CanonicalIMPO}, ℓ::Int) = chain.C[ℓ]
+_bondC(::Union{DenseIMPS,DenseIMPO}, ℓ::Int) = nothing
+
+"`_bondCT(C)`：右环境侧键权重折叠的转置包装——AR 左键 = C 的**列**基
+（C 行 = AL 右键），`_fold_bond` 消费被折腿对 C 的行，故折 S0/GR 侧的
+AR 基键腿须传 `Cᵀ`（Dense 链恒 `nothing`）。"
+_bondCT(::Nothing) = nothing
+_bondCT(C::AbstractMatrix) = transpose(C)
+
+"""
+    _fold_bond(K0, Val(leg), C) -> K′
+
+`K0` 的第 `leg` 条腿与键权重矩阵 `C` 收缩（`AC = AL·C` 的 C 折叠）：
+`K′[...腿 leg 换成 C 的列指标...] = Σ K0[..., r, ...]·C[r, c]`（单个 GEMM）；
+`C === nothing` 时原样返回 `K0`。
+"""
+function _fold_bond(K0::AbstractArray{T,N}, ::Val{leg}, ::Nothing) where {T,N,leg}
+    return K0
+end
+function _fold_bond(K0::AbstractArray{T,N}, ::Val{leg}, C::AbstractMatrix) where {T,N,leg}
+    perm = (ntuple(i -> i, leg - 1)..., ntuple(i -> leg + i, N - leg)..., leg)
+    Kp = permutedims(K0, perm)                     # 其余腿在前、leg 最后
+    rest = ntuple(i -> size(Kp, i), N - 1)
+    Kf = reshape(Kp, prod(rest), size(C, 1)) * C
+    return permutedims(reshape(Kf, (rest..., size(C, 2))), invperm(perm))
+end
+
+# `zip_sweeps!`（三通道 CompressionEnvironments 的 IDMRG/IDMRG2 融合快路径，
+# InfiniteTEMPO 的 get_left_xy 机制）定义在 compress.jl 末尾——签名引用
+# MultCache/HadamardCache，须在各 cache 的 struct 定义之后求值（include 顺序：
+# envs.jl → mult.jl → hadamard.jl → compress.jl；签名中提前引用导入绑定
+# 会使后续同名 struct 定义报 "cannot assign to imported variable"）。
+
 "`_mulC(AL, C)`：中心矩阵左乘（`AC = AL·C`；rank-3 MPS 张量与 rank-4
 CanonicalIMPO 张量（在 `(u, d)` MPS 视图上）分派）。"
 function _mulC(A::AbstractArray{T,3}, C::AbstractMatrix) where {T}

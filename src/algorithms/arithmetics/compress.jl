@@ -472,3 +472,249 @@ end
 
 # 统一扫掠引擎 `compression_sweeps!`（三个通道共享的 VOMPS/IDMRG 模板）定义在
 # arithmetics/envs.jl（CompressionEnvironments 层次所在处）。
+
+# ---------------- zip_sweeps! 融合核（OverlapCache，compress 通道） ----------------
+#
+# 纯重叠通道的同款融合机制：每站 (GL·ket.AL) 融合为 K0[aL, s, bL′]（bra/键维
+# 可不同——环境为 rank-2 矩阵 (bra bond, ket bond)），同一融合张量双用：map 侧
+# 折 ket 的 C 权重（AC = AL·C）后与 GR 收缩出局部 AC，push 侧与 conj(新 bra)
+# 单 GEMM 出下一站环境（rank-2）。
+
+"左融合（compress）：`K0[aL, s, bL′] = Σ GL[aL, bL]·ket.AL[bL, s, bL′]`。"
+function _fuse_left(envs::OverlapCache, ℓ::Int)
+    GL = envs.lefts[ℓ]                    # (aL, bL)
+    k = envs.ket.AL[ℓ]                    # (bL, s, bL′)
+    @tensor K0[aL, s, bL′] := GL[aL, bL] * k[bL, s, bL′]
+    return K0
+end
+
+"map（L→R）：`AC[aL, s, aR] = Σ K0[aL, s, bL′]·ket.C[bL′, bR]·GR[bR, aR]`
+（`_mapAC` 的 `GL·ket.AC·GR` 经 AC = AL·C 分解重排）。"
+function _local_AC_fused(K0, envs::OverlapCache, ℓ::Int)
+    GR = envs.rights[ℓ]                   # (bR, aR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.ket, ℓ))    # bL′ ← C[bL′, bR]
+    return @tensor AC[aL, s, aR] := K[aL, s, bR] * GR[bR, aR]
+end
+
+"push（L→R）：`lefts[ℓ+1][aL′, bL′] = Σ conj(x.AL[ℓ][aL′, s, aL])·K0[aL, s, bL′]`
+（共享 (aL, s) 单 GEMM；rank-2 环境直接落矩阵）。"
+function _push_left_fused!(envs::OverlapCache, K0, x, ℓ::Int)
+    below = x.AL[ℓ]                       # (aL, s, aL′)
+    Bmat = adjoint(reshape(below, :, size(below, 3)))  # (aL′, aL·s)
+    new = Bmat * reshape(K0, size(below, 1) * size(below, 2), :)  # (aL′, bL′)
+    envs.lefts[_mod1(ℓ + 1, length(envs))] = new
+    return envs
+end
+
+"右融合（compress）：`S0[q, s, aR] = Σ ket.AR[q, s, bR]·GR[bR, aR]`（q = ket 左键）。"
+function _fuse_right(envs::OverlapCache, ℓ::Int)
+    GR = envs.rights[ℓ]                   # (bR, aR)
+    k = envs.ket.AR[ℓ]                    # (q, s, bR)
+    @tensor S0[q, s, aR] := k[q, s, bR] * GR[bR, aR]
+    return S0
+end
+
+"map（R→L）：`AC[aL, s, aR] = Σ GL[aL, bL]·ket.C[bL, q]·S0[q, s, aR]`
+（AC = C·AR 的左键 C 折入 GL；C 行 = AL 右键与 GL 键腿同基，无需转置）。"
+function _local_AC_fusedR(S0, envs::OverlapCache, ℓ::Int)
+    N = length(envs)
+    GL = envs.lefts[ℓ]                    # (aL, bL)
+    G = _fold_bond(GL, Val(2), _bondC(envs.ket, _mod1(ℓ - 1, N)))  # bL ← C[bL, q]
+    return @tensor AC[aL, s, aR] := G[aL, q] * S0[q, s, aR]
+end
+
+"push（R→L）：`rights[ℓ-1][q, aR′] = Σ S0[q, s, aR]·conj(x.AR[ℓ][aR′, s, aR])`
+（共享 (s, aR) 单 GEMM）。"
+function _push_right_fused!(envs::OverlapCache, S0, x, ℓ::Int)
+    below = x.AR[ℓ]                       # (aR′, s, aR)
+    Bmat = reshape(conj(below), size(below, 1), :)     # (aR′, s·aR)
+    Smat = reshape(permutedims(S0, (2, 3, 1)), :, size(S0, 1))  # (s·aR, q)
+    new = Bmat * Smat                                  # (aR′, q)
+    envs.rights[_mod1(ℓ - 1, length(envs))] = permutedims(new, (2, 1))  # (q, aR′)
+    return envs
+end
+
+"两站 map（IDMRG2 zip 融合，L→R）：`Θ[aL, s1, s2, aR] = Σ K0·ket.C[pos]·
+ket.AR[next]·GR`（`_local_AC2` 的 `GL·(AC·AR)·GR` 经 K0 = GL·AL 融合 +
+AC = AL·C 分解重排；K0 双用同单站）。"
+function _local_AC2_fused(K0, envs::OverlapCache, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    k2 = envs.ket.AR[next]                # (m, s2, b2)
+    GR = envs.rights[next]                # (b2, aR)
+    K = _fold_bond(K0, Val(3), _bondC(envs.ket, pos))   # bL′ ← C[bL′, m]
+    return @tensor Θ[aL, s1, s2, aR] := K[aL, s1, m] * k2[m, s2, b2] * GR[b2, aR]
+end
+
+"两站 map（IDMRG2 zip 融合，R→L）：`Θ = GL·ket.AL[pos]·S·GR`（S0 的开放键
+= ket AR 左键 = C[pos] 的**列**基 ⇒ 转置折叠 `_bondCT`，再与 GL·AL 收缩）。"
+function _local_AC2_fusedR(S0, envs::OverlapCache, pos::Int)
+    GL = envs.lefts[pos]                  # (aL, bL)
+    k1 = envs.ket.AL[pos]                 # (bL, s1, r)
+    S = _fold_bond(S0, Val(1), _bondCT(_bondC(envs.ket, pos)))  # m′ ← Cᵀ[m′, r]
+    return @tensor Θ[aL, s1, s2, aR] := GL[aL, bL] * k1[bL, s1, r] * S[r, s2, aR]
+end
+
+# ---------------- zip_sweeps!（CompressionEnvironments 三通道的 IDMRG/IDMRG2 融合快路径） ----------------
+#
+# 本节定义置于 compress.jl 末尾（arithmetics 的最后一个 include）：签名引用
+# MultCache/HadamardCache，须在各 cache 的 struct 定义（mult.jl/hadamard.jl）
+# 之后求值——签名中提前引用导入绑定会使后续同名 struct 定义报
+# "cannot assign to imported variable"（HadamardCache 的 `_local_AC2` 同款教训）。
+
+"""
+    zip_sweeps!(envs::CompressionEnvironments, alg::IDMRG) -> (envs, info)
+
+IDMRG 在压缩/算符/zip 三通道（[`OverlapCache`](@ref)/[`MultCache`](@ref)/
+[`HadamardCache`](@ref)）上的融合快路径（InfiniteTEMPO 的 `get_left_xy`
+机制）：每站把 `(GL·operator.AL·ket.AL)`（zip 通道为 `GL·A2.AL·A1.AL`、
+重叠通道为 `GL·ket.AL`）**一次融合**为 K0——输入物理腿收缩、算符输出物理
+`u` 与两条右键开放——同一融合张量双用：
+
+- **map**：折 AC = AL·C 的键权重（Canonical 链；Dense 链 AC ≡ AL 视图恒等，
+  `_bondC` 返回 nothing）后与 `rights[ℓ]` 收缩出局部 AC（逐腿 2 张量 GEMM）；
+- **push**：与 `conj(新 bra)` 的单 GEMM 出下一站环境。
+
+替代 general [`compression_sweeps!`](@ref) 模板的两次独立四张量收缩
+（`_local_AC` + `transfer_leftenv!`——两者各自重复收缩 (operator, ket) 对），
+每站省一次 O(D²·Dw²·d) 级大收缩。扫掠结构（Gauss–Seidel 双向、逐站
+normalize! + 正交分解）、`normalize_envs!` 重标定、bond-0 C 漂移收敛判据与
+收尾（`_rebuild` + `recalculate!`）与 general IDMRG 模板同构；**push 序列与
+general 逐位一致**（每 pass 单方向，无跨 pass 活写）——同一收缩图的分解
+重排（浮点舍入内严格等价）。
+"""
+function zip_sweeps!(envs::Union{MultCache,HadamardCache,OverlapCache}, alg::IDMRG)
+    x = envs.bra                       # 原地演化的态（缓存 bra 本体）
+    N = length(envs)
+    ϵ = 2 * alg.tol
+    iter = 0
+    losses = Float64[]
+    converged = false
+    for outer iter in 1:alg.maxiter
+        C_old = copy(x.C[0])
+        # left to right sweep（Gauss–Seidel：融合张量 K0 双用——map 出 AC、
+        # push 出下一站左环境）
+        for ℓ in 1:N
+            K0 = _fuse_left(envs, ℓ)
+            x.AC[ℓ] = _local_AC_fused(K0, envs, ℓ)
+            normalize!(x.AC[ℓ])
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg.alg_orth)
+            _push_left_fused!(envs, K0, x, ℓ)
+        end
+        # right to left sweep（S0 双用，镜像）
+        for ℓ in N:-1:1
+            S0 = _fuse_right(envs, ℓ)
+            x.AC[ℓ] = _local_AC_fusedR(S0, envs, ℓ)
+            normalize!(x.AC[ℓ])
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg.alg_orth)
+            _push_right_fused!(envs, S0, x, ℓ)
+        end
+        # 环境重标定
+        normalize_envs!(envs, x)
+        # 收敛判据：bond 0 中心矩阵漂移
+        ϵ = norm(x.C[0] - C_old)
+        push!(losses, ϵ)
+        alg.verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
+        # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
+        x, envs = alg.finalize(iter, x, _finalize_target(envs), envs)
+        envs.bra ≡ x || _copyinto!(envs.bra, x)
+        x = envs.bra
+        if ϵ < alg.tol
+            converged = true
+            break
+        end
+    end
+    # 规范恢复 + 环境重解（同 general IDMRG 模板的收尾）
+    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
+                 maxiter = alg_g.maxiter)
+    envs = recalculate!(envs, x, alg.alg_environments)
+    return envs, IterativeConvergenceInfo(iter, losses, converged)
+end
+
+"""
+    zip_sweeps!(envs::CompressionEnvironments, alg::IDMRG2) -> (envs, info)
+
+IDMRG2 在压缩/算符/zip 三通道上的融合快路径（[`zip_sweeps!`](@ref) 的 IDMRG
+机制的两站推广，对应 general [`compression_sweeps!`](@ref) 的 IDMRG2 模板）：
+每窗口 `(pos, pos+1)` 把 `(GL·operator.AL·ket.AL)`（zip 通道为 `GL·A1.AL·A2.AL`、
+重叠通道为 `GL·ket.AL`）一次融合为 K0，经键权重折叠（AC = AL·C 分解；Dense
+链恒等）与 next 站 AR 因子、`rights[next]` 收缩出两站张量 `Θ`（rank-4，物理
+腿逐站保留），按 `alg.trunc` SVD 截断分割（`_svd2!`）。
+
+push 序列与 general 模板**严格一致**：general 每窗口的双向 push 中，对侧
+（同 pass 内）的写均为死写（值总在被读前覆盖），**唯二的跨 pass 活写**是
+L→R pass 窗口 1 的右推（`rights[1]`——被 R→L pass 的 wrap 窗口 N 消费）与
+R→L pass 窗口 N 的左推（`lefts[1]`——被窗口 1 消费），以及 L→R pass 窗口 N
+的 map 读 `rights[1]`（即窗口 1 的右推值）；zip 以逐 pass 单方向 push +
+这两处窗口特例 push 复现全部活写（未收敛轨迹与 general 逐位一致）。每轮
+收尾（单站分解补全规范、`recalculate!`、Galerkin 收敛判据、finalize）与
+general IDMRG2 模板逐行对应；数值上为同一收缩图的分解重排（浮点舍入内
+严格等价）。
+"""
+function zip_sweeps!(envs::Union{MultCache,HadamardCache,OverlapCache}, alg::IDMRG2)
+    N = length(envs)
+    (N ≥ 2) || throw(ArgumentError("IDMRG2 requires unit cell length >= 2"))
+    x = envs.bra
+    ϵ = calc_galerkin(envs, x)
+    iter = 0
+    losses = Float64[ϵ]
+    converged = false
+    for outer iter in 1:alg.maxiter
+        # 两站双向扫掠（cyclic，融合张量双用——map + push，严格复现 general
+        # 模板的活写序列：每 pass 单方向 + 跨 pass 的两处窗口特例）
+        for pos in 1:N
+            K0 = _fuse_left(envs, pos)
+            Θ = _local_AC2_fused(K0, envs, pos)
+            _svd2!(x, pos, Θ, alg.trunc)
+            _push_left_fused!(envs, K0, x, pos)      # ≡ transfer_leftenv!(envs, x, next)
+            if pos == 1
+                # ≡ general 的 transfer_rightenv!(envs, x, 1)：rights[1] 被
+                # L→R 窗口 N 的 map 与 R→L 窗口 N 的 map/push 消费（跨 pass 活写）
+                S0 = _fuse_right(envs, _mod1(2, N))
+                _push_right_fused!(envs, S0, x, _mod1(2, N))
+            end
+        end
+        for pos in N:-1:1
+            S0 = _fuse_right(envs, _mod1(pos + 1, N))
+            Θ = _local_AC2_fusedR(S0, envs, pos)
+            _svd2!(x, pos, Θ, alg.trunc)
+            _push_right_fused!(envs, S0, x, _mod1(pos + 1, N))  # ≡ transfer_rightenv!(envs, x, pos)
+            if pos == N
+                # ≡ general 的 transfer_leftenv!(envs, x, 1)：lefts[1] 被
+                # R→L 窗口 1 的 map 消费（跨 pass 活写）
+                K0 = _fuse_left(envs, N)
+                _push_left_fused!(envs, K0, x, N)
+            end
+        end
+        # 混合规范补全（单站分解，秩亏链安全）+ 环境重解 + 收敛判据——
+        # 与 general IDMRG2 模板逐行对应
+        for ℓ in 1:(N-1)
+            x.AC[ℓ] = _mulC(x.AL[ℓ], x.C[ℓ])
+        end
+        x.AC[N] = _mulFront(x.C[N-1], x.AR[N])
+        x.AL[N], x.C[N] = _leftsplit(x.AC[N], alg.alg_orth)
+        _, x.AR[1] = _rightsplit(x.AC[1], alg.alg_orth)
+        alg_envs = updatetol(alg.alg_environments, iter, ϵ)
+        envs = recalculate!(envs, x, alg_envs)
+        x = envs.bra
+        ϵ = calc_galerkin(envs, x)
+        push!(losses, ϵ)
+        alg.verbosity > 0 && _logiter(stdout, "IDMRG2", iter, ϵ)
+        x, envs = alg.finalize(iter, x, _finalize_target(envs), envs)
+        envs.bra ≡ x || _copyinto!(envs.bra, x)
+        x = envs.bra
+        if ϵ ≤ alg.tol
+            converged = true
+            break
+        end
+    end
+    return envs, IterativeConvergenceInfo(iter, losses, converged)
+end
+
+# dispatch：三通道驱动的 IDMRG/IDMRG2 走融合快路径（general 模板保留给
+# VOMPS 与测试对照；`invoke` 可达）。两个签名分列——合并为
+# `Union{IDMRG, IDMRG2}` 会与 general 的 (CompressionEnvironments, IDMRG) 产生
+# 方法歧义（第二参数部分重叠、互不真子集）
+compression_sweeps!(envs::Union{MultCache,HadamardCache,OverlapCache}, alg::IDMRG) = zip_sweeps!(envs, alg)
+compression_sweeps!(envs::Union{MultCache,HadamardCache,OverlapCache}, alg::IDMRG2) = zip_sweeps!(envs, alg)
