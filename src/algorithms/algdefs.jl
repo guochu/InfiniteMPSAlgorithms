@@ -89,20 +89,14 @@ Two-site variant of [`IDMRG`](@ref)（MPSKit 同名 `IDMRG2` 的移植），同�
 - **基态求解** [`find_groundstate`](@ref)：两站窗口的有效哈密顿量本征对
   （`:SR` eigsolve，严格对标 MPSKit `_localupdate_sweep_idmrg2!`）+ 按
   `trunc` 截断——两站更新可跨过单站鞍点、键维随截断方案动态增长；
-- **变分压缩** [`compress`](@ref)/[`compress!`](@ref)（MPSKit `approximate`
-  家族）：纯重叠通道的两站窗口为直接线性映射（无 eigsolve），窗口最优后
-  同样按 `trunc` 截断。
+- **变分压缩**（MPSKit `approximate` 家族）：[`compress`](@ref)/
+  [`compress!`](@ref)/[`mult`](@ref)/[`mult!`](@ref)/[`hadamard`](@ref)/
+  [`hadamard!`](@ref) 三通道全开放——两站窗口为通道分派的直接线性映射
+  （无 eigsolve），窗口最优后同样按 `trunc` 截断。
 
 `trunc::TruncationScheme`（默认 `alg_trunc()`）取代 IDMRG 的固定 `D`。
 基态收敛判据同 IDMRG（bond-0 中心矩阵漂移）；压缩为最大逐站 Galerkin
 残差（同 [`VOMPS`](@ref)）。`alg_eigsolve` 用于基态两站本征对。
-
-!!! note "压缩通道范围"
-    压缩引擎目前仅 [`compress`](@ref)（纯重叠通道）开放 IDMRG2：其两站
-    窗口的最优性论证要求窗口外腿为不同键（度量 = 恒等），纯重叠通道满足；
-    `mult`/`hadamard` 的算符/zip 通道两站映射在 wrap 窗口上尚缺环度量修正
-    （N = 2 时全部窗口为 wrap），暂不开放。基态引擎无此限制（两站本征对
-    走有效哈密顿量，度量天然含在 `H_AC2` 内）。
 """
 @kwdef struct IDMRG2{S,G,N,A,O,F} <: Algorithm
     trunc::S = alg_trunc()

@@ -184,7 +184,7 @@ function _lazy_svd_guess(site::F, L::Int, D::Int) where {F}
         # L = 1：没有独立的 wrap 键，对第二个键再做一次 SVD（初猜用途的近似）
         r1, s1, _ = size(out[1])
         u2, svals, _, _ = tsvd(out[1], (1, 2), (3,); trunc = truncdim(D))
-        u2m = @tensor uu[p, q, f2] := u2[p, q, k] * Diagonal(svals)[k, f2]
+        @tensor u2m[p, q, f2] := u2[p, q, k] * Diagonal(svals)[k, f2]
         out[1] = reshape(u2m, r1, s1, length(svals))
     end
     return out

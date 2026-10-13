@@ -286,6 +286,51 @@ function _local_C(envs::MultCache, ℓ::Int)
                  envs.ket.C[ℓ], envs.operator.C[_mod1(ℓ, length(envs.operator))])
 end
 
+"`_local_AC2(envs, pos)`：`(pos, pos+1)` 窗口的两站局部映射（[`IDMRG2`](@ref)
+用；rank-3 环境）。ket 两站张量取 `:ACAR` 形态（`ket.AC[pos]·ket.AR[pos+1]`，
+MPSKit `AC2` 的同款约定），以 `leftenv(pos)`/`rightenv(pos+1)` 收缩——算符
+通道的窗口精确变分最优——以 rank-4 `(aL, s1, s2, aR)` 返回（物理腿逐站保留，
+供 `_svd2!` 的两站分割）。mpo·mps 的 `s1`/`s2` 为纯物理腿（环境分步收缩：
+`GL·k1·k2·O1·O2·GR`，每步 ≤3 因子）。"
+function _local_AC2(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
+                                  <:AbstractInfiniteMPS,<:Any}, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    Lop = _mod1(pos, length(envs.operator))
+    k1, k2 = envs.ket.AC[pos], envs.ket.AR[next]
+    O1 = envs.operator.AC[Lop]
+    O2 = envs.operator.AR[_mod1(next, length(envs.operator))]
+    GL, GR = leftenv(envs, pos), rightenv(envs, next)
+    @tensor X[aL, w1, s1, s2, b2] := GL[aL, w1, b1] * k1[b1, s1, m] * k2[m, s2, b2]
+    @tensor Y[aL, u1, r1, s2, b2] := X[aL, w1, s1, s2, b2] * O1[w1, u1, r1, s1]
+    @tensor Z[aL, u1, u2, r2, b2] := Y[aL, u1, r1, s2, b2] * O2[r1, u2, r2, s2]
+    return @tensor Θ[aL, u1, u2, aR] := Z[aL, u1, u2, r2, b2] * GR[b2, r2, aR]
+end
+
+"mpo·mpo 组合通道的两站局部映射：bra 为 `CanonicalIMPO`，`Θ` 输出在融合
+物理腿 `(u·d)` 视图上（`_svd2!(::CanonicalIMPO)` 的分割约定；`O` 因子链与
+ket 链的键独立、由 rank-3 环境的 `(w_op, w_ket)` 腿分别悬挂——站内收缩
+`O.do ↔ ket.u`（乘积的物理出/入腿对），跨站两链各自前推）。"
+function _local_AC2(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
+                                  <:AbstractInfiniteMPO,<:Any}, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    k1 = envs.ket.AC[pos]                                  # (b1, u1, m, d1)
+    k2 = envs.ket.AR[next]                                 # (m, u2, b2, d2)
+    O1 = envs.operator.AC[_mod1(pos, length(envs.operator))]   # (w1, vo1, r1, do1)
+    O2 = envs.operator.AR[_mod1(next, length(envs.operator))]  # (r1, vo2, r2, do2)
+    GL, GR = leftenv(envs, pos), rightenv(envs, next)
+    @tensor X[jL, w1, u1, d1, m] := GL[jL, w1, b1] * k1[b1, u1, m, d1]
+    @tensor Y[jL, vo1, r1, d1, m] := X[jL, w1, u1, d1, m] * O1[w1, vo1, r1, u1]
+    @tensor Z[jL, vo1, r1, d1, u2, d2, b2] := Y[jL, vo1, r1, d1, m] * k2[m, u2, b2, d2]
+    @tensor W6[jL, vo1, d1, vo2, d2, r2, b2] :=
+        Z[jL, vo1, r1, d1, u2, d2, b2] * O2[r1, vo2, r2, u2]
+    @tensor Θ4[jL, vo1, d1, vo2, d2, jR] := W6[jL, vo1, d1, vo2, d2, r2, b2] * GR[b2, r2, jR]
+    # 融合物理腿 (u·d)（列主序 u 最快，同 vectorize 约定）
+    return reshape(Θ4, size(Θ4, 1), size(Θ4, 2) * size(Θ4, 3),
+                   size(Θ4, 4) * size(Θ4, 5), size(Θ4, 6))
+end
+
 "扫掠 finalize 回调的通道目标（[`compression_sweeps!`](@ref) 用）：mult 通道 =
 operator。"
 _finalize_target(envs::MultCache) = envs.operator
@@ -378,9 +423,9 @@ function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,4},
     wl1, _, _, _ = size(W1)
     wl2, _, _, _ = size(W2)
     # 步1（键 wl1；bra 物理 u 一并收缩）：Y[(wr1, m), wl2, u, bl]
-    Y = @tensor Y[c1, mm, a2, u, jL] := L[jL, a1, a2] * W1[a1, u, c1, mm]
+    @tensor Y[c1, mm, a2, u, jL] := L[jL, a1, a2] * W1[a1, u, c1, mm]
     # 步2（键 wl2 与桥 m、bra 物理 d 一并收缩）：T[(wr1, u, bl), (wr2, d)]
-    T = @tensor T[c1, u, jL, c2, dd] := Y[c1, mm, a2, u, jL] * W2[a2, mm, c2, dd]
+    @tensor T[c1, u, jL, c2, dd] := Y[c1, mm, a2, u, jL] * W2[a2, mm, c2, dd]
     # 步3（bra 剩余腿 (u, bl, d) 收缩）：输出 (bl′, wr1, wr2)
     @tensor L′[jR, c1, c2] := T[c1, u, jL, c2, dd] * conj(below[jL, u, jR, dd])
 end
@@ -395,9 +440,9 @@ end
 function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,4},
                         W1::AbstractArray{Tw1,4}, below::AbstractArray{Tb,4}) where {TR,Ta,Tw1,Tb}
     # 步1（键 wr2；ket 物理 d 一并收缩）：Y[(wl2, m, wr1, d, br)]
-    Y = @tensor Y[a2, mm, c1, dd, jR] := R[c2, c1, jR] * above[a2, mm, c2, dd]
+    @tensor Y[a2, mm, c1, dd, jR] := R[c2, c1, jR] * above[a2, mm, c2, dd]
     # 步2（bra 物理 d、键 br 收缩）：Z[(wl2, m, wr1, u, bl′)]
-    Z = @tensor Z[a2, mm, c1, u, jL] := Y[a2, mm, c1, dd, jR] * conj(below[jL, u, jR, dd])
+    @tensor Z[a2, mm, c1, u, jL] := Y[a2, mm, c1, dd, jR] * conj(below[jL, u, jR, dd])
     # 步3（键 wr1 与桥 m、bra 物理 u 一并收缩）：输出 (wl2, wl1, bl′)
     @tensor R′[a2, a1, jL] := Z[a2, mm, c1, u, jL] * W1[a1, u, c1, mm]
 end
@@ -409,8 +454,8 @@ end
 物理腿 (u, d) 不融合），调用方需要 MPS 视图时自行 permute+reshape。"
 function _mapAC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
                 W1::AbstractArray{Tw1,4}, W2::AbstractArray{Tw2,4}) where {Tg,Tgr,Tw1,Tw2}
-    Y = @tensor Y[jL, w2, u, mm, r1] := GL[jL, w1, w2] * W1[w1, u, r1, mm]
-    Z = @tensor Z[jL, u, dd, r1, r2] := Y[jL, w2, u, mm, r1] * W2[w2, mm, r2, dd]
+    @tensor Y[jL, w2, u, mm, r1] := GL[jL, w1, w2] * W1[w1, u, r1, mm]
+    @tensor Z[jL, u, dd, r1, r2] := Y[jL, w2, u, mm, r1] * W2[w2, mm, r2, dd]
     @tensor AC4[jL, u, jR, dd] := Z[jL, u, dd, r1, r2] * GR[r2, r1, jR]
 end
 
@@ -421,8 +466,8 @@ W2.C）× operator 的 C（`C_op`：mpo·mps 为 W.C、mpo·mpo 为 W1.C）—�
 （GL 腿序 `(below, w_op, above)`、GR `(above, w_op, below)`，两通道一致）。"
 function _mapC(GL::AbstractArray{Tg,3}, GR::AbstractArray{Tgr,3},
                C_ab::AbstractMatrix, C_op::AbstractMatrix) where {Tg,Tgr}
-    Y = @tensor Y[jL, w1, r2] := GL[jL, w1, w2] * C_ab[w2, r2]
-    Z = @tensor Z[jL, r1, r2] := Y[jL, w1, r2] * C_op[w1, r1]
+    @tensor Y[jL, w1, r2] := GL[jL, w1, w2] * C_ab[w2, r2]
+    @tensor Z[jL, r1, r2] := Y[jL, w1, r2] * C_op[w1, r1]
     @tensor Cnew[jL, jR] := Z[jL, r1, r2] * GR[r2, r1, jR]
 end
 
@@ -469,8 +514,8 @@ end
 # gauge twist。
 
 """
-    mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, envs, info)
-    mult(W, W2, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPO, envs, info)
+    mult(W, ψ, alg::CompressionAlgorithm) -> (y::CanonicalIMPS, envs, info)
+    mult(W, W2, alg::CompressionAlgorithm) -> (y::CanonicalIMPO, envs, info)
 
 The compute-on-the-fly version of the MPO multiplication: find `y ≈ W·ψ`
 (operator application) or `y ≈ W·W2` (operator composition), variationally
@@ -502,24 +547,29 @@ The second return is the engine's final environments（mpo·mps / mpo·mpo 通�
 规范差但同射线）; the third return is the [`IterativeConvergenceInfo`](@ref)
 （`niter` 扫掠轮数、`losses` 逐轮残差/漂移、`converged` 收敛标志）。
 """
-function mult(W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG})
+function mult(W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS, alg::CompressionAlgorithm)
     (length(ψ) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    # MPO-channel VOMPS/IDMRG (compute-on-the-fly, no naive target family)：
-    # 初态 = [`svdguess_mult`](@ref)，扫掠经 [`compression_sweeps!`](@ref)
-    envs = MultCache(svdguess_mult(W, ψ, alg.D), W, ψ, alg.alg_environments)
+    # MPO-channel VOMPS/IDMRG/IDMRG2 (compute-on-the-fly, no naive target family)：
+    # 初态 = [`svdguess_mult`](@ref)，扫掠经 [`compression_sweeps!`](@ref)；
+    # IDMRG2 的初猜键维从 trunc 提取（无维数语义回退无损上界，同 compress）
+    D = something(_alg_guess_dim(alg),
+                  maximum(size(W.AL[ℓ], 1) * size(ψ.AL[ℓ], 1) for ℓ in 1:length(ψ)))
+    envs = MultCache(svdguess_mult(W, ψ, D), W, ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     # 引擎收尾已保证 envs.bra 处于混合规范且按包约定归一化，直接返回其本体
     return envs.bra, envs, info
 end
 
-function mult(W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO, alg::Union{VOMPS,IDMRG})
+function mult(W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO, alg::CompressionAlgorithm)
     (length(W2) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
     # 双 MPO 组合通道：bra = 变分链（CanonicalIMPO，原生 MPO 形态）、
     # operator/ket 槽 = (W1, W2)——乘积张量从不物化（键优先分步 GEMM），
     # 因子按输入类型直接进入环境（dense 经 getproperty 家族视图）。
-    envs = MultCache(svdguess_mult(W, W2, alg.D), W, W2,
+    D = something(_alg_guess_dim(alg),
+                  maximum(size(W.AL[ℓ], 1) * size(W2.AL[ℓ], 1) for ℓ in 1:length(W)))
+    envs = MultCache(svdguess_mult(W, W2, D), W, W2,
                      alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
@@ -557,7 +607,7 @@ function svdguess_mult(W, ψ::AbstractInfiniteMPS, D::Int; kwargs...)
 end
 
 function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
-                       ALs::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
+                       ALs::PeriodicVector{<:Array{U,3}}, D::Int) where {T,U}
     (length(ALs) % length(Ws) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
     # carry 在构造时吸收（fuse 的融合序：左 (wl,bl)、右 (wr,br)）：
@@ -568,8 +618,8 @@ function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
         wl, u, wr, dd = size(W4); bl, _, br = size(A)
         f = size(carry, 2)
         l4 = reshape(carry, wr, br, f)
-        T4 = @tensor Tb[bl, dd, wr, ff] := A[bl, dd, br] * l4[wr, br, ff]
-        B3 = @tensor B[wl, bl, u, ff] := W4[wl, u, wr, dd] * Tb[bl, dd, wr, ff]
+        @tensor Tb[bl, dd, wr, ff] := A[bl, dd, br] * l4[wr, br, ff]
+        @tensor B3[wl, bl, u, ff] := W4[wl, u, wr, dd] * Tb[bl, dd, wr, ff]
         return reshape(B3, wl * bl, u, f)
     end
     return _lazy_svd_guess(site, length(ALs), D)
@@ -583,7 +633,7 @@ function svdguess_mult(W, W2::AbstractInfiniteMPO, D::Int; kwargs...)
 end
 
 function svdguess_mult(Ws1::PeriodicVector{<:Array{T,4}},
-                       Ws2::PeriodicVector{<:Array{T,4}}, D::Int) where {T}
+                       Ws2::PeriodicVector{<:Array{U,4}}, D::Int) where {T,U}
     (length(Ws2) % length(Ws1) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
     # carry 在构造时吸收（_naive_mul_tensor 的融合序：左腿 (wl1 慢, wl2 快)、
@@ -633,20 +683,22 @@ into `out`——类型守卫：通道算术类型（构造时 bra 槽已提升�
 后与 envs 的规范代表同射线）。
 """
 function mult!(out::CanonicalIMPS, W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS,
-               alg::Union{VOMPS,IDMRG})
+               alg::CompressionAlgorithm)
     (length(ψ) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    changebond!(out; D = alg.D)
+    D = _alg_guess_dim(alg)
+    D === nothing || changebond!(out; D)
     envs = MultCache(out, W, ψ, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
 function mult!(out::CanonicalIMPO, W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO,
-               alg::Union{VOMPS,IDMRG})
+               alg::CompressionAlgorithm)
     (length(W2) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
-    changebond!(out; D = alg.D)
+    D = _alg_guess_dim(alg)
+    D === nothing || changebond!(out; D)
     envs = MultCache(out, W, W2, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info

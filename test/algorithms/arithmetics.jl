@@ -316,9 +316,9 @@ end
     end
 end
 
-@testset "IDMRG2：两站变分压缩（compress）" begin
-    # MPSKit `approximate` 家族的 IIDMRG2 移植（当前仅纯重叠通道开放）：
-    # 两站窗口精确映射 + trunc 截断。与 VOMPS 共享同一变分不动点
+@testset "IDMRG2：两站变分压缩（三通道）" begin
+    # MPSKit `approximate` 家族的 IIDMRG2 移植（compress/mult/hadamard 三通道
+    # 全开放）：两站窗口精确映射 + trunc 截断。与 VOMPS 共享同一变分不动点
     # ⇒ 结果逐射线一致；默认 trunc（alg_trunc 的 1e-13 cutoff）下无损。
     T = ComplexF64
     Random.seed!(49)
@@ -346,11 +346,41 @@ end
     # 单胞约束（两站窗口定义）
     ψ1s = randomimps(T, [2]; D = 3)
     @test_throws ArgumentError compress(ψ1s, IDMRG2(trunc = truncdim(2)))
-    # 通道范围守卫：mult/hadamard 的 IDMRG2 未开放（驱动签名不含 IDMRG2）
-    W = randomimpo(T, [2, 2]; D = 3)
-    @test_throws MethodError mult(W, ψ, IDMRG2(trunc = truncdim(4)))
+
+    # mult（mpo·mps / mpo·mpo）与 hadamard：IDMRG2 与 VOMPS 逐射线一致
+    # （两站窗口映射对算符/zip 通道同样窗口最优；N=2 全 wrap 窗口覆盖）
+    W1 = rand_denseimpo(T, [2, 2]; D = 2)
+    W2 = rand_denseimpo(T, [2, 2]; D = 3)
     ψa = randomimps(T, [2, 2]; D = 3)
-    @test_throws MethodError hadamard(ψa, ψ, IDMRG2(trunc = truncdim(4)))
+    for (D, maxit) in ((5, 200), (3, 300))               # 无损 + 有损
+        ymv, _, _ = mult(W1, ψa, VOMPS(D = D, maxiter = maxit))
+        ym2, _, _ = mult(W1, ψa, IDMRG2(trunc = truncdim(D), maxiter = maxit))
+        @test max_bonddim(ym2) ≤ D && abs(dot(ym2, ymv)) > 1 - 1e-8
+        # mpo·mpo：融合 (u·d) 视图上的两站分割
+        ypv, _, _ = mult(W1, W2, VOMPS(D = D, maxiter = maxit))
+        yp2, _, _ = mult(W1, W2, IDMRG2(trunc = truncdim(D), maxiter = maxit))
+        @test yp2 isa CanonicalIMPO && abs(dot(yp2, ypv)) > 1 - 1e-8
+        # zip 通道：共享物理腿的切片 batched 两站映射
+        yhv, _, _ = hadamard(ψa, ψ, VOMPS(D = D, maxiter = maxit))
+        yh2, _, _ = hadamard(ψa, ψ, IDMRG2(trunc = truncdim(D), maxiter = maxit))
+        @test abs(dot(yh2, yhv)) > 1 - 1e-8
+    end
+    # in-place（IDMRG2 的 changebond 预处理同样从 trunc 提取、无维数方案跳过）。
+    # 随机初猜下两引擎收敛到同质量解（IDMRG2 有时更优）
+    out = CanonicalIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
+    ypv, _, _ = mult(W1, W2, VOMPS(D = 3, maxiter = 300))
+    rp = mult!(out, W1, W2, IDMRG2(trunc = truncdim(3), maxiter = 300))
+    tgt = CanonicalIMPO(W1 * W2)
+    @test max_bonddim(rp[1]) ≤ 3
+    @test fidelity(rp[1], tgt) ≥ fidelity(ypv, tgt) - 1e-3
+    # L = 3 的 zip 通道（4⊙3→4：双引擎逐射线一致）。已知限制：大键维随机
+    # 因子（如 6⊙3）的有损 L=3 zip 下 IDMRG2 可收敛到 VOMPS 之下的近优不动点
+    # （近简并谱 + Gauss–Seidel 两站轨迹，实测 f 0.78-0.83 vs 0.88-0.99）
+    ψ3m = randomimps(T, [2, 2, 2]; D = 4)
+    ψb3 = randomimps(T, [2, 2, 2]; D = 3)
+    yh3v, _, _ = hadamard(ψ3m, ψb3, VOMPS(D = 4, maxiter = 300))
+    yh32, _, _ = hadamard(ψ3m, ψb3, IDMRG2(trunc = truncdim(4), maxiter = 300))
+    @test abs(dot(yh32, yh3v)) > 1 - 1e-8
 end
 
 # ---------------- mult!/compress!/hadamard! 完全对齐 ----------------

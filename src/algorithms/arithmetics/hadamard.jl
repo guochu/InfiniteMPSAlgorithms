@@ -11,13 +11,13 @@
 # there is no `CanonicalIMPS` method — convert explicitly first.
 
 """
-    hadamard(ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (y::CanonicalIMPS, envs, info)
+    hadamard(ψ₁, ψ₂, alg::CompressionAlgorithm) -> (y::CanonicalIMPS, envs, info)
 
 Compute-on-the-fly variational compression of the Hadamard/Schur product to
 the bond dimension `alg.D`: the zip target is consumed in **factorized form**
 (the (ψ1, ψ2) tensor pairs go straight into the environment/局部映射收缩 — the
 fused zip tensors are never materialized) and variationally compressed with
-the positional algorithm object `alg` (VOMPS/IDMRG), starting from the
+the positional algorithm object `alg` (VOMPS/IDMRG/IDMRG2), starting from the
 deterministic `svdguess_hadamard` initial state（扫掠经
 [`compression_sweeps!`](@ref)）. Convergence is judged by the Galerkin
 residual alone (no overlap is computed — same contract as `mult`/`compress`).
@@ -27,7 +27,7 @@ The second return is the engine's final environments（zip 通道的
 [`IterativeConvergenceInfo`](@ref)（`niter` 扫掠轮数、`losses` 逐轮残差/漂移、
 `converged` 收敛标志）。
 """
-function hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, alg::Union{VOMPS,IDMRG})
+function hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, alg::CompressionAlgorithm)
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
@@ -37,7 +37,10 @@ function hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, alg::Union
     # 见 `_zip_push_left`/`_mapAC_zip`）；C 的融合序 = `kron(C2, C1)` 与 zip
     # kernel 的 (ψ2 主, ψ1 次) 键序逐位对齐。dense 输入经 getproperty 家族视图
     # 直接参与（不做规范转换），输出类型恒为 CanonicalIMPS。
-    envs = HadamardCache(svdguess_hadamard(ψ1, ψ2, alg.D), ψ1, ψ2,
+    # IDMRG2 的初猜键维从 trunc 提取（无维数语义回退无损上界，同 compress）
+    D = something(_alg_guess_dim(alg),
+                  maximum(size(ψ1.AL[ℓ], 1) * size(ψ2.AL[ℓ], 1) for ℓ in 1:length(ψ1)))
+    envs = HadamardCache(svdguess_hadamard(ψ1, ψ2, D), ψ1, ψ2,
                          alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
@@ -71,7 +74,7 @@ function svdguess_hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, D
 end
 
 function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
-                           A2s::PeriodicVector{<:Array{T,3}}, D::Int) where {T}
+                           A2s::PeriodicVector{<:Array{U,3}}, D::Int) where {T,U}
     (length(A1s) == length(A2s)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
     N = length(A1s)
@@ -86,7 +89,7 @@ function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
         a, s, b = size(A1); c, _, e = size(A2)
         f = size(carry, 2)
         l4 = reshape(carry, b, e, f)                     # carry 行 = (e-1)·b + b：b 最快
-        B3 = Array{promote_type(scalartype(A1), scalartype(carry)),4}(undef, c, a, s, f)
+        B3 = Array{promote_type(T, U, scalartype(carry)),4}(undef, c, a, s, f)
         @inbounds for k in 1:s
             # Y[a,e,f] = Σ_b A1[a,s,b]·l4[b,e,f]
             Y = reshape(view(A1, :, k, :) * reshape(l4, b, e * f), a, e, f)
@@ -101,7 +104,7 @@ function svdguess_hadamard(A1s::PeriodicVector{<:Array{T,3}},
 end
 
 """
-    hadamard!(out, ψ₁, ψ₂, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
+    hadamard!(out, ψ₁, ψ₂, alg::CompressionAlgorithm) -> (out, envs, info)
 
 In-place [`hadamard`](@ref): `out` is the user-provided state to be optimized
 as the initial guess; its bond profile is first brought to uniform
@@ -113,12 +116,13 @@ into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时
 [`IterativeConvergenceInfo`](@ref)。
 """
 function hadamard!(out::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS,
-                   alg::Union{VOMPS,IDMRG})
+                   alg::CompressionAlgorithm)
     (length(ψ1) == length(ψ2)) ||
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
-    changebond!(out; D = alg.D)
+    D = _alg_guess_dim(alg)
+    D === nothing || changebond!(out; D)
     envs = HadamardCache(out, ψ1, ψ2, alg.alg_environments)
     _, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
@@ -376,6 +380,32 @@ bond ℓ 的 C 局部投影（zip 通道 = `_mapAC_zip`/`_mapC_zip`）。"
 function _local_AC(envs::HadamardCache, ℓ::Int)
     return _mapAC_zip(leftenv(envs, ℓ), rightenv(envs, ℓ),
                       envs.ket2.AC[ℓ], envs.ket1.AC[ℓ])
+end
+
+"`_local_AC2(envs, pos)`：`(pos, pos+1)` 窗口的两站局部映射（[`IDMRG2`](@ref)
+用；rank-3 环境 `(below, a, c)`/`(b, e, below)`）。两因子的两站张量
+（`:ACAR` 形态，物理腿保留）先各自融合，再经 GL/GR 夹闭——共享物理腿
+`s1`/`s2` 是 bra 网络的开放指标（同 `_mapAC_zip` 的单站约定），窗口精确
+变分最优，输出 rank-4 `(xL, s1, s2, xR)` 供 `_svd2!` 分割。"
+function _local_AC2(envs::HadamardCache, pos::Int)
+    N = length(envs)
+    next = _mod1(pos + 1, N)
+    @tensor t1[a, s1, s2, b] := envs.ket1.AC[pos][a, s1, m] * envs.ket1.AR[next][m, s2, b]
+    @tensor t2[c, s1, s2, e] := envs.ket2.AC[pos][c, s1, m] * envs.ket2.AR[next][m, s2, e]
+    GL, GR = leftenv(envs, pos), rightenv(envs, next)
+    @tensor X[xL, a, s1, s2, cr] := GL[xL, a, c] * t2[c, s1, s2, cr]
+    # 因子 1 的 a 腿收缩：共享物理腿 (s1, s2) 是双方重复指标，@tensor 不支持
+    # batched 形式——按物理片切片 GEMM（同 `_mapAC_zip` 的单站方案）
+    Dx, Da, Dbr, Dcr = size(X, 1), size(t1, 1), size(t1, 4), size(t2, 4)
+    d = size(t1, 2)
+    T = promote_type(scalartype(X), scalartype(t1))
+    Y = zeros(T, Dx, d, d, Dbr, Dcr)
+    @inbounds for s1 in 1:d, s2 in 1:d
+        Xp = @view X[:, :, s1, s2, :]                    # (xL, a, cr)
+        t1p = @view t1[:, s1, s2, :]                     # (a, b)
+        Y[:, s1, s2, :, :] .= @tensor Ys[xL, b, cr] := Xp[xL, a, cr] * t1p[a, b]
+    end
+    return @tensor Θ[xL, s1, s2, xR] := Y[xL, s1, s2, b, cr] * GR[b, cr, xR]
 end
 
 function _local_C(envs::HadamardCache, ℓ::Int)

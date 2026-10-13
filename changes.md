@@ -1,5 +1,57 @@
 # 变更记录（接口）
 
+## 2026-10-12 IDMRG2 开放 mult/hadamard 通道（三通道全支持）
+
+- **驱动签名**：`mult`/`mult!`（mpo·mps 与 mpo·mpo）与 `hadamard`/`hadamard!`
+  的 positional `alg` 从 `Union{VOMPS,IDMRG}` 放宽为
+  `CompressionAlgorithm`（含 [`IDMRG2`](@ref)）；初猜键维统一走
+  `_alg_guess_dim` 分派（IDMRG2 从 `alg.trunc` 提取，无维数语义方案回退
+  目标链无损键维上界；in-place 的 `changebond!` 预处理同步条件化——与
+  `compress!` 同款）；
+- **引擎**：`compression_sweeps!(::IDMRG2)` 删除 OverlapCache 通道守卫；
+  新增 `_local_AC2` 的通道分派——MultCache 双方法（mpo·mps 的 `GL·k1·k2·
+  O1·O2·GR` 分步收缩，物理腿纯开放；mpo·mpo 的 `Θ` 在融合 `(u·d)` 视图
+  上输出、站内收缩 `O.do ↔ ket.u` 两链键独立）与 HadamardCache（两因子
+  `:ACAR` 两站张量先各自融合再 GL/GR 夹闭，共享物理腿按物理片切片
+  batched GEMM）。收尾单站分解补全、Galerkin 收敛判据复用既有实现；
+- **实测**：N=2 与 L=3 下 mult mpo·mps/mpo·mpo 与 hadamard 的 IDMRG2 与
+  VOMPS 逐射线一致（fidelity ≡ 1.0，无损与有损）——当年记录的「wrap
+  窗口环度量缺陷」（mult 0.97/hadamard 0.62-0.98）实测不复现（旧实现的
+  环境取位问题）；已知限制：**大键维随机因子（如 6⊙3）的有损 L=3 zip**
+  下 IDMRG2 可收敛到 VOMPS 之下的近优不动点（近简并谱 + 两站
+  Gauss–Seidel 轨迹，f 0.78-0.83 vs 0.88-0.99，VOMPS 单站 ALS 不受影响）；
+- **测试**：IDMRG2 testset 扩为三通道（compress 原有断言保留 + mult
+  mpo·mps/mpo·mpo/hadamard 的 VOMPS 逐射线一致（无损 D=5 与有损 D=3）、
+  in-place、L=3 zip（4⊙3→4 稳定配置））；验证：全量 states 177 /
+  operators 113 / algorithms 新增后全过 / MPSKit concordance 422。
+
+## 2026-10-12 双输入函数全面支持混合 scalartype（Float64 × ComplexF64 实测）
+
+- **接口语义**：所有支持两个 MPS/MPO 输入的函数（`dot`/`fidelity`/`infidelity`、
+  变分代数 `mult`/`hadamard`/`compress` 环境、严格代数 `*`/`⊙`、观测量
+  `expectationvalue`）允许两输入 scalartype 不一致，输出按
+  `promote_type` 提升（如实输入 × 复输入 → 复输出）；
+- **放宽的核签名**（原单类型参数 `T` 要求两输入同型，混合输入 MethodError
+  或 InexactError）：`TransferMatrix` 三个构造器（双参双层转移、标量对、
+  MPO 三参——`dot`/`fidelity` 全族与基态环境求解的底层）、`fuse`（严格
+  `W * ψ` 与 `svdguess_mult` 的站点融合核）、`_naive_mul_tensor`（严格
+  `W1 * W2`）、`_naive_hadamard_tensor`（`⊙`；`similar` 缓冲同步
+  promote）、`svdguess_mult` 两个裸张量方法与 `svdguess_hadamard` 裸张量
+  方法（变分通道默认初猜；`svdguess_hadamard` 的 `B3` 缓冲类型此前漏了
+  A2 的 scalartype，是 `hadamard(实, 复)` InexactError 的根因——签名不匹配
+  时还会掉进 FMA 的宽泛 `PeriodicVector` 分派产生误导性错误）；
+- **观测量**：`dominant_env` 的初猜类型与 `DMRGCache(ψ, ::DenseIMPO)` 的
+  环境缓冲类型改按 `promote_type(scalartype(ψ), scalartype(operator))`
+  ——`expectationvalue(实态, 复算符)` 此前 InexactError，现正常返回复能量；
+- **新方法**：`dot(::CanonicalIMPO, ::CanonicalIMPO; kwargs...)`——MPO 的
+  Hilbert–Schmidt 内积（vectorize 的 MPS 视图环重叠，`kwargs` 透传
+  `krylovdim`），此前只有 `fidelity`（经 vectorize 转发）可用；
+- 已 promote 无需改动：三个 `*_fixedpoints` 环境求解器与各 Compression
+  缓存（bra/ket 类型参数独立）、`superoperator`、correlators；
+- 验证：混合输入冒烟（[debug/mixed_scalartype.jl]）三通道变分、严格代数、
+  dot/fidelity、观测量全部通过且输出类型 = promote_type；全量测试
+  states 177 / operators 113 / algorithms 595 / MPSKit concordance 422。
+
 ## 2026-10-07 修复 svdguess_compress 规范链初猜质量（下游 InfiniteTEMPO 报告）
 
 - **根因**：`svdguess_compress(x::CanonicalIMPS, D)` 对**左正交 `AL` 串**裸做

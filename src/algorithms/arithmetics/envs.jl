@@ -176,10 +176,9 @@ end
 """
     compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2) -> (envs, info)
 
-统一扫掠引擎的两站模板（MPSKit `approximate` 家族的 `IIDMRG2`；当前仅
-[`compress`](@ref) 的纯重叠通道 [`OverlapCache`](@ref) 开放——两站窗口的
-条件最优性要求窗口外腿为不同键（度量 = 恒等），wrap 窗口（N = 2 的全部
-窗口与 N ≥ 3 的 `(N, 1)`）的环闭合度量修正待补，算符/zip 通道暂不开放）。
+统一扫掠引擎的两站模板（MPSKit `approximate` 家族的 `IIDMRG2`；三个通道
+[`OverlapCache`](@ref)/[`MultCache`](@ref)/[`HadamardCache`](@ref) 全开放，
+窗口最优性由 [`_local_AC2`](@ref) 的通道分派给出）。
 每轮为双向两站扫掠——窗口 `(pos, pos+1)`（cyclic），[`_local_AC2`](@ref)
 以 `:ACAR` 形态（`ket.AC[pos]·ket.AR[pos+1]`）给出当前环境下的精确变分
 最优，按 `alg.trunc` SVD 截断并前移规范边界（`AL[pos]`/`C[pos]`/`AR[pos+1]`
@@ -190,8 +189,6 @@ end
 [`compression_sweeps!`](@ref) 的 IDMRG 方法。
 """
 function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
-    envs isa OverlapCache ||
-        throw(ArgumentError("IDMRG2 目前仅支持 compress（纯重叠通道）；mult/hadamard 待环度量修正后开放"))
     N = length(envs)
     (N ≥ 2) || throw(ArgumentError("IDMRG2 requires unit cell length >= 2"))
     x = envs.bra
