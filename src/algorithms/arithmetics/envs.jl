@@ -40,8 +40,10 @@ end
 compression）、MultCache = operator·ket（mpo·mps / mpo·mpo）、HadamardCache =
 zip(ket1, ket2)。`alg::VOMPS` 跑 Jacobi 式 ALS 轮：`localupdate`
 （`_local_AC`/`_local_C` → `regauge!`）→ `gauge_step!` → `recalculate!`
-环境热启动重解 → 扫掠后检查 Galerkin 残差。全部原地：态写回 `envs.bra`、
-环境写回 `lefts`/`rights`，返回 `(envs, info)`，`info` 为
+环境热启动重解 → 扫掠后检查 Galerkin 残差。环境写回 `lefts`/`rights`、
+态写回 `envs.bra`——**但 `recalculate!` 的类型守卫（实 cache 遇复不动点）
+可能返回提升后的新 envs，故输入 `envs` 不保证被原地改变：调用方一律以
+返回值 `envs` 为准**。返回 `(envs, info)`，`info` 为
 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = [初始残差,
 逐轮 Galerkin 残差...]、`converged` 收敛标志）。返回时 `envs.bra` 已按包约定
 归一化且处于混合规范——调用方无需再做任何收尾。
@@ -66,9 +68,11 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::VOMPS)
         # gauge: restore the global right gauge（动态容差）
         alg_g = updatetol(alg.alg_gauge, iter - 1, ϵ)
         gauge_step!(x, ALs, x.C[N]; tol = alg_g.tol, maxiter = alg_g.maxiter)
-        # envs_step!（bra 更新 + 热启动 + 动态环境容差）
+        # envs_step!（bra 更新 + 热启动 + 动态环境容差；recalculate! 的类型
+        # 守卫可能返回提升后的新 envs——后续以输出 envs 为准，x 重绑其 bra）
         alg_envs = updatetol(alg.alg_environments, iter - 1, ϵ)
-        recalculate!(envs, x, alg_envs)
+        envs = recalculate!(envs, x, alg_envs)
+        x = envs.bra
         # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
         x, envs = alg.finalize(iter, x, _finalize_target(envs), envs)
         envs.bra ≡ x || _copyinto!(envs.bra, x)
@@ -146,7 +150,7 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
     alg_g = updatetol(alg.alg_gauge, iter, ϵ)
     x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
                  maxiter = alg_g.maxiter)
-    recalculate!(envs, x, alg.alg_environments)
+    envs = recalculate!(envs, x, alg.alg_environments)
     return envs, IterativeConvergenceInfo(iter, losses, converged)
 end
 
@@ -216,9 +220,10 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
         x.AC[N] = _mulFront(x.C[N-1], x.AR[N])
         x.AL[N], x.C[N] = _leftsplit(x.AC[N], alg.alg_orth)
         _, x.AR[1] = _rightsplit(x.AC[1], alg.alg_orth)
-        # 环境对终态重解（热启动 + 动态容差，同 VOMPS 的 envs_step!）
+        # 环境对终态重解（热启动 + 动态容差，同 VOMPS 的 envs_step!；类型
+        # 守卫可能返回提升后的新 envs——后续以输出 envs 为准）
         alg_envs = updatetol(alg.alg_environments, iter, ϵ)
-        recalculate!(envs, x, alg_envs)
+        envs = recalculate!(envs, x, alg_envs)
         x = envs.bra
         # 收敛判据：最大逐站 Galerkin 残差（同 VOMPS）
         ϵ = calc_galerkin(envs, x)

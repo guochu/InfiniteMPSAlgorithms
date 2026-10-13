@@ -42,7 +42,7 @@ function hadamard(ψ1::AbstractInfiniteMPS, ψ2::AbstractInfiniteMPS, alg::Compr
                   maximum(size(ψ1.AL[ℓ], 1) * size(ψ2.AL[ℓ], 1) for ℓ in 1:length(ψ1)))
     envs = HadamardCache(svdguess_hadamard(ψ1, ψ2, D), ψ1, ψ2,
                          alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
@@ -124,7 +124,7 @@ function hadamard!(out::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractIn
     D = _alg_guess_dim(alg)
     D === nothing || changebond!(out; D)
     envs = HadamardCache(out, ψ1, ψ2, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
@@ -264,13 +264,23 @@ end
 Recompute the `⟨bra|zip(ψ1, ψ2)⟩` fixed points for the updated bra `newbra`
 （因子不变，[`hadamard_fixedpoints`](@ref) 重解），边界 eigsolve 以当前存储的
 `lefts[1]`/`rights[end]` 热启动（对标 MPSKit 的原地 `recalculate!`）。
-`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。
+`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。**类型
+守卫**：新环境 eltype 宽于当前存储时（实 cache 遇复不动点）返回全槽位
+提升后的新 envs——调用方须以 `envs = recalculate!(...)` 接住返回值。
 """
 function recalculate!(envs::HadamardCache, newbra::CanonicalIMPS,
                       alg_environments = Defaults.alg_environments())
     GLs, GRs = hadamard_fixedpoints(newbra, envs.ket1, envs.ket2,
                                     alg_environments;
                                     GL0 = envs.lefts[1], GR0 = envs.rights[end])
+    TL, TR = eltype(GLs[1]), eltype(GRs[end])
+    if !(TL <: eltype(envs.lefts[1]) && TR <: eltype(envs.rights[end]))
+        T = promote_type(TL, TR)
+        new = HadamardCache(_promote_scalar(T, envs.bra), _promote_scalar(T, envs.ket1),
+                            _promote_scalar(T, envs.ket2), GLs, GRs)
+        new.bra ≡ newbra || _copyinto!(new.bra, newbra)
+        return new
+    end
     copy!(envs.lefts, GLs)
     copy!(envs.rights, GRs)
     envs.bra ≡ newbra || _copyinto!(envs.bra, newbra)
@@ -300,7 +310,10 @@ function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ
     end
     # 冷启动随机初猜（MPSKit approximate 的 randomize! 对齐；可被 GL0/GR0 热启动覆盖）
     v0L = GL0 === nothing ? randn(T, Dl * D1 * D2) : vec(copy(GL0))
+    # forcereal：实输入下解出的复边界强投实（InfiniteTEMPO 对齐）；复输入不起作用
+    fc = _forcereal(alg) && T <: Real
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
+    fc && (vL = _realify!(vL))
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, scalartype(vL))
     GLs = Vector{Array{TCL,3}}(undef, N)
@@ -318,6 +331,7 @@ function hadamard_fixedpoints(below::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ
     end
     v0R = GR0 === nothing ? randn(T, D1 * D2 * Dl) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
+    fc && (vR = _realify!(vR))
     TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = GR = reshape(vR, D1, D2, Dl)

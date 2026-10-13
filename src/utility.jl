@@ -264,6 +264,30 @@ function fixedpoint(operator, x₀, which::Symbol, alg::NamedTuple;
     return vals[1], vecs[1]
 end
 
+"`_forcereal(alg)`：读环境算法的 `forcereal` 开关（仅 NamedTuple 形态可携带；
+`DynamicTol` 穿透到内层，KrylovKit 算法对象无此字段恒 `false`）。"
+_forcereal(alg::NamedTuple) = get(alg, :forcereal, false)
+_forcereal(alg::DynamicTol) = _forcereal(alg.alg)
+_forcereal(alg) = false
+
+"""
+    _realify!(v) -> real.(v)
+
+Deterministic real projection of a (possibly complex) Krylov eigenvector of a
+real operator: fix the overall phase by rotating the largest-magnitude entry
+onto the real axis, then take the real part. Taking `real` of an arbitrary-
+phase vector is an arbitrary projection — the phase fix is what makes the
+projection well-defined (and optimal up to the residual imaginary part).
+移植自 InfiniteTEMPO 的同名函数（`alg_environments` 的 `forcereal` 开关用）。
+"""
+function _realify!(v::AbstractArray)
+    isempty(v) && return real.(v)
+    vmax = argmax(abs, v)
+    p = iszero(vmax) ? one(vmax) : vmax / abs(vmax)
+    lmul!(conj(p), v)
+    return real.(v)
+end
+
 """
     module Defaults
 
@@ -327,11 +351,17 @@ alg_gauge(; tol = tolgauge, maxiter = maxiter,
           tol_factor = gauge_tolfactor) =
     dynamic_tols′ ? DynamicTol((; tol = tol, maxiter = maxiter), tol_min′, tol_max′, tol_factor) :
     (; tol = tol, maxiter = maxiter)
+"Environment solver（`fixedpoint` 的 NamedTuple 形态）。`forcereal = true`：
+实输入下解出的复边界经 `_realify!`（最大模元相位固定 + real 投影）强投实数
+域——通道全程实算术、输出 eltype 恒实（复输入不起作用；仅 arithmetics 的
+compress/mult/hadamard 通道消费该开关，groundstates 忽视）。"
 alg_environments(; tol = tol, maxiter = maxiter,
+                 forcereal = false,
                  dynamic_tols′ = dynamic_tols, tol_min′ = tol_min, tol_max′ = tol_max,
                  tol_factor = envs_tolfactor) =
-    dynamic_tols′ ? DynamicTol((; tol = tol, maxiter = maxiter), tol_min′, tol_max′, tol_factor) :
-    (; tol = tol, maxiter = maxiter)
+    dynamic_tols′ ? DynamicTol((; tol = tol, maxiter = maxiter, forcereal = forcereal),
+                               tol_min′, tol_max′, tol_factor) :
+    (; tol = tol, maxiter = maxiter, forcereal = forcereal)
 end
 
 # default orthogonalization / SVD algorithms (QRpos/SDD are defined in tensorops,

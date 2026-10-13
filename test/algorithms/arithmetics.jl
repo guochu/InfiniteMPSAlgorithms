@@ -580,3 +580,42 @@ end
              DenseIMPS(collect(ψc.AL))
     @test fidelity(DenseIMPS(y3), hexact) > 1 - 1e-8
 end
+
+@testset "forcereal：实输入的环境实数域投影（alg_environments 开关）" begin
+    # alg_environments 的 forcereal = true：实输入下解出的复边界经 _realify!
+    # 强投实（最大模元相位固定 + real 投影，InfiniteTEMPO 对齐）——通道全程
+    # 实算术、输出 eltype 恒实；默认 false 行为不变（实输入的复 leading
+    # vector 照常升复）；复输入不受 forcereal 影响。
+    T = Float64
+    Random.seed!(91)
+    Wr = rand_denseimpo(T, [2, 2]; D = 3)
+    ψr = randomimps(T, [2, 2]; D = 3)
+    Wc = rand_denseimpo(ComplexF64, [2, 2]; D = 3)
+    env_r = (tol = 1e-8, maxiter = 200, forcereal = true)
+    env_d = (tol = 1e-8, maxiter = 200)
+
+    # 默认（false）：实输入下行为与既有完全一致（本例环境复化 → 复输出）
+    y_def, _, _ = mult(Wr, ψr, VOMPS(D = 4, alg_environments = env_d))
+    # forcereal = true：三通道输出恒实，且与默认解同射线（投影只改域不改方向）
+    y_fc, _, _ = mult(Wr, ψr, VOMPS(D = 4, alg_environments = env_r))
+    @test scalartype(y_fc) == Float64
+    @test fidelity(y_fc, y_def) > 1 - 1e-8
+    # DynamicTol 包装形态的 forcereal 穿透
+    y_dyn, _, _ = mult(Wr, ψr, IDMRG(D = 4,
+                                     alg_environments = DynamicTol(env_r)))
+    @test scalartype(y_dyn) == Float64
+    y2fc, _, _ = mult(Wr, ψr, IDMRG2(trunc = truncdim(4), alg_environments = env_r))
+    @test scalartype(y2fc) == Float64
+    # compress / hadamard
+    ycfc, _, _ = compress(ψr, VOMPS(D = 2, alg_environments = env_r))
+    @test scalartype(ycfc) == Float64
+    yhfc, _, _ = hadamard(ψr, randomimps(T, [2, 2]; D = 3),
+                          VOMPS(D = 6, alg_environments = env_r))
+    @test scalartype(yhfc) == Float64
+    # 复输入：forcereal 不起作用（输出仍复）
+    y_cin, _, _ = mult(Wc, ψr, VOMPS(D = 4, alg_environments = env_r))
+    @test scalartype(y_cin) == ComplexF64
+    # Defaults.alg_environments 携带 forcereal = false 字段（默认行为不变；
+    # 默认 dynamic_tols = true 返回 DynamicTol 包装，经 _forcereal 穿透读取）
+    @test InfiniteMPSAlgorithms._forcereal(Defaults.alg_environments()) == false
+end

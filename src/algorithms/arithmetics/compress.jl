@@ -87,7 +87,7 @@ The second return is the engine's final environments（纯重叠通道的
 function compress(ψ::AbstractInfiniteMPS, alg::CompressionAlgorithm)
     D = something(_alg_guess_dim(alg), max_bonddim(ψ))
     envs = OverlapCache(svdguess_compress(ψ, D), ψ, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
@@ -101,7 +101,7 @@ function compress(W::AbstractInfiniteMPO, alg::CompressionAlgorithm)
     ket = vectorize(W)
     D = something(_alg_guess_dim(alg), max_bonddim(ket))
     envs = OverlapCache(svdguess_compress(ket, D), ket, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return devectorize(envs.bra), envs, info
 end
 
@@ -128,7 +128,7 @@ function compress!(out::CanonicalIMPS, ψ::AbstractInfiniteMPS,
     D = _alg_guess_dim(alg)
     D === nothing || changebond!(out; D)
     envs = OverlapCache(out, ψ, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
@@ -137,7 +137,7 @@ function compress!(out::CanonicalIMPO, W::AbstractInfiniteMPO,
     D = _alg_guess_dim(alg)
     D === nothing || changebond!(out; D)
     envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, devectorize(envs.bra)), envs, info
 end
 
@@ -309,7 +309,10 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
     end
     # 冷启动随机初猜（MPSKit approximate 的 randomize! 对齐；可被 GL0/GR0 热启动覆盖）
     v0L = GL0 === nothing ? randn(T, Dl * Da) : vec(copy(GL0))
+    # forcereal：实输入下解出的复边界强投实（InfiniteTEMPO 对齐）；复输入不起作用
+    fc = _forcereal(alg) && T <: Real
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
+    fc && (vL = _realify!(vL))
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, scalartype(vL))
     GLs = Vector{Matrix{TCL}}(undef, N)
@@ -327,6 +330,7 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
     end
     v0R = GR0 === nothing ? randn(T, Da * Dl) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
+    fc && (vR = _realify!(vR))
     TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Matrix{TCR}}(undef, N)
     GRs[N] = GR = reshape(vR, Da, Dl)
@@ -367,12 +371,22 @@ end
 Recompute the ⟨bra|ket⟩ fixed points for the updated bra `newbra`（ket 不变，
 [`overlap_fixedpoints`](@ref) 重解），边界 eigsolve 以当前存储的
 `lefts[1]`/`rights[end]` 热启动（对标 MPSKit 的原地 `recalculate!`）。
-`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。
+`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。**类型
+守卫**：新环境 eltype 宽于当前存储时（实 cache 遇复不动点）返回全槽位
+提升后的新 envs——调用方须以 `envs = recalculate!(...)` 接住返回值。
 """
 function recalculate!(envs::OverlapCache, newbra::CanonicalIMPS,
                       alg_environments = Defaults.alg_environments())
     GLs, GRs = overlap_fixedpoints(newbra, envs.ket, alg_environments;
                                    GL0 = envs.lefts[1], GR0 = envs.rights[end])
+    TL, TR = eltype(GLs[1]), eltype(GRs[end])
+    if !(TL <: eltype(envs.lefts[1]) && TR <: eltype(envs.rights[end]))
+        T = promote_type(TL, TR)
+        new = OverlapCache(_promote_scalar(T, envs.bra), _promote_scalar(T, envs.ket),
+                           GLs, GRs)
+        new.bra ≡ newbra || _copyinto!(new.bra, newbra)
+        return new
+    end
     copy!(envs.lefts, GLs)
     copy!(envs.rights, GRs)
     envs.bra ≡ newbra || _copyinto!(envs.bra, newbra)

@@ -1,5 +1,36 @@
 # 变更记录（接口）
 
+## 2026-10-12 forcereal：实输入的环境实数域投影开关（alg_environments）
+
+- **接口**：`alg_environments`（NamedTuple 形态）新增 `forcereal::Bool = false`
+  字段（[`Defaults.alg_environments`](@ref) 同步提供 kwarg；`DynamicTol`
+  包装形态经内层 NamedTuple 携带）——`VOMPS`/`IDMRG`/`IDMRG2` 三算法的
+  该字段直接透传，驱动层无需改动；
+- **语义**：`forcereal = true` 且输入 scalartype 为实时，`mixed_fixedpoints`/
+  `overlap_fixedpoints`/`hadamard_fixedpoints` 解出的复边界环境本征向量经
+  `_realify!`（移植自 InfiniteTEMPO 同名函数：最大模元相位固定到实轴 +
+  real 投影——相位固定使投影良定义）强投实数域，通道全程实算术、输出
+  eltype 恒实；**复输入不起作用**（`T <: Real` 守卫）；默认 `false` 行为与
+  既有完全一致（实输入的复 leading vector 照常升复）；
+- **作用范围**：仅 arithmetics 的 compress/mult/hadamard 通道（三个
+  `*_fixedpoints` 环境求解器消费）；groundstates 的 DMRG/VUMPS 等忽视该
+  输入（其环境求解不经过这三个函数）；KrylovKit 算法对象形态的
+  `alg_environments` 无 `forcereal` 字段（恒 `false`，需实数域投影时用
+  NamedTuple 形态）；
+- **测试**：arithmetics 新增 forcereal testset（三通道实输入输出恒 Float64
+  且与默认解同射线、DynamicTol 穿透、复输入不受影响、`_forcereal` 穿透
+  读取）；验证：全量 1322/1322（algorithms 610）。
+- **recalculate! 类型守卫（配套）**：`recalculate!`（MultCache/OverlapCache/
+  HadamardCache 三方法）新增类型检查——重解出的环境 eltype 宽于当前存储
+  （实 cache 遇复不动点，`forcereal` 关闭的实输入通道可能出现）时，原地
+  `copy!` 会让 cache 类型参数与实际元素类型脱节、下游实算术写回崩
+  （InexactError）——此时返回**全槽位提升后的新 envs**（对齐各 cache
+  构造器的 `_promote_scalar` 语义）；`compression_sweeps!`（VOMPS/IDMRG/
+  IDMRG2）的调用点与全部驱动层改以 `envs = recalculate!(...)` /
+  `envs, info = compression_sweeps!(...)` 接住返回值——**输入 envs 不再
+  保证被原地改变，后续调用一律以返回的 envs 为准**（in-place 驱动的
+  out 类型守卫既有语义不变）。
+
 ## 2026-10-12 内存审计：多因子 @tensor 收缩拆步（mult IDMRG2 大 D 内存爆炸根因修复）
 
 - **背景**：D = 25/50/100、unit cell = 2 的 mult IDMRG2 内存压力测试

@@ -60,7 +60,9 @@ Afterwards the mixed-canonical state is rebuilt from `AR` (mirroring
 
 `alg_orth`（正交分解 `leftorth`/`rightorth` 的因式化算法）随 `alg` 传入各
 IDMRG 引擎；`alg_environments`（环境求解算法，`fixedpoint` 分派，同
-`VUMPS`/`VOMPS` 的同名字段）提供扫掠的初始/收尾环境求解容差；`alg_gauge`
+`VUMPS`/`VOMPS` 的同名字段）提供扫掠的初始/收尾环境求解容差（NamedTuple
+形态支持 `forcereal = true`——实输入的环境实数域投影，仅 arithmetics 通道
+消费）；`alg_gauge`
 专用于收尾的 AR 混合规范重建（动态容差经 `updatetol(alg_gauge, iter, ϵ)`
 适配，对标 MPSKit `InfiniteMPS(mps.AR)`）——IDMRG 扫掠内无规范固定步，故
 `alg_gauge` 仅在收尾重建使用；
@@ -96,7 +98,9 @@ Two-site variant of [`IDMRG`](@ref)（MPSKit 同名 `IDMRG2` 的移植），同�
 
 `trunc::TruncationScheme`（默认 `alg_trunc()`）取代 IDMRG 的固定 `D`。
 基态收敛判据同 IDMRG（bond-0 中心矩阵漂移）；压缩为最大逐站 Galerkin
-残差（同 [`VOMPS`](@ref)）。`alg_eigsolve` 用于基态两站本征对。
+残差（同 [`VOMPS`](@ref)）。`alg_eigsolve` 用于基态两站本征对；
+`alg_environments` 的 `forcereal` 开关语义同 [`VOMPS`](@ref)（仅变分压缩
+通道消费）。
 """
 @kwdef struct IDMRG2{S,G,N,A,O,F} <: Algorithm
     trunc::S = alg_trunc()
@@ -130,7 +134,10 @@ the typed operators `Base.:*(::DenseIMPO, ::DenseIMPO)` /
 
 `alg_gauge`/`alg_environments`（动态容差规范固定 / 环境重解，MPSKit
 `adapt_solver` 语义）与 `alg_orth`（候选 `AL` 的 `regauge!` 正交化算法）随
-`alg` 传入各变分引擎；`finalize(iter, x, operator, envs) -> (x, envs)` 为
+`alg` 传入各变分引擎；`alg_environments` 的 NamedTuple 形态支持
+`forcereal = true`（实输入下解出的复边界强投实数域，输出 eltype 恒实；
+默认 `false` 行为不变；复输入不起作用——仅 arithmetics 通道消费）；
+`finalize(iter, x, operator, envs) -> (x, envs)` 为
 逐迭代回调（默认恒等，`Defaults._finalize`）。
 """
 @kwdef struct VOMPS{G,N,O,F} <: Algorithm

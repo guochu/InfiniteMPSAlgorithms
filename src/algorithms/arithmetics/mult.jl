@@ -110,7 +110,10 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
     end
     # 冷启动随机初猜（MPSKit approximate 的 randomize! 对齐；可被 GL0/GR0 热启动覆盖）
     v0L = GL0 === nothing ? randn(T, Dl * Dw * Da) : vec(copy(GL0))
+    # forcereal：实输入下解出的复边界强投实（InfiniteTEMPO 对齐）；复输入不起作用
+    fc = _forcereal(alg) && T <: Real
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
+    fc && (vL = _realify!(vL))
     # 复环境提升（MPSKit 对齐：环境张量按 eigsolve 返回的实际 eltype 存放；
     # 实输入下融合转移的 leading vector 可为复，通道随后整体升为复算术）
     TCL = promote_type(T, scalartype(vL))
@@ -130,6 +133,7 @@ function mixed_fixedpoints(below::Union{CanonicalIMPS,CanonicalIMPO},
     end
     v0R = GR0 === nothing ? randn(T, Da * Dw * Dr) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
+    fc && (vR = _realify!(vR))
     TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Array{TCR,3}}(undef, N)
     GRs[N] = reshape(vR, Da, Dw, Dr)
@@ -186,7 +190,11 @@ end
 Recompute the `⟨bra|operator|ket⟩` fixed points for the updated bra `newbra`
 （operator/ket 不变，[`mixed_fixedpoints`](@ref) 重解），边界 eigsolve 以当前
 存储的 `lefts[1]`/`rights[end]` 热启动（对标 MPSKit 的原地 `recalculate!`）。
-`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。
+`newbra` 与新不动点就地写回 `envs`（原地更新，返回 `envs` 本身）。**类型
+守卫**：新环境 eltype 宽于当前存储（实 cache 遇复不动点——`forcereal` 关闭
+的实输入通道可能出现）时原地写回会让 cache 的类型参数与实际元素类型脱节、
+下游实算术崩（InexactError），此时返回**全槽位提升后的新 envs**——调用方
+须以 `envs = recalculate!(...)` 接住返回值。
 """
 function recalculate!(envs::MultCache,
                       newbra::Union{CanonicalIMPS,CanonicalIMPO},
@@ -194,6 +202,14 @@ function recalculate!(envs::MultCache,
     GLs, GRs = mixed_fixedpoints(newbra, envs.operator, envs.ket,
                                  alg_environments;
                                  GL0 = envs.lefts[1], GR0 = envs.rights[end])
+    TL, TR = eltype(GLs[1]), eltype(GRs[end])
+    if !(TL <: eltype(envs.lefts[1]) && TR <: eltype(envs.rights[end]))
+        T = promote_type(TL, TR)
+        new = MultCache(_promote_scalar(T, envs.operator), _promote_scalar(T, envs.bra),
+                        _promote_scalar(T, envs.ket), GLs, GRs)
+        new.bra ≡ newbra || _copyinto!(new.bra, newbra)
+        return new
+    end
     copy!(envs.lefts, GLs)
     copy!(envs.rights, GRs)
     envs.bra ≡ newbra || _copyinto!(envs.bra, newbra)
@@ -556,7 +572,7 @@ function mult(W::AbstractInfiniteMPO, ψ::AbstractInfiniteMPS, alg::CompressionA
     D = something(_alg_guess_dim(alg),
                   maximum(size(W.AL[ℓ], 1) * size(ψ.AL[ℓ], 1) for ℓ in 1:length(ψ)))
     envs = MultCache(svdguess_mult(W, ψ, D), W, ψ, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     # 引擎收尾已保证 envs.bra 处于混合规范且按包约定归一化，直接返回其本体
     return envs.bra, envs, info
 end
@@ -571,7 +587,7 @@ function mult(W::AbstractInfiniteMPO, W2::AbstractInfiniteMPO, alg::CompressionA
                   maximum(size(W.AL[ℓ], 1) * size(W2.AL[ℓ], 1) for ℓ in 1:length(W)))
     envs = MultCache(svdguess_mult(W, W2, D), W, W2,
                      alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return envs.bra, envs, info
 end
 
@@ -689,7 +705,7 @@ function mult!(out::CanonicalIMPS, W::AbstractInfiniteMPO, ψ::AbstractInfiniteM
     D = _alg_guess_dim(alg)
     D === nothing || changebond!(out; D)
     envs = MultCache(out, W, ψ, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
 
@@ -700,6 +716,6 @@ function mult!(out::CanonicalIMPO, W::AbstractInfiniteMPO, W2::AbstractInfiniteM
     D = _alg_guess_dim(alg)
     D === nothing || changebond!(out; D)
     envs = MultCache(out, W, W2, alg.alg_environments)
-    _, info = compression_sweeps!(envs, alg)
+    envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
 end
