@@ -29,7 +29,8 @@ function correlator(ψ::CanonicalIMPS, O1::AbstractMatrix, O2::AbstractMatrix,
         # propagate to site j (identity channel; V is in (bra, ket) order)
         for ℓ in (ctr+1):(j-1)
             A = ψ.AR[_mod1(ℓ, N)]
-            V = @tensor V′[b̄′, β′] := conj(A[b̄, s, b̄′]) * A[β̄, s, β′] * V[b̄, β̄]
+            Y = @tensor Y[b̄′, s, β̄] := conj(A[b̄, s, b̄′]) * V[b̄, β̄]
+            V = @tensor V[b̄′, β′] := Y[b̄′, s, β̄] * A[β̄, s, β′]
         end
         jj = _mod1(j, N)
         AR = ψ.AR[jj]

@@ -58,8 +58,11 @@ end
 "MPS-MPO-MPS single-site sandwich contraction (mirrors MPSKit's
 contract_mpo_expval)."
 function contract_mpo_expval(AC, GL, O, GR, ACbar = AC)
-    @tensor E[] := GL[ā, w, b] * AC[b, d, b′] * GR[b′, w′, b̄] *
-                   O[w, ū, w′, d] * conj(ACbar[ā, ū, b̄])
+    # 分步收缩（各 2 操作数，中间有界 O(D²·Dw·d)）：AC·GR → O → GL → ACbar
+    X = @tensor X[b, d, w′, b̄] := AC[b, d, b′] * GR[b′, w′, b̄]
+    Y = @tensor Y[b, w, ū, b̄] := X[b, d, w′, b̄] * O[w, ū, w′, d]
+    Z = @tensor Z[ā, ū, b̄] := Y[b, w, ū, b̄] * GL[ā, w, b]
+    @tensor E[] := Z[ā, ū, b̄] * conj(ACbar[ā, ū, b̄])
     return E[]
 end
 

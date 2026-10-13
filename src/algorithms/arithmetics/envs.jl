@@ -259,11 +259,15 @@ function _svd2!(x::CanonicalIMPO, pos::Int, Θ::AbstractArray{<:Any,4},
     u, s, v, _ = tsvd(Θ, (1, 2), (3, 4); trunc)
     normalize!(s)
     next = _mod1(pos + 1, length(x))
-    ALp, ARn = x.AL[pos], x.AR[next]          # (wl, u, wr, d) 键 profile 取自家族
-    x.AL[pos] = permutedims(reshape(u, size(ALp, 1), size(ALp, 2), size(ALp, 4), length(s)),
+    # 物理维 (u, d) 取自家族（不截断、恒定）；**键维随各窗口截断动态变化**
+    #（两站融合键 400 截到 ≤100 等），左/右键取 SVD 输出自身的维度——
+    # 旧张量的键维在初猜胖于目标无损键（如 truncdim(100) > 目标 64）时
+    # 与截断后的窗口键不一致，不能作为 reshape 模板
+    ALp, ARn = x.AL[pos], x.AR[next]
+    x.AL[pos] = permutedims(reshape(u, size(u, 1), size(ALp, 2), size(ALp, 4), length(s)),
                             (1, 2, 4, 3))
     x.C[pos] = Matrix(Diagonal(s))
-    x.AR[next] = permutedims(reshape(v, length(s), size(ARn, 2), size(ARn, 4), size(Θ, 4)),
+    x.AR[next] = permutedims(reshape(v, length(s), size(ARn, 2), size(ARn, 4), size(v, 3)),
                              (1, 2, 4, 3))
     return x
 end

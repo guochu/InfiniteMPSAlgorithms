@@ -1,5 +1,33 @@
 # 变更记录（接口）
 
+## 2026-10-12 内存审计：多因子 @tensor 收缩拆步（mult IDMRG2 大 D 内存爆炸根因修复）
+
+- **背景**：D = 25/50/100、unit cell = 2 的 mult IDMRG2 内存压力测试
+  （[debug/mult_idmrg2_memory.jl]）发现两个问题——mpo·mpo 通道 D = 100 直接
+  `OutOfMemoryError`，以及 `_svd2!(::CanonicalIMPO)` 的
+  `DimensionMismatch`；
+- **根因 1（内存爆炸）**：`@tensor` 多因子收缩按**书写顺序左折叠**、每步用
+  optimal 配对收缩——相邻因子无共享腿时产生**外积中间张量**：
+  `push_env_right` 的 `(above·W)·conj(below)` 中间为
+  `(al′, al, w′, w, bl′, bl)` 六腿，bra D=100 × 算符键 64 时单次申请
+  ~334GiB 直接 OOM。修复：多因子热点全部拆成二元链式收缩（每步中间有界
+  `O(D²·Dw·d)`）——transfermatrix 的 ternary push_env_left/right（MPO 与
+  identity 通道）与单层 push_env_right 三方法（identity/matrix 右推的
+  `A·conj(A)` 键⁴ 中间同步拆步）、`_push_slice_right`、
+  `contract_mpo_expval`（5 因子，中间原为 D²·Dw²·D 级）、correlators 的
+  传播步；其余 `@tensor`（effective.jl 的 AC/AC2 作用、`_mapAC`/`_mapC`、
+  zip 切片核等）经审计相邻因子均有共享腿（中间 ≤4 腿有界），维持原状；
+- **根因 2**：`_svd2!(::CanonicalIMPO)` 的 reshape 用**旧张量键维**作模板
+  ——初猜胖于目标无损键（如 `truncdim(100)` > 目标 64）时窗口截断后的键
+  profile 逐窗口动态变化，旧键维与新 SVD 输出形状不一致。修复：左/右键维
+  取 SVD 输出自身维度（`size(u,1)`/`size(v,3)`），物理维 (u, d) 仍取自家族；
+- **附带收益**：mpo·mps D=25 的吞吐分配 123GiB → 4.8GiB（26×）、耗时
+  98.7s → 6.8s（外积巨块的分配/释放与 cache 污染消除）；
+- **压力测试结论**（W 键 8，d=2，L=2）：D=25/50/100 的 mpo·mps 与 mpo·mpo
+  全部收敛，驻留（终态+环境）MB 级、RSS 峰值增量 <250MB、无泄漏；W 键
+  64 × ψ 键 64 压力段 RSS 稳定 ~1.9GiB（无爆炸），耗时为环境 Arnoldi 在
+  密集谱上的计算量问题（非内存）。
+
 ## 2026-10-12 IDMRG2 开放 mult/hadamard 通道（三通道全支持）
 
 - **驱动签名**：`mult`/`mult!`（mpo·mps 与 mpo·mpo）与 `hadamard`/`hadamard!`

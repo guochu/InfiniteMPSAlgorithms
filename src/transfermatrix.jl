@@ -18,25 +18,33 @@ function push_env_left(L::AbstractArray{T,3}, A::AbstractArray{T,3}) where {T}
 end
 
 "Identity-channel right-environment push (mirrors MPSKit transfer_right):
-R′ = Σ_s A_s · R · A_s′, output (bra′, ket′)."
+R′ = Σ_s A_s · R · A_s′, output (bra′, ket′). 显式两步（物理腿切片先行，
+避免 `A·conj(A)` 的键⁴ 中间）。"
 function push_env_right(R::AbstractMatrix, A::AbstractArray{T,3}) where {T}
-    @tensor R′[a′, b′] := A[a′, s, a] * conj(A[b′, s, b]) * R[a, b]
+    @tensor Y[a′, s, b] := A[a′, s, a] * R[a, b]
+    @tensor R′[a′, b′] := Y[a′, s, b] * conj(A[b′, s, b])
 end
 
 "MPO-channel right-environment push (mirrors MPSKit transfer_right): `R` is
-`(bra, w, ket)`; O's u contracts with below, d with above."
+`(bra, w, ket)`; O's u contracts with below, d with above. 显式三步二元收缩
+（`A·W` 相邻会产生 `(a′, w′, ū, w, a)` 的 D²·Dw²·d 级中间）。"
 function push_env_right(R::AbstractArray{TR,3}, W::AbstractArray{Tw,4}, A::AbstractArray{Ta,3}) where {TR,Tw,Ta}
-    @tensor R′[a′, w′, b′] := A[a′, d, a] * W[w′, ū, w, d] * conj(A[b′, ū, b]) * R[a, w, b]
+    @tensor Y[a′, d, w, b] := A[a′, d, a] * R[a, w, b]
+    @tensor Yw[a′, w′, ū, b] := Y[a′, d, w, b] * W[w′, ū, w, d]
+    @tensor R′[a′, w′, b′] := Yw[a′, w′, ū, b] * conj(A[b′, ū, b])
 end
 
 "Rank-3 form of the identity-channel (w dimension = 1) right-environment push."
 function push_env_right(R::AbstractArray{T,3}, A::AbstractArray{T,3}) where {T}
-    @tensor R′[a′, 1, b′] := A[a′, s, a] * conj(A[b′, s, b]) * R[a, 1, b]
+    @tensor Y[a′, s, b] := A[a′, s, a] * R[a, 1, b]
+    @tensor R′[a′, 1, b′] := Y[a′, s, b] * conj(A[b′, s, b])
 end
 
-"Right-environment push with a local operator insertion: R′ = Σ A_s · O · R · A_s′."
+"Right-environment push with a local operator insertion: R′ = Σ A_s · O · R · A_s′.
+显式两步（A·R 先收缩 a 键）。"
 function push_env_right(R::AbstractMatrix, O::AbstractMatrix, A::AbstractArray{T,3}) where {T}
-    @tensor R′[a′, b′] := A[a′, u, a] * O[u, s] * conj(A[b′, s, b]) * R[a, b]
+    @tensor Y[a′, u, b] := A[a′, u, a] * R[a, b]
+    @tensor R′[a′, b′] := Y[a′, u, b] * O[u, s] * conj(A[b′, s, b])
 end
 
 "`push_env_left(L, above, below)`: double-layer (above/below) fused transfer
@@ -62,32 +70,40 @@ end
 
 "Ternary MPO-channel left push: `L` is `(below bond, w, above bond)`.
 各参量允许不同标量类型（复环境 × 实链，@tensor 自动提升——MPSKit 对齐：
-环境取 eigsolve 返回的实际 eltype，实输入下 leading vector 可为复）。"
+环境取 eigsolve 返回的实际 eltype，实输入下 leading vector 可为复）。
+显式两步二元收缩——多因子 `@tensor` 一体规划按 flops 最优但**不控内存**，
+中间可为 `(bl, bl′, al, al′, w, w′)` 级巨块（bra D=100 × 算符键 64 实测
+单次申请 ~334GiB 直接 OOM），拆步后中间有界 `O(D²·Dw·d)`。"
 function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
                        W::AbstractArray{Tw,4}, above::AbstractArray{Ta,3}) where {TL,Tb,Tw,Ta}
-    @tensor L′[bl′, w′, al′] := conj(below[bl, ū, bl′]) * L[bl, w, al] * W[w, ū, w′, d] * above[al, d, al′]
+    @tensor Y[b′, ū, w, al] := conj(below[bl, ū, b′]) * L[bl, w, al]
+    @tensor Yw[b′, w′, d, al] := Y[b′, ū, w, al] * W[w, ū, w′, d]
+    @tensor L′[bl′, w′, al′] := Yw[bl′, w′, d, al] * above[al, d, al′]
 end
 
-"Ternary identity-channel left push (w dimension = 1). 三张量一体的收缩由
-TensorOperations 按 flops 最优排序（先键后物理）；不可拆步——L 的字面量
-`1` 腿无法在中间步悬空。"
+"Ternary identity-channel left push (w dimension = 1). 前步 `below·L` 拆出
+（中间 `(bl′, s, al)` 有界；L 的字面量 `1` 腿留在末步）。"
 function push_env_left(L::AbstractArray{TL,3}, below::AbstractArray{Tb,3},
                        above::AbstractArray{Ta,3}) where {TL,Tb,Ta}
-    @tensor L′[bl′, 1, al′] := conj(below[bl, s, bl′]) * L[bl, 1, al] * above[al, s, al′]
+    @tensor Y[b′, s, al] := conj(below[bl, s, b′]) * L[bl, 1, al]
+    @tensor L′[bl′, 1, al′] := Y[b′, s, al] * above[al, s, al′]
 end
 
-"Ternary MPO-channel right push: `R` is `(above bond, w, below bond)`."
+"Ternary MPO-channel right push: `R` is `(above bond, w, below bond)`.
+显式两步二元收缩（先 `W·below` 的 ū 键——同左推的内存有界性论证）。"
 function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,3},
                         W::AbstractArray{Tw,4}, below::AbstractArray{Tb,3}) where {TR,Ta,Tw,Tb}
-    @tensor R′[al′, w′, bl′] := above[al′, d, al] * W[w′, ū, w, d] * conj(below[bl′, ū, bl]) * R[al, w, bl]
+    @tensor Y[w′, w, d, bl′, bl] := W[w′, ū, w, d] * conj(below[bl′, ū, bl])
+    @tensor Z2[al′, d, w, bl] := above[al′, d, al] * R[al, w, bl]
+    @tensor R′[al′, w′, bl′] := Z2[al′, d, w, bl] * Y[w′, w, d, bl′, bl]
 end
 
-"Ternary identity-channel right push (w dimension = 1). 三张量一体的收缩由
-TensorOperations 按 flops 最优排序（先键后物理）；不可拆步——L 的字面量
-`1` 腿无法在中间步悬空。"
+"Ternary identity-channel right push (w dimension = 1). 前步 `below·R` 拆出
+（中间 `(bl′, s, al)` 有界）。"
 function push_env_right(R::AbstractArray{TR,3}, above::AbstractArray{Ta,3},
                         below::AbstractArray{Tb,3}) where {TR,Ta,Tb}
-    @tensor R′[al′, 1, bl′] := above[al′, s, al] * conj(below[bl′, s, bl]) * R[al, 1, bl]
+    @tensor Y[bl′, s, al] := conj(below[bl′, s, bl]) * R[al, 1, bl]
+    @tensor R′[al′, 1, bl′] := above[al′, s, al] * Y[bl′, s, al]
 end
 
 # ---------------- TransferMatrix ----------------

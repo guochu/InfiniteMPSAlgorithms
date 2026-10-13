@@ -109,7 +109,8 @@ end
 "Right push of the channel slice (i → l): mirrors MPSKit transfer_right; A
 contracts with the ket (d), conj(A) with the bra (u)."
 function _push_slice_right(R::AbstractMatrix, Wl::AbstractMatrix, A::AbstractArray{T,3}) where {T}
-    @tensor R′[a′, b′] := A[a′, d, a] * Wl[ū, d] * conj(A[b′, ū, b]) * R[a, b]
+    @tensor Y[a′, d, b] := A[a′, d, a] * R[a, b]
+    @tensor R′[a′, b′] := Y[a′, d, b] * Wl[ū, d] * conj(A[b′, ū, b])
 end
 
 "Full-cell left sweep of an **interior** level (mirrors MPSKit left_cyclethrough!):
