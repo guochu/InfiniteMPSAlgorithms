@@ -85,6 +85,14 @@ end
         ls = dot(vec(d), vec(tgt)) / dot(vec(d), vec(d))
         @test norm(vec(tgt) .- ls .* vec(d)) / norm(vec(tgt)) < 1e-6
     end
+    # 变分解结构唯一性：重复运行（独立随机冷启动流）与引擎间直接一致
+    # （fidelity ≈ 1；解不依赖冷启动方式，同 compress 结构唯一性 testset）
+    Random.seed!(8001)
+    P1b, _, _ = mult(W1, I2, VOMPS(D = 2))
+    @test fidelity(P1b, P1) > 1 - 1e-6
+    Random.seed!(8002)
+    P1c, _, _ = mult(W1, I2, IDMRG(D = 2))
+    @test fidelity(P1c, P1) > 1 - 1e-6
 end
 
 "严格施加（W * ψ 的规范代表；二参数 mult 已删除，等价表达）。构造器的
@@ -177,6 +185,14 @@ end
         @test max_bonddim(Hc) == 9
         @test abs(dot(Hc, H12c)) > 1 - 1e-8
     end
+    # 变分解结构唯一性：重复运行（独立随机冷启动流）与引擎间直接一致
+    Href, _, _ = hadamard(ψ1, ψ2, VOMPS(D = 9, maxiter = 200))
+    Random.seed!(8003)
+    Hrep, _, _ = hadamard(ψ1, ψ2, VOMPS(D = 9, maxiter = 200))
+    @test fidelity(Hrep, Href) > 1 - 1e-6
+    Random.seed!(8004)
+    Hid, _, _ = hadamard(ψ1, ψ2, IDMRG(D = 9, maxiter = 200))
+    @test fidelity(Hid, Href) > 1 - 1e-6
 
     # 长度不同 ⇒ lcm 单胞（逐周期平铺 zip）；逐 site 物理维不匹配仍抛错
     h23 = DenseIMPS(collect(ψ1.AL)) ⊙

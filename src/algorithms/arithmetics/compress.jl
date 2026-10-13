@@ -307,7 +307,8 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
         end
         return vec(GL)
     end
-    v0L = GL0 === nothing ? ones(T, Dl * Da) : vec(copy(GL0))
+    # 冷启动随机初猜（MPSKit approximate 的 randomize! 对齐；可被 GL0/GR0 热启动覆盖）
+    v0L = GL0 === nothing ? randn(T, Dl * Da) : vec(copy(GL0))
     _, vL = fixedpoint(Tleft, v0L, :LM, alg)
     # 复环境提升（MPSKit 对齐：环境按 eigsolve 返回的实际 eltype 存放）
     TCL = promote_type(T, scalartype(vL))
@@ -324,7 +325,7 @@ function overlap_fixedpoints(below::CanonicalIMPS, above::AbstractInfiniteMPS,
         end
         return vec(GR)
     end
-    v0R = GR0 === nothing ? ones(T, Da * Dl) : vec(copy(GR0))
+    v0R = GR0 === nothing ? randn(T, Da * Dl) : vec(copy(GR0))
     _, vR = fixedpoint(Tright, v0R, :LM, alg)
     TCR = promote_type(T, scalartype(vR))
     GRs = Vector{Matrix{TCR}}(undef, N)
