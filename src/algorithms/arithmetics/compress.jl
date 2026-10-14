@@ -112,21 +112,19 @@ end
     compress!(out, W::AbstractInfiniteMPO, alg::CompressionAlgorithm) -> (out, envs, info)
 
 In-place [`compress`](@ref): `out` is the user-provided chain to be optimized
-as the initial guess; its bond profile is first brought to uniform
-`D = alg.D`（[`IDMRG2`](@ref) 从 `alg.trunc` 提取）with [`changebond!`](@ref).
+as the initial guess——**its bond profile is kept as given**（目标键维由调用者
+通过初猜控制，引擎不做 `changebond!` 预处理）.
 The target accepts `DenseIMPS`/
 `CanonicalIMPS`（及 `DenseIMPO`/`CanonicalIMPO`，dense 类型经 `getproperty`
 家族视图直接参与，不做规范转换）. The optimized result is written back
 into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时（如实 `out` 遇复
-通道），结果无法原地表示，此时 `out` 不写回（仅 `changebond!` 预处理生效），
+通道），结果无法原地表示，此时 `out` 保持不变，
 第一个返回值为提升后的更新 bra（`envs.bra`）本身。Returns `(out, envs, info)`
 ——`envs` 为引擎的最终环境（bra = 压缩链）、`info` 为
 [`IterativeConvergenceInfo`](@ref)。
 """
 function compress!(out::CanonicalIMPS, ψ::AbstractInfiniteMPS,
                    alg::CompressionAlgorithm)
-    D = _alg_guess_dim(alg)
-    D === nothing || changebond!(out; D)
     envs = OverlapCache(out, ψ, alg.alg_environments)
     envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
@@ -134,8 +132,6 @@ end
 
 function compress!(out::CanonicalIMPO, W::AbstractInfiniteMPO,
                    alg::CompressionAlgorithm)
-    D = _alg_guess_dim(alg)
-    D === nothing || changebond!(out; D)
     envs = OverlapCache(vectorize(out), vectorize(W), alg.alg_environments)
     envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, devectorize(envs.bra)), envs, info

@@ -1,5 +1,39 @@
 # 变更记录（接口）
 
+## 2026-10-13 in-place 驱动去除 changebond! 预处理：out 键维完全由调用者控制
+
+- **接口**：`compress!`（×2：IMPS/IMPO 目标）、`mult!`（×2：mpo·mps/
+  mpo·mpo）、`hadamard!` 共 5 个原地驱动删除 `D = _alg_guess_dim(alg);
+  D === nothing || changebond!(out; D)` 预处理——`out` 的键 profile 原样
+  进入环境缓存作为初猜，**不再被引擎改键**；目标键维由调用者通过初猜控制
+  （截断语义不变：IDMRG2 的 SVD 截断在扫掠内 `_svd2!` 执行、与初猜键无关，
+  初猜键 ≥ 目标键时结果键维仍收敛到截断目标；IDMRG1/VOMPS 的局部映射输出
+  键 = 环境键 = bra 键，初猜键即工作键维）；out-of-place 版的
+  `svdguess_*` 初猜不变；类型守卫语义同步更新（提升场景 `out` 完全保持
+  原样，不再有"仅 changebond! 预处理生效"的部分修改）；
+- **验证**：arithmetics 单套件 144/144（含 in-place 对齐测试——键 6 初猜
+  + truncdim(4) 的 compress! 仍收敛到键 4 与 VOMPS 同不动点）；全量
+  1322/1322。
+
+## 2026-10-13 全通道内存压力审计：{compress, mult·mps, mult·mpo, hadamard} × {IDMRG1, IDMRG2, VOMPS} × D=25/50/100
+
+- **设置**（[debug/memory_audit_stress.jl]，unit cell = 2、d = 2、输入键 32
+  →乘积键 1024 全截断——前版输入键 8 时 D=100 因乘积键 64 < D 退化为无损
+  恒等问题；tol=1e-6、maxiter=30；监控吞吐分配/ RSS / 峰值 HWM / 驻留）；
+- **结论：36/36 无内存暴涨**——HWM 峰值增量全局最大 **1.4 GB**（mult·mps
+  IDMRG1 D=100，BLAS 工作集 + 初猜一次性乘积键 1024 规范化；其余 case
+  ≤300 MB、过半为 +0），终态+环境驻留全部 ≤14.4 MB（D=100），RSS 增量
+  ≤250 MB 且 case 间回落（无泄漏累积）；
+- **吞吐分配**（GC 即时回收，非驻留）：compress ≤0.45 GiB；mult·mps 随
+  D 与算法增长——D=25：IDMRG1 69G / IDMRG2 158G / VOMPS 204G，D=100：
+  969G / 1952G / 2068G（~1-2 TB/30 轮，每轮环境 Lanczos + 大 GEMM 中间量）；
+  mult·mpo VOMPS 峰值 4155 GiB（D=50）；hadamard ≤137 GiB。吞吐大是
+  密集 GEMM 管线的固有形态，RSS/HWM 证明 GC 全程兜住；
+- **时间维度**（同批观察）：mpo·mpo VOMPS 计算最重（D=50 84 min/30 轮，
+  吞吐 4.2 TB）——为环境 Arnoldi 在随机密谱上的计算量问题（非内存），
+  与既有 mult IDMRG2 内存审计的结论一致；D=100 的 IDMRG 系因随机谱
+  Krylov 收敛特性反而快于 D=50（43-218 s）。
+
 ## 2026-10-13 compression_sweeps! 换核：IDMRG/IDMRG2 正名接管为融合引擎，general 逐站模板更名 deprecated_compression_sweeps!
 
 - **接口**：融合引擎（开发名 `zip_sweeps!` → 过渡名

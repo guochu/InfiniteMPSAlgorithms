@@ -107,10 +107,10 @@ end
     hadamard!(out, ψ₁, ψ₂, alg::CompressionAlgorithm) -> (out, envs, info)
 
 In-place [`hadamard`](@ref): `out` is the user-provided state to be optimized
-as the initial guess; its bond profile is first brought to uniform
-`D = alg.D` with [`changebond!`](@ref). The optimized result is written back
+as the initial guess; **its bond profile is kept as given**（目标键维由调用者
+通过初猜控制，引擎不做 `changebond!` 预处理）. The optimized result is written back
 into `out`——类型守卫：通道算术类型宽于 `out` 的标量类型时（如实 `out` 遇复
-通道），结果无法原地表示，此时 `out` 不写回（仅 `changebond!` 预处理生效），
+通道），结果无法原地表示，此时 `out` 保持不变，
 第一个返回值为提升后的更新 bra（`envs.bra`）本身。Returns `(out, envs, info)`
 ——`envs` 为引擎的最终环境（bra = 乘积链）、`info` 为
 [`IterativeConvergenceInfo`](@ref)。
@@ -121,8 +121,6 @@ function hadamard!(out::CanonicalIMPS, ψ1::AbstractInfiniteMPS, ψ2::AbstractIn
         throw(DimensionMismatch("hadamard requires equal lengths"))
     all(size(ψ1.AL[ℓ], 2) == size(ψ2.AL[ℓ], 2) for ℓ in 1:length(ψ1)) ||
         throw(DimensionMismatch("hadamard requires equal per-site physical dimensions"))
-    D = _alg_guess_dim(alg)
-    D === nothing || changebond!(out; D)
     envs = HadamardCache(out, ψ1, ψ2, alg.alg_environments)
     envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info

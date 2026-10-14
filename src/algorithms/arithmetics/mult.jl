@@ -913,11 +913,11 @@ end
     mult!(out, W, W2, alg::Union{VOMPS,IDMRG}) -> (out, envs, info)
 
 In-place [`mult`](@ref): `out` is the user-provided state/operator to be
-optimized as the initial guess; its bond profile is first brought to uniform
-`D = alg.D` with [`changebond!`](@ref). The optimized result is written back
+optimized as the initial guess; **its bond profile is kept as given**（目标键维
+由调用者通过初猜控制，引擎不做 `changebond!` 预处理）. The optimized result is written back
 into `out`——类型守卫：通道算术类型（构造时 bra 槽已提升到环境 eltype）宽于
 `out` 的标量类型时（如实 `out` 遇复通道：复输入或 leading vector 复化），结果
-无法原地表示，此时 `out` 不写回（仅 `changebond!` 预处理生效），第一个返回值
+无法原地表示，此时 `out` 保持不变，第一个返回值
 为提升后的更新 bra（`envs.bra`）本身。Returns `(out, envs, info)`——`envs` 为
 引擎的最终环境、`info` 为 [`IterativeConvergenceInfo`](@ref)（首个返回值写回
 后与 envs 的规范代表同射线）。
@@ -926,8 +926,6 @@ function mult!(out::CanonicalIMPS, W::AbstractInfiniteMPO, ψ::AbstractInfiniteM
                alg::CompressionAlgorithm)
     (length(ψ) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    D = _alg_guess_dim(alg)
-    D === nothing || changebond!(out; D)
     envs = MultCache(out, W, ψ, alg.alg_environments)
     envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
@@ -937,8 +935,6 @@ function mult!(out::CanonicalIMPO, W::AbstractInfiniteMPO, W2::AbstractInfiniteM
                alg::CompressionAlgorithm)
     (length(W2) % length(W) == 0) ||
         throw(DimensionMismatch("incompatible MPO unit-cell lengths"))
-    D = _alg_guess_dim(alg)
-    D === nothing || changebond!(out; D)
     envs = MultCache(out, W, W2, alg.alg_environments)
     envs, info = compression_sweeps!(envs, alg)
     return _copyinto!(out, envs.bra), envs, info
