@@ -351,7 +351,7 @@ end
 operator。"
 _finalize_target(envs::MultCache) = envs.operator
 
-# ---------------- zip_sweeps! 融合核（InfiniteTEMPO get_left_xy 机制） ----------------
+# ---------------- compression_sweeps! 融合核（InfiniteTEMPO get_left_xy 机制） ----------------
 #
 # 每站一次融合 (GL·operator.AL·ket.AL)——输入物理腿收缩、算符输出物理 u 与
 # 两条右键开放——同一融合张量双用：map 侧折 C 权重（Canonical 链；Dense 链

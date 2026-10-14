@@ -89,7 +89,7 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::VOMPS)
 end
 
 """
-    compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG) -> (envs, info)
+    deprecated_compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG) -> (envs, info)
 
 统一扫掠引擎的 IDMRG 模板（MPSKit `approximate(ψ₀, ..., IDMRG())`）：sequential
 Gauss–Seidel double sweep with on-the-fly environment transfer
@@ -104,8 +104,12 @@ rebuilt from the `AR` string（[`_rebuild`](@ref)，容差取 `alg_gauge` 的动
 [`IterativeConvergenceInfo`](@ref)（`niter` = 扫掠轮数、`losses` = 逐轮中心
 矩阵漂移、`converged` 收敛标志）。返回时 `envs.bra` 已按包约定归一化且处于
 混合规范——调用方无需再做任何收尾。
+
+**Deprecated**：驱动的 IDMRG 现走融合快路径 [`compression_sweeps!`](@ref)
+（同一收缩图的分解重排，浮点舍入内严格等价）；本模板保留作对照基准（`invoke`
+可达）。
 """
-function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
+function deprecated_compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
     x = envs.bra                       # 原地演化的态（缓存 bra 本体）
     N = length(envs)
     ϵ = 2 * alg.tol
@@ -154,7 +158,7 @@ function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
     return envs, IterativeConvergenceInfo(iter, losses, converged)
 end
 
-# ---------------- zip_sweeps!（MultCache/HadamardCache 的 IDMRG 融合快路径） ----------------
+# ---------------- compression_sweeps!（IDMRG/IDMRG2 融合引擎）的折叠 helpers ----------------
 
 "链在键 ℓ 的中心矩阵（Canonical 链的 `AC = AL·C` / `AC = C·AR` 分解用）；
 Dense 链的 AC ≡ AL/AR 纯视图（同一数据、无 C 分解）返回 `nothing`。"
@@ -185,11 +189,163 @@ function _fold_bond(K0::AbstractArray{T,N}, ::Val{leg}, C::AbstractMatrix) where
     return permutedims(reshape(Kf, (rest..., size(C, 2))), invperm(perm))
 end
 
-# `zip_sweeps!`（三通道 CompressionEnvironments 的 IDMRG/IDMRG2 融合快路径，
-# InfiniteTEMPO 的 get_left_xy 机制）定义在 compress.jl 末尾——签名引用
-# MultCache/HadamardCache，须在各 cache 的 struct 定义之后求值（include 顺序：
-# envs.jl → mult.jl → hadamard.jl → compress.jl；签名中提前引用导入绑定
-# 会使后续同名 struct 定义报 "cannot assign to imported variable"）。
+# `compression_sweeps!` 的 IDMRG/IDMRG2 融合引擎（InfiniteTEMPO 的
+# get_left_xy 机制）定义于下——签名引用抽象类 CompressionEnvironments（本文件
+# 已定义），无导入绑定求值顺序约束；通道分派核（`_fuse_left`/`_local_AC_fused`/
+# `_push_*_fused!`/`_local_AC2_fused[R]`）在各通道文件（mult.jl/hadamard.jl/
+# compress.jl），调用时运行时分派。general 逐站模板保留为
+# `deprecated_compression_sweeps!`（对照基准，`invoke` 可达）。
+
+"""
+    compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG) -> (envs, info)
+
+IDMRG 在压缩/算符/zip 三通道（[`OverlapCache`](@ref)/[`MultCache`](@ref)/
+[`HadamardCache`](@ref)）上的融合引擎（InfiniteTEMPO 的 `get_left_xy`
+机制）：每站把 `(GL·operator.AL·ket.AL)`（zip 通道为 `GL·A2.AL·A1.AL`、
+重叠通道为 `GL·ket.AL`）**一次融合**为 K0——输入物理腿收缩、算符输出物理
+`u` 与两条右键开放——同一融合张量双用：
+
+- **map**：折 AC = AL·C 的键权重（Canonical 链；Dense 链 AC ≡ AL 视图恒等，
+  `_bondC` 返回 nothing）后与 `rights[ℓ]` 收缩出局部 AC（逐腿 2 张量 GEMM）；
+- **push**：与 `conj(新 bra)` 的单 GEMM 出下一站环境。
+
+替代逐站 [`deprecated_compression_sweeps!`](@ref) 模板的两次独立四张量收缩
+（`_local_AC` + `transfer_leftenv!`——两者各自重复收缩 (operator, ket) 对），
+每站省一次 O(D²·Dw²·d) 级大收缩。扫掠结构（Gauss–Seidel 双向、逐站
+normalize! + 正交分解）、`normalize_envs!` 重标定、bond-0 C 漂移收敛判据与
+收尾（`_rebuild` + `recalculate!`）与 general IDMRG 模板同构；**push 序列与
+general 逐位一致**（每 pass 单方向，无跨 pass 活写）——同一收缩图的分解
+重排（浮点舍入内严格等价）。
+"""
+function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG)
+    x = envs.bra                       # 原地演化的态（缓存 bra 本体）
+    N = length(envs)
+    ϵ = 2 * alg.tol
+    iter = 0
+    losses = Float64[]
+    converged = false
+    for outer iter in 1:alg.maxiter
+        C_old = copy(x.C[0])
+        # left to right sweep（Gauss–Seidel：融合张量 K0 双用——map 出 AC、
+        # push 出下一站左环境）
+        for ℓ in 1:N
+            K0 = _fuse_left(envs, ℓ)
+            x.AC[ℓ] = _local_AC_fused(K0, envs, ℓ)
+            normalize!(x.AC[ℓ])
+            x.AL[ℓ], x.C[ℓ] = _leftsplit(x.AC[ℓ], alg.alg_orth)
+            _push_left_fused!(envs, K0, x, ℓ)
+        end
+        # right to left sweep（S0 双用，镜像）
+        for ℓ in N:-1:1
+            S0 = _fuse_right(envs, ℓ)
+            x.AC[ℓ] = _local_AC_fusedR(S0, envs, ℓ)
+            normalize!(x.AC[ℓ])
+            x.C[ℓ - 1], x.AR[ℓ] = _rightsplit(x.AC[ℓ], alg.alg_orth)
+            _push_right_fused!(envs, S0, x, ℓ)
+        end
+        # 环境重标定
+        normalize_envs!(envs, x)
+        # 收敛判据：bond 0 中心矩阵漂移
+        ϵ = norm(x.C[0] - C_old)
+        push!(losses, ϵ)
+        alg.verbosity > 0 && _logiter(stdout, "IDMRG", iter, ϵ)
+        # finalize（逐迭代回调，MPSKit finalize! 语义；原地契约——态写回缓存 bra）
+        x, envs = alg.finalize(iter, x, _finalize_target(envs), envs)
+        envs.bra ≡ x || _copyinto!(envs.bra, x)
+        x = envs.bra
+        if ϵ < alg.tol
+            converged = true
+            break
+        end
+    end
+    # 规范恢复 + 环境重解（同 general IDMRG 模板的收尾）
+    alg_g = updatetol(alg.alg_gauge, iter, ϵ)
+    x = _rebuild([x.AR[ℓ] for ℓ in 1:N]; tol = alg_g.tol,
+                 maxiter = alg_g.maxiter)
+    envs = recalculate!(envs, x, alg.alg_environments)
+    return envs, IterativeConvergenceInfo(iter, losses, converged)
+end
+
+"""
+    compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2) -> (envs, info)
+
+IDMRG2 在压缩/算符/zip 三通道上的融合引擎（[`compression_sweeps!`](@ref)
+的 IDMRG 机制的两站推广，对应 [`deprecated_compression_sweeps!`](@ref) 的
+IDMRG2 模板）：每窗口 `(pos, pos+1)` 把 `(GL·operator.AL·ket.AL)`（zip 通道为
+`GL·A1.AL·A2.AL`、重叠通道为 `GL·ket.AL`）一次融合为 K0，经键权重折叠
+（AC = AL·C 分解；Dense 链恒等）与 next 站 AR 因子、`rights[next]` 收缩出
+两站张量 `Θ`（rank-4，物理腿逐站保留），按 `alg.trunc` SVD 截断分割
+（`_svd2!`）。
+
+push 序列与 deprecated 模板**严格一致**：其每窗口的双向 push 中，对侧
+（同 pass 内）的写均为死写（值总在被读前覆盖），**唯二的跨 pass 活写**是
+L→R pass 窗口 1 的右推（`rights[1]`——被 R→L pass 的 wrap 窗口 N 消费）与
+R→L pass 窗口 N 的左推（`lefts[1]`——被窗口 1 消费），以及 L→R pass 窗口 N
+的 map 读 `rights[1]`（即窗口 1 的右推值）；融合引擎以逐 pass 单方向 push +
+这两处窗口特例 push 复现全部活写（未收敛轨迹与 deprecated 模板逐位一致）。
+每轮收尾（单站分解补全规范、`recalculate!`、Galerkin 收敛判据、finalize）与
+deprecated IDMRG2 模板逐行对应；数值上为同一收缩图的分解重排（浮点舍入内
+严格等价）。
+"""
+function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
+    N = length(envs)
+    (N ≥ 2) || throw(ArgumentError("IDMRG2 requires unit cell length >= 2"))
+    x = envs.bra
+    ϵ = calc_galerkin(envs, x)
+    iter = 0
+    losses = Float64[ϵ]
+    converged = false
+    for outer iter in 1:alg.maxiter
+        # 两站双向扫掠（cyclic，融合张量双用——map + push，严格复现 general
+        # 模板的活写序列：每 pass 单方向 + 跨 pass 的两处窗口特例）
+        for pos in 1:N
+            K0 = _fuse_left(envs, pos)
+            Θ = _local_AC2_fused(K0, envs, pos)
+            _svd2!(x, pos, Θ, alg.trunc)
+            _push_left_fused!(envs, K0, x, pos)      # ≡ transfer_leftenv!(envs, x, next)
+            if pos == 1
+                # ≡ general 的 transfer_rightenv!(envs, x, 1)：rights[1] 被
+                # L→R 窗口 N 的 map 与 R→L 窗口 N 的 map/push 消费（跨 pass 活写）
+                S0 = _fuse_right(envs, _mod1(2, N))
+                _push_right_fused!(envs, S0, x, _mod1(2, N))
+            end
+        end
+        for pos in N:-1:1
+            S0 = _fuse_right(envs, _mod1(pos + 1, N))
+            Θ = _local_AC2_fusedR(S0, envs, pos)
+            _svd2!(x, pos, Θ, alg.trunc)
+            _push_right_fused!(envs, S0, x, _mod1(pos + 1, N))  # ≡ transfer_rightenv!(envs, x, pos)
+            if pos == N
+                # ≡ general 的 transfer_leftenv!(envs, x, 1)：lefts[1] 被
+                # R→L 窗口 1 的 map 消费（跨 pass 活写）
+                K0 = _fuse_left(envs, N)
+                _push_left_fused!(envs, K0, x, N)
+            end
+        end
+        # 混合规范补全（单站分解，秩亏链安全）+ 环境重解 + 收敛判据——
+        # 与 general IDMRG2 模板逐行对应
+        for ℓ in 1:(N-1)
+            x.AC[ℓ] = _mulC(x.AL[ℓ], x.C[ℓ])
+        end
+        x.AC[N] = _mulFront(x.C[N-1], x.AR[N])
+        x.AL[N], x.C[N] = _leftsplit(x.AC[N], alg.alg_orth)
+        _, x.AR[1] = _rightsplit(x.AC[1], alg.alg_orth)
+        alg_envs = updatetol(alg.alg_environments, iter, ϵ)
+        envs = recalculate!(envs, x, alg_envs)
+        x = envs.bra
+        ϵ = calc_galerkin(envs, x)
+        push!(losses, ϵ)
+        alg.verbosity > 0 && _logiter(stdout, "IDMRG2", iter, ϵ)
+        x, envs = alg.finalize(iter, x, _finalize_target(envs), envs)
+        envs.bra ≡ x || _copyinto!(envs.bra, x)
+        x = envs.bra
+        if ϵ ≤ alg.tol
+            converged = true
+            break
+        end
+    end
+    return envs, IterativeConvergenceInfo(iter, losses, converged)
+end
 
 "`_mulC(AL, C)`：中心矩阵左乘（`AC = AL·C`；rank-3 MPS 张量与 rank-4
 CanonicalIMPO 张量（在 `(u, d)` MPS 视图上）分派）。"
@@ -215,7 +371,7 @@ function _mulR(A::AbstractArray{T,4}, C::AbstractMatrix) where {T}
 end
 
 """
-    compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2) -> (envs, info)
+    deprecated_compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2) -> (envs, info)
 
 统一扫掠引擎的两站模板（MPSKit `approximate` 家族的 `IIDMRG2`；三个通道
 [`OverlapCache`](@ref)/[`MultCache`](@ref)/[`HadamardCache`](@ref) 全开放，
@@ -227,9 +383,13 @@ end
 安全；迭代式 string 重建在零谱键上不保态）：AC 族由 `AL·C`/`C·AR` 重算，
 `leftsplit(AC[N])` 补 `AL[N]` 与 bond N 权重、`rightsplit(AC[1])` 补 `AR[1]`。
 收敛判据为最大逐站 Galerkin 残差（同 VOMPS）。返回值契约同
-[`compression_sweeps!`](@ref) 的 IDMRG 方法。
+[`deprecated_compression_sweeps!`](@ref) 的 IDMRG 方法。
+
+**Deprecated**：驱动的 IDMRG2 现走融合快路径 [`compression_sweeps!`](@ref)
+（push 活写序列与本模板逐位对齐，未收敛轨迹逐位一致）；本模板保留作对照
+基准（`invoke` 可达）。
 """
-function compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
+function deprecated_compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG2)
     N = length(envs)
     (N ≥ 2) || throw(ArgumentError("IDMRG2 requires unit cell length >= 2"))
     x = envs.bra

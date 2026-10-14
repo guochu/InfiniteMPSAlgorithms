@@ -1,21 +1,41 @@
 # 变更记录（接口）
 
-## 2026-10-13 zip_sweeps! 三通道化 + 严格等价：compress（OverlapCache）接入与 IDMRG2 轨迹级对齐
+## 2026-10-13 compression_sweeps! 换核：IDMRG/IDMRG2 正名接管为融合引擎，general 逐站模板更名 deprecated_compression_sweeps!
 
-- **接口**：`zip_sweeps!` 两个方法（IDMRG/IDMRG2）的通道签名拓宽为
+- **接口**：融合引擎（开发名 `zip_sweeps!` → 过渡名
+  `fast_compression_sweeps!`）定名为
+  **`compression_sweeps!(envs::CompressionEnvironments, alg::IDMRG/IDMRG2)`**
+  并移入 [src/algorithms/arithmetics/envs.jl]（helpers `_bondC`/`_bondCT`/
+  `_fold_bond` 旁；签名引用抽象类，开发期 Union 签名的导入绑定求值顺序
+  约束随之消失）；general 逐站模板的 IDMRG/IDMRG2 方法更名
+  **`deprecated_compression_sweeps!`**（docstring 标注 Deprecated，保留作
+  对照基准、`invoke` 可达）；**VOMPS 的 `compression_sweeps!` 不变**；
+- **驱动层**：compress/compress!（×4）、mult/mult!（×4）、hadamard/
+  hadamard!（×2）共 10 处调用点维持 `envs, info = compression_sweeps!(envs,
+  alg)` 单行直调——**接口零变化**（调用方无感换核）；中间态的窄签名
+  dispatch shim 与驱动层三元分派均已删除（宽签名 shim 会覆盖 general 方法、
+  三元分派在换核后冗余）；通道分派核（`_fuse_left`/`_local_AC_fused[R]`/
+  `_push_*_fused!`/`_local_AC2_fused[R]`）留各通道文件，运行时分派；
+- **行为**：VOMPS 路径逐位不变；IDMRG/IDMRG2 与 deprecated 模板为同一收缩
+  图的分解重排——严格等价验证见下条（push 活写序列逐位对齐、未收敛轨迹
+  ~1e-14、收敛轮数一致）。
+
+## 2026-10-13 融合引擎（原 zip_sweeps!）三通道化 + 严格等价：compress（OverlapCache）接入与 IDMRG2 轨迹级对齐
+
+- **接口**：融合引擎两个方法（IDMRG/IDMRG2）的通道签名拓宽为
   `Union{MultCache, HadamardCache, OverlapCache}`——**compress 驱动经
   IDMRG/IDMRG2 自动走融合快路径**（OverlapCache 新增 8 个融合核：
   `_fuse_left`/`_local_AC_fused`/`_push_left_fused!`/`_fuse_right`/
   `_local_AC_fusedR`/`_push_right_fused!`/`_local_AC2_fused`/
   `_local_AC2_fusedR`，rank-2 矩阵环境 `(bra bond, ket bond)`、bra/键维
   可不同）；dispatch shim 同步拓宽（VOMPS 与 general 模板不受影响）；
-- **严格等价（本轮核心）**：zip 与 general `compression_sweeps!` 的 push
+- **严格等价（本轮核心）**：快路径与 general `compression_sweeps!` 的 push
   **活写序列逐位对齐**——
-  - IDMRG：general 每 pass 本就单方向 push，zip 已严格一致；
+  - IDMRG：general 每 pass 本就单方向 push，快路径已严格一致；
   - IDMRG2：general 每窗口双向 push，其中对侧（同 pass 内）的写均为死写
     （值总在被读前覆盖），**唯二跨 pass 活写**为 L→R pass 窗口 1 的右推
     （`rights[1]`——被 L→R 窗口 N 的 map 与 R→L 窗口 N 消费）与 R→L pass
-    窗口 N 的左推（`lefts[1]`——被窗口 1 消费）；zip 以逐 pass 单方向
+    窗口 N 的左推（`lefts[1]`——被窗口 1 消费）；快路径以逐 pass 单方向
     push + 这两处窗口特例 push 复现全部活写（此前缺这两处，未收敛轨迹
     会缓慢漂移、收敛轮数 ±2）；
 - **验证**（[debug/zip_strict.jl]）：三通道 × {IDMRG, IDMRG2} × N ∈ {2, 3}
@@ -25,10 +45,10 @@
   [debug/zip_sweeps_check.jl]）；小规模计时 compress IDMRG 1.7×/
   IDMRG2 与 general 持平、mult 1.1–3.3×、hadamard ~2×。
 
-## 2026-10-13 zip_sweeps! 扩展 IDMRG2：MultCache/HadamardCache 的两站融合快路径
+## 2026-10-13 fast_compression_sweeps!（原 zip_sweeps!）扩展 IDMRG2：MultCache/HadamardCache 的两站融合快路径
 
-- **接口**：`zip_sweeps!` 新增 `(::Union{MultCache, HadamardCache}, ::IDMRG2)`
-  方法（[src/algorithms/arithmetics/compress.jl] 末尾）+ dispatch shim
+- **接口**：`fast_compression_sweeps!` 新增 `(::Union{MultCache, HadamardCache}, ::IDMRG2)`
+  方法 + dispatch shim
   `compression_sweeps!(::Union{MultCache, HadamardCache}, ::IDMRG2)`——
   mult/hadamard 驱动经 IDMRG2 自动走快路径（shim 与 IDMRG 的分列定义——
   合并为 `Union{IDMRG, IDMRG2}` 签名会与 general 模板产生方法歧义）；
@@ -55,12 +75,10 @@
   与 general 相当略优（hadamard 首版 6 腿中间张量 0.48x，重构 per-s
   切片后修复）。
 
-## 2026-10-13 zip_sweeps!：MultCache/HadamardCache 的 IDMRG 融合快路径（InfiniteTEMPO get_left_xy 机制）
+## 2026-10-13 fast_compression_sweeps!（原 zip_sweeps!）：MultCache/HadamardCache 的 IDMRG 融合快路径（InfiniteTEMPO get_left_xy 机制）
 
-- **接口**：新增 `zip_sweeps!(envs::Union{MultCache, HadamardCache}, alg::IDMRG)`
-  （[src/algorithms/arithmetics/compress.jl] 末尾，签名置于 cache struct
-  定义之后——导入绑定约束）+ dispatch shim
-  `compression_sweeps!(::Union{MultCache, HadamardCache}, ::IDMRG) = zip_sweeps!`
+- **接口**：新增融合快路径引擎 + dispatch shim
+  `compression_sweeps!(::Union{MultCache, HadamardCache}, ::IDMRG)`
   ——mult/hadamard 驱动经 IDMRG 时自动走快路径；general
   `compression_sweeps!` 保留（`invoke` 可达，VOMPS/IDMRG2 与其余通道不变）；
 - **机制**（InfiniteTEMPO 的 `get_left_xy`/`get_xy_right`）：每站把

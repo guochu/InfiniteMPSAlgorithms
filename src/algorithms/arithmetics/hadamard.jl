@@ -372,7 +372,7 @@ function transfer_rightenv!(envs::HadamardCache, x::CanonicalIMPS, site::Int)
     return envs
 end
 
-# ---------------- zip_sweeps! 融合核（InfiniteTEMPO get_left_xy 机制） ----------------
+# ---------------- compression_sweeps! 融合核（InfiniteTEMPO get_left_xy 机制） ----------------
 #
 # 每站一次融合 (GL·A2.AL·A1.AL)——共享物理腿 s 收缩进融合张量（zip 的物理腿
 # 三方共享，map 中开放、push 中随 bra 收缩）——同一融合张量双用：map 侧折
