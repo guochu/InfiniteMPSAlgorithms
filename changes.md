@@ -17,7 +17,9 @@
 
 ## 2026-10-13 全通道内存压力审计：{compress, mult·mps, mult·mpo, hadamard} × {IDMRG1, IDMRG2, VOMPS} × D=25/50/100
 
-- **设置**（[debug/memory_audit_stress.jl]，unit cell = 2、d = 2、输入键 32
+- **设置**（[performance/memory_presure_tests/memory_audit_stress.jl]（已
+  连同 light 冒烟版与基线数据文档 baseline.md 固化为性能基准目录
+  performance/memory_presure_tests/，供后续源代码调整回归对照），unit cell = 2、d = 2、输入键 32
   →乘积键 1024 全截断——前版输入键 8 时 D=100 因乘积键 64 < D 退化为无损
   恒等问题；tol=1e-6、maxiter=30；监控吞吐分配/ RSS / 峰值 HWM / 驻留）；
 - **结论：36/36 无内存暴涨**——HWM 峰值增量全局最大 **1.4 GB**（mult·mps
