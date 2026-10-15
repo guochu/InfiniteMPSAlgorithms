@@ -438,10 +438,11 @@ _local_C(envs::OverlapCache, ℓ::Int) =
 MPSKit `AC2` 的同款约定——AC 携带键权重、AR 延续右规范），以
 `leftenv(pos)`/`rightenv(pos+1)` 收缩——线性通道的窗口精确变分最优——以
 rank-4 `(aL, s1, s2, aR)` 返回（物理腿逐站保留，供 `_svd2!` 的两站分割）。"
-function _local_AC2(envs::OverlapCache, pos::Int)
+function _local_AC2(envs::OverlapCache, pos::Int; kind::Symbol = :ACAR)
     N = length(envs)
     next = _mod1(pos + 1, N)
-    k1, k2 = envs.ket.AC[pos], envs.ket.AR[next]
+    k1, k2 = kind === :ACAR ? (envs.ket.AC[pos], envs.ket.AR[next]) :
+                              (envs.ket.AL[pos], envs.ket.AC[next])
     GL, GR = leftenv(envs, pos), rightenv(envs, next)
     T = promote_type(scalartype(GL), scalartype(GR), scalartype(k1), scalartype(k2))
     k12 = similar(k1, T, size(k1, 1), size(k1, 2), size(k2, 2), size(k2, 3))

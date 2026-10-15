@@ -309,13 +309,15 @@ MPSKit `AC2` 的同款约定），以 `leftenv(pos)`/`rightenv(pos+1)` 收缩—
 供 `_svd2!` 的两站分割）。mpo·mps 的 `s1`/`s2` 为纯物理腿（环境分步收缩：
 `GL·k1·k2·O1·O2·GR`，每步 ≤3 因子）。"
 function _local_AC2(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPS,
-                                  <:AbstractInfiniteMPS,<:Any}, pos::Int)
+                                  <:AbstractInfiniteMPS,<:Any}, pos::Int; kind::Symbol = :ACAR)
     N = length(envs)
     next = _mod1(pos + 1, N)
     Lop = _mod1(pos, length(envs.operator))
-    k1, k2 = envs.ket.AC[pos], envs.ket.AR[next]
-    O1 = envs.operator.AC[Lop]
-    O2 = envs.operator.AR[_mod1(next, length(envs.operator))]
+    k1, k2 = kind === :ACAR ? (envs.ket.AC[pos], envs.ket.AR[next]) :
+                              (envs.ket.AL[pos], envs.ket.AC[next])
+    O1 = kind === :ACAR ? envs.operator.AC[Lop] : envs.operator.AL[Lop]
+    O2 = kind === :ACAR ? envs.operator.AR[_mod1(next, length(envs.operator))] :
+                          envs.operator.AC[_mod1(next, length(envs.operator))]
     GL, GR = leftenv(envs, pos), rightenv(envs, next)
     @tensor X[aL, w1, s1, s2, b2] := GL[aL, w1, b1] * k1[b1, s1, m] * k2[m, s2, b2]
     @tensor Y[aL, u1, r1, s2, b2] := X[aL, w1, s1, s2, b2] * O1[w1, u1, r1, s1]
@@ -328,13 +330,15 @@ end
 ket 链的键独立、由 rank-3 环境的 `(w_op, w_ket)` 腿分别悬挂——站内收缩
 `O.do ↔ ket.u`（乘积的物理出/入腿对），跨站两链各自前推）。"
 function _local_AC2(envs::MultCache{<:AbstractInfiniteMPO,<:CanonicalIMPO,
-                                  <:AbstractInfiniteMPO,<:Any}, pos::Int)
+                                  <:AbstractInfiniteMPO,<:Any}, pos::Int; kind::Symbol = :ACAR)
     N = length(envs)
     next = _mod1(pos + 1, N)
-    k1 = envs.ket.AC[pos]                                  # (b1, u1, m, d1)
-    k2 = envs.ket.AR[next]                                 # (m, u2, b2, d2)
-    O1 = envs.operator.AC[_mod1(pos, length(envs.operator))]   # (w1, vo1, r1, do1)
-    O2 = envs.operator.AR[_mod1(next, length(envs.operator))]  # (r1, vo2, r2, do2)
+    k1 = kind === :ACAR ? envs.ket.AC[pos] : envs.ket.AL[pos]          # (b1, u1, m, d1)
+    k2 = kind === :ACAR ? envs.ket.AR[next] : envs.ket.AC[next]        # (m, u2, b2, d2)
+    O1 = kind === :ACAR ? envs.operator.AC[_mod1(pos, length(envs.operator))] :
+                          envs.operator.AL[_mod1(pos, length(envs.operator))]   # (w1, vo1, r1, do1)
+    O2 = kind === :ACAR ? envs.operator.AR[_mod1(next, length(envs.operator))] :
+                          envs.operator.AC[_mod1(next, length(envs.operator))]  # (r1, vo2, r2, do2)
     GL, GR = leftenv(envs, pos), rightenv(envs, next)
     @tensor X[jL, w1, u1, d1, m] := GL[jL, w1, b1] * k1[b1, u1, m, d1]
     @tensor Y[jL, vo1, r1, d1, m] := X[jL, w1, u1, d1, m] * O1[w1, vo1, r1, u1]

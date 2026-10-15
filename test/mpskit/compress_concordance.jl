@@ -51,10 +51,12 @@ _compress_fidelity(ya, yb) = fidelity(DenseIMPS(ya), DenseIMPS(yb))
 
 "MPSKit `approximate` 的最小收敛轮数（单调谓词 ϵ(k) ≤ tol 的指数括号 + 二分；
 MPSKit 在第 k 轮扫掠后 ϵ ≤ tol 即提前返回，故 ϵ(k) 随 k 单调下降且 k ≥ iter*
-时 ϵ 恒为 ϵ(iter*)）。返回 (iter*, ϕ)。"
-function _mpskit_converged_iter(algmk, tol)
+时 ϵ 恒为 ϵ(iter*)）。`kwargs` 透传算法构造（IDMRG2 需 `trscheme`）。
+返回 (iter*, ϕ)。"
+function _mpskit_converged_iter(algmk, tol; kwargs...)
     evalk = k -> MPSKit.approximate(mkinfinitemps(x0), (Imk, ψt_mk),
-                                    algmk(; tol = tol, maxiter = k, verbosity = 0))
+                                    algmk(; tol = tol, maxiter = k, verbosity = 0,
+                                          kwargs...))
     ϕ, _, ϵ = evalk(1)
     ϵ ≤ tol && return 1, ϕ
     hi = 2
@@ -117,6 +119,31 @@ end
     end
 end
 
+"本包 `compression_sweeps!`（IDMRG2）恰好跑 k 轮的压缩结果（与 MPSKit 的
+导出名冲突，限定名引用）。"
+function _ours_idmrg2(ψ, x0, k)
+    alg = InfiniteMPSAlgorithms.IDMRG2(trunc = truncdim(D0), tol = 0.0, maxiter = k)
+    envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
+    InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
+    return envs.bra
+end
+
+@testset "compress IDMRG2 ≡ MPSKit approximate IDMRG2（逐迭代对齐）" begin
+    # 两站窗口 + edge 簿记（R→L edge 的 AR[N] = C[N-1]⁻¹(AL[N]·C[N]) 一致性
+    # 重构、每 pass normalize_envs!、环境跨轮增量前推、无轮内单站重分割）与
+    # MPSKit 逐行对应；出口同为 AR 串重建混合规范 + 环境重解。逐迭代对比
+    # （maxiter = k、tol = 0 强制恰好 k 轮）：k = 1..5 实测射线残差 ≤ 2e-10。
+    for k in 1:5
+        y = _ours_idmrg2(ψ, x0, k)
+        ϕ = MPSKit.approximate(mkinfinitemps(x0), (Imk, ψt_mk),
+                               MPSKit.IDMRG2(; tol = 0.0, maxiter = k,
+                                             trscheme = TensorKit.truncspace(ℂ^D0),
+                                             verbosity = 0))[1]
+        @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+        @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8
+    end
+end
+
 @testset "compress VOMPS 收敛迭代数与终态 ≡ MPSKit" begin
     tol = 1.0e-10
     alg = VOMPS(D = D0, tol = tol, maxiter = 500)
@@ -136,6 +163,21 @@ end
     _, info = InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
     y = envs.bra
     mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG, tol)
+    @test info.niter == mk_iter
+    @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
+    @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8
+end
+
+@testset "compress IDMRG2 收敛迭代数与终态 ≡ MPSKit" begin
+    # 收敛判据同为 bond-0 中心矩阵漂移（每 pass 的 edge 窗口更新 C[N] ≡ C[0]，
+    # 判据良定义），逐轮漂移的 tick 模式与 MPSKit 一致 ⇒ 最小收敛轮数相等。
+    tol = 1.0e-10
+    alg = InfiniteMPSAlgorithms.IDMRG2(trunc = truncdim(D0), tol = tol, maxiter = 500)
+    envs = OverlapCache(copy(x0), ψ, alg.alg_environments)
+    _, info = InfiniteMPSAlgorithms.compression_sweeps!(envs, alg)
+    y = envs.bra
+    mk_iter, ϕ = _mpskit_converged_iter(MPSKit.IDMRG2, tol;
+                                        trscheme = TensorKit.truncspace(ℂ^D0))
     @test info.niter == mk_iter
     @test _compress_ray_residual(y, from_mpskit(ϕ)) < 1e-8
     @test _compress_fidelity(y, from_mpskit(ϕ)) > 1 - 1.0e-8

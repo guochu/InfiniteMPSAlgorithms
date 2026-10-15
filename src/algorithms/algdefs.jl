@@ -97,8 +97,9 @@ Two-site variant of [`IDMRG`](@ref)（MPSKit 同名 `IDMRG2` 的移植），同�
   （无 eigsolve），窗口最优后同样按 `trunc` 截断。
 
 `trunc::TruncationScheme`（默认 `alg_trunc()`）取代 IDMRG 的固定 `D`。
-基态收敛判据同 IDMRG（bond-0 中心矩阵漂移）；压缩为最大逐站 Galerkin
-残差（同 [`VOMPS`](@ref)）。`alg_eigsolve` 用于基态两站本征对；
+基态与压缩收敛判据同为 bond-0 中心矩阵漂移（严格对标 MPSKit 同名算法；
+压缩的 edge 窗口每 pass 更新 `C[N] ≡ C[0]`，判据良定义）。
+`alg_eigsolve` 用于基态两站本征对；
 `alg_environments` 的 `forcereal` 开关语义同 [`VOMPS`](@ref)（仅变分压缩
 通道消费）。
 """

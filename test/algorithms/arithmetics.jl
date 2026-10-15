@@ -406,7 +406,8 @@ end
     D0 = 3
     ψraw = W * DenseIMPS(collect(ψ.AL))
     for alg in (VOMPS(D = D0, tol = 1e-12, maxiter = 300),
-                IDMRG(D = D0, tol = 1e-12, maxiter = 300))
+                IDMRG(D = D0, tol = 1e-12, maxiter = 300),
+                IDMRG2(trunc = truncdim(D0), tol = 1e-12, maxiter = 300))
         # mpo·mps（同初态：mult 通道 out1 ≡ compress 通道 envs.bra = out2）
         out1 = randomimps(T, [2, 2]; D = D0)
         out2 = copy(out1)
@@ -435,6 +436,32 @@ end
         w2 = vectorize(z2)
         # 同迭代数 + fidelity → 1（两路径环境重解的 round-off ~1e-10）
         @test fidelity(w1, w2) > 1 - 1e-8
+    end
+end
+
+@testset "compress!（naive ⊙ 目标）≡ hadamard!（完全对齐）" begin
+    # compress!(out, ⊙naive 乘积, alg)（naive zip 压缩通道）与
+    # hadamard!(out, ψ1, ψ2, alg)（因子化 zip 通道）优化同一目标射线——
+    # 同初态+同算法参数下迭代数与解（ray 意义）逐一相等（窗口张量与环境的
+    # 通道收缩序差只余 round-off）。IDMRG2 的两站窗口同款对齐。
+    T = ComplexF64
+    Random.seed!(52)
+    ψ1 = randomimps(T, [2, 2]; D = 3)
+    ψ2 = randomimps(T, [2, 2]; D = 4)
+    hd = DenseIMPS(collect(ψ1.AL)) ⊙ DenseIMPS(collect(ψ2.AL))
+    D0 = 6
+    for alg in (VOMPS(D = D0, tol = 1e-12, maxiter = 300),
+                IDMRG(D = D0, tol = 1e-12, maxiter = 300),
+                IDMRG2(trunc = truncdim(D0), tol = 1e-12, maxiter = 300))
+        out1 = randomimps(T, [2, 2]; D = D0)
+        out2 = copy(out1)
+        y1, _, i1 = hadamard!(out1, ψ1, ψ2, alg)
+        y2, _, i2 = compress!(out2, hd, alg)
+        @test i1.niter == i2.niter
+        v1 = vec(_dense_mps_repr(y1))
+        v2 = vec(_dense_mps_repr(y2))
+        ls = dot(v2, v1) / dot(v2, v2)
+        @test norm(v1 .- ls .* v2) / norm(v1) < 1e-10
     end
 end
 
@@ -618,4 +645,30 @@ end
     # Defaults.alg_environments 携带 forcereal = false 字段（默认行为不变；
     # 默认 dynamic_tols = true 返回 DynamicTol 包装，经 _forcereal 穿透读取）
     @test InfiniteMPSAlgorithms._forcereal(Defaults.alg_environments()) == false
+end
+
+@testset "IDMRG2：融合引擎 ≡ deprecated 模板（单迭代输出+环境严格一致）" begin
+    # 两引擎为同一收缩图的分解重排：同初态、maxiter = 1（tol = 0 强制恰好
+    # 一轮），出口同为 `_rebuild` + `recalculate!`——输出态逐张量一致、
+    # 环境射线一致（eigsolve leading vector 的相位/尺度自由按最优射线对齐）。
+    T = ComplexF64
+    Random.seed!(20261013)
+    ψt = randomimps(T, [2, 2]; D = 6)
+    x0 = randomimps(T, [2, 2]; D = 3)
+    alg = IDMRG2(trunc = truncdim(3), tol = 0.0, maxiter = 1)
+    envs1 = OverlapCache(copy(x0), ψt, alg.alg_environments)
+    envs2 = OverlapCache(copy(x0), ψt, alg.alg_environments)
+    InfiniteMPSAlgorithms.compression_sweeps!(envs1, alg)
+    invoke(InfiniteMPSAlgorithms.deprecated_compression_sweeps!,
+           Tuple{InfiniteMPSAlgorithms.CompressionEnvironments, IDMRG2}, envs2, alg)
+    y1, y2 = envs1.bra, envs2.bra
+    @test maximum(maximum(abs, y1.AL[ℓ] - y2.AL[ℓ]) for ℓ in 1:2) < 1e-10
+    @test maximum(norm(y1.C[ℓ] - y2.C[ℓ]) for ℓ in 1:2) < 1e-11
+    # 环境逐位或射线一致（eigsolve leading vector 的相位/尺度自由按最优射线对齐）
+    for ℓ in 1:2, (A, B) in ((envs1.lefts[ℓ], envs2.lefts[ℓ]),
+                             (envs1.rights[ℓ], envs2.rights[ℓ]))
+        a, b = vec(A), vec(B)
+        c = dot(b, a) / dot(b, b)
+        @test norm(A - B) / norm(B) < 1e-9 || norm(a .- c .* b) / norm(a) < 1e-9
+    end
 end

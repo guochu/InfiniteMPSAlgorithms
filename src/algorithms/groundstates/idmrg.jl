@@ -94,6 +94,14 @@ _div_tail(A::AbstractArray{T,3}, C::AbstractMatrix) where {T} =
 _frontdiv(C::AbstractMatrix, A::AbstractArray{T,3}) where {T} =
     reshape(C \ reshape(A, size(C, 1), :), size(C, 1), size(A, 2), size(A, 3))
 
+"`_frontdiv(C, A)`：CanonicalIMPO rank-4 分派（在 `(u, d)` MPS 视图上、权重
+折左键；压缩引擎 IDMRG2 的 R→L edge `AR[N] = C[N-1]⁻¹(AL[N]·C[N])` 用）。"
+function _frontdiv(C::AbstractMatrix, A::AbstractArray{T,4}) where {T}
+    wl, u, wr, d = size(A)
+    v = reshape(C \ reshape(_as_mps_view(A), size(C, 1), :), size(C, 2), u * d, wr)
+    return permutedims(reshape(v, size(C, 2), u, d, wr), (1, 2, 4, 3))
+end
+
 "两站窗口的 SVD 截断分割（rank-4 `:ACAR`/`:ALAC` 张量，分割 `(1, 2) | (3, 4)`
 在两站之间；`tsvd` 保留分区结构 `u = (bl, s1, r)`、`v = (r, s2, br)`），中心
 矩阵归一同 MPSKit 的 `normalize!(c)`。返回 `(al, c, ar)`。"

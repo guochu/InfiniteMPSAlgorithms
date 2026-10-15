@@ -550,11 +550,13 @@ end
 （`:ACAR` 形态，物理腿保留）先各自融合，再经 GL/GR 夹闭——共享物理腿
 `s1`/`s2` 是 bra 网络的开放指标（同 `_mapAC_zip` 的单站约定），窗口精确
 变分最优，输出 rank-4 `(xL, s1, s2, xR)` 供 `_svd2!` 分割。"
-function _local_AC2(envs::HadamardCache, pos::Int)
+function _local_AC2(envs::HadamardCache, pos::Int; kind::Symbol = :ACAR)
     N = length(envs)
     next = _mod1(pos + 1, N)
-    @tensor t1[a, s1, s2, b] := envs.ket1.AC[pos][a, s1, m] * envs.ket1.AR[next][m, s2, b]
-    @tensor t2[c, s1, s2, e] := envs.ket2.AC[pos][c, s1, m] * envs.ket2.AR[next][m, s2, e]
+    @tensor t1[a, s1, s2, b] := (kind === :ACAR ? envs.ket1.AC[pos] : envs.ket1.AL[pos])[a, s1, m] *
+                                (kind === :ACAR ? envs.ket1.AR[next] : envs.ket1.AC[next])[m, s2, b]
+    @tensor t2[c, s1, s2, e] := (kind === :ACAR ? envs.ket2.AC[pos] : envs.ket2.AL[pos])[c, s1, m] *
+                                (kind === :ACAR ? envs.ket2.AR[next] : envs.ket2.AC[next])[m, s2, e]
     GL, GR = leftenv(envs, pos), rightenv(envs, next)
     @tensor X[xL, a, s1, s2, cr] := GL[xL, a, c] * t2[c, s1, s2, cr]
     # 因子 1 的 a 腿收缩：共享物理腿 (s1, s2) 是双方重复指标，@tensor 不支持

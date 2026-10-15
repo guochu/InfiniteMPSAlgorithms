@@ -96,22 +96,23 @@ on-the-fly environment transfer and center-matrix-drift convergence — strictly
 mirroring MPSKit's `approximate` algorithms); both share the same fixed point.
 
 ```julia
-mult(W, ψ, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
-mult(W, W2, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPO
-hadamard(ψ1, ψ2, alg::Union{VOMPS,IDMRG}) -> y::CanonicalIMPS
-compress(x, alg::Union{VOMPS,IDMRG}) -> y
+mult(W, ψ, alg::CompressionAlgorithm) -> y::CanonicalIMPS
+mult(W, W2, alg::CompressionAlgorithm) -> y::CanonicalIMPO
+hadamard(ψ1, ψ2, alg::CompressionAlgorithm) -> y::CanonicalIMPS
+compress(x, alg::CompressionAlgorithm) -> y
 ```
 
 - The target bond dimension is carried by the algorithm object: `alg.D`
-  (required, `Int`) variationally compresses to bond dimension `D`.
+  (required, `Int`) variationally compresses to bond dimension `D`;
+  `IDMRG2` replaces it with a truncation scheme `alg.trunc`（`truncdim(D)`
+  等；初猜键维从方案提取）.
 - The initial guess is the deterministic `svdguess_*` (bond-wise SVD
   truncation of the naive target); the in-place twins below replace it with
   the user-provided guess.
 - In-place twins `mult!(out, W, x, alg)`, `hadamard!(out, ψ1, ψ2, alg)`,
   `compress!(out, x, alg)` write the result back into a user-provided `out`:
-  the target bond dimension is taken from the bond profile of `out`
-  (`D = max_bonddim(out)`, uniformized with `changebond!`), and `alg.D` is
-  ignored.
+  the target bond dimension is taken from the bond profile of
+  `out`, and `alg.D`/`alg.trunc` is ignored.
 - The strict (compression-free) constructions are the typed operators
   `Base.:*(::DenseIMPO, ::DenseIMPO)` / `Base.:*(::DenseIMPO, ::DenseIMPS)` /
   `hadamard(::DenseIMPS, ::DenseIMPS)` (see `states/linalg.jl` and
@@ -121,8 +122,10 @@ compress(x, alg::Union{VOMPS,IDMRG}) -> y
 - The debug twins `naive_mult` / `naive_hadamard` were removed: the strict
   typed operators (`Base.:*` / `hadamard` on `DenseIMPO`/`DenseIMPS`) followed
   by `compress` / `compress!` express the same pipeline.
-- All iterative engines return the optimized chain only; convergence is judged
-  by the Galerkin residual (no overlap is computed anywhere).
+- All three engines share the same variational fixed point; convergence is
+  judged by the Galerkin residual (`VOMPS`) or the bond-0 center-matrix drift
+  (`IDMRG`/`IDMRG2`, mirroring MPSKit; `IDMRG2` sweeps update `C[N] ≡ C[0]`
+  through the edge windows each pass, keeping the drift well defined).
 
 Applying a time-evolution MPO is `ψ′ = mult(timeevompo(H, -im * dt, WII()), ψ)`.
 
