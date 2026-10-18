@@ -1,5 +1,29 @@
 # 变更记录（接口）
 
+## 2026-10-18 TEBD 门接口对齐 FMA 统一 GateOp（UnitaryGate/GeneralGate 退役）
+
+- **背景**：FMA 的 TEBD 接口重做——`UnitaryGate`/`GeneralGate` 双类型删除，
+  统一为单一 **`GateOp{N,T,M}`**（构造校验 rank/positions-distinct、support
+  内部排序不再要求升序输入；**不校验 unitarity**，改由 `isunitary(g)` 显式
+  检查；非幺正门的重正则化改由 `apply!(...; canonicalize = true)` 触发，
+  finite 侧实现为 `truncate!(ψ; trunc)`）；本包相应调整；
+- **接口**：import/export 从 `AbstractGate, UnitaryGate, GeneralGate` 换为
+  **`AbstractGate, GateOp, isunitary`**（`apply!`/`swap!`/`positions`/`shift`
+  不变）。infinite 侧 `apply!` 统一为
+  `apply!(g::AbstractGate{2}, ψ::CanonicalIMPS; trunc, canonicalize = false)`
+  ——不再按幺正/非幺正类型分派；`canonicalize = true` 时在 gather swaps 回移
+  前以 `truncate!(ψ; trunc)`（逐键谱截断 + 重正则化的 infinite 版）恢复全
+  规范（替代旧 GeneralGate 路径的 `gaugefix!`），对齐 FMA 语义。**门操作
+  仍只支持两比特门**（`AbstractGate{2}`；FMA 的 N-site block sweep 与
+  `fuse_gates`/`trotter_propagator` 为 finite/电路层设施，infinite 侧不实现）；
+- **测试**：testhelpers 的 `pair_gate`（Pair 矩阵便捷构造）改委托 `GateOp`
+  （构造不再拒绝非幺正矩阵）；tebd.jl 的"gate 类型" testset 重写为 GateOp
+  语义（isunitary 显式断言、乱序 positions 内部排序归一、重复 positions
+  拒绝），"GeneralGate" testset 改"非幺正门（canonicalize = true）"（含
+  wrap 键非相邻门）；envs.jl 两处 `UnitaryGate(...)` 调用换 `GateOp`；
+- **docs**：library.md（GateOp/isunitary 限定名 @docs）、conventions.md、
+  algorithms.md（统一 apply! 签名 + canonicalize 语义）、README.md 同步。
+
 ## 2026-10-15 命名空间分层：Models/Defaults 子模块化 + 底层工具取消导出
 
 - **Models 子模块**：models.jl 全部内容（`bulk_mpo`/`mpohamiltonian`/

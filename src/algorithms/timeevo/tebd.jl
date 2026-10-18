@@ -1,11 +1,13 @@
-# TEBD: quantum gates (AbstractGate / UnitaryGate / GeneralGate) + apply! + swap!
+# TEBD: quantum gates (AbstractGate / GateOp) + apply! + swap!
 # Minimal TEBD building blocks; the time-evolution loop is driven by the caller.
 #
-# 门类型与基础接口（struct 定义、positions/shift/adjoint/scalartype、NTuple
-# 构造与 unitarity 检查）由 FiniteMPSAlgorithms 提供并经主文件 import 再导出
-# （两侧本就是同一份代码的移植）。本文件只保留本包侧的扩展：
-# Pair{Int,Int} 矩阵约定的便捷构造（FMA 无）与 CanonicalIMPS（infinite 链）
-# 上的 apply!/swap!（Hastings 更新）。
+# 门类型与基础接口（AbstractGate/GateOp 的 struct 定义、positions/shift/
+# adjoint/isunitary、NTuple 构造与内部排序）由 FiniteMPSAlgorithms 提供并经
+# 主文件 import 再导出（FMA 的统一门接口：单一 GateOp 取代旧的
+# UnitaryGate/GeneralGate 双类型）。本文件只保留本包侧的扩展：
+# CanonicalIMPS（infinite 链）上的 apply!（两站门 + canonicalize 重正则化）
+# 与 swap!（Hastings 更新）——门操作保持**只支持两比特门**（AbstractGate{2}），
+# FMA 的 N-site block sweep 不在 infinite 侧实现。
 #
 # The Hastings update (aligned with TEMPO/GTEMPO) acts on the two-site window
 # AC[i]·AR[i+1] (exact local representation, unit left environment). A single
@@ -84,29 +86,40 @@ function _nn_gate_apply!(g::AbstractGate{2}, ψ::CanonicalIMPS, i::Integer;
 end
 
 """
-	apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS;
-	       trunc = alg_orth_trunc()) -> ψ
+	apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
+	       trunc = alg_orth_trunc(), canonicalize = false) -> ψ
 
-Apply a two-site unitary gate to `ψ` with the Hastings update (aligned with
-TEMPO/GTEMPO). The two gate sites may be any ascending pair `(i, j)` — with `j`
-possibly `L + 1` for the wrapping bond `(L, 1)`: non-adjacent gates are first
-moved next to each other with exact unitary content swaps, applied at the
-neighboring bond, and moved back. The post-gate window `AC[i]·G·AR[i+1]` is
-SVD-decomposed; the left factor is written directly to `AL[i]` (exactly
-left-orthogonal), the right factor to `AR[i+1]` (exactly right-orthogonal), the
-new spectrum to `C[i]` (never divided), and the center/seam tensors follow from
-the canonical identities (no global re-canonicalization sweep).
+Apply a two-site gate to `ψ` with the Hastings update (aligned with
+TEMPO/GTEMPO; FMA 的统一门接口：门一律为 [`GateOp`](@ref)，unitarity 由
+[`isunitary`](@ref) 显式检查——本方法不再区分幺正/非幺正类型分派). The two
+gate sites may be any ascending pair `(i, j)` — with `j` possibly `L + 1` for
+the wrapping bond `(L, 1)`: non-adjacent gates are first moved next to each
+other with exact unitary content swaps, applied at the neighboring bond, and
+moved back. The post-gate window `AC[i]·G·AR[i+1]` is SVD-decomposed; the left
+factor is written directly to `AL[i]` (exactly left-orthogonal for unitary
+gates), the right factor to `AR[i+1]` (exactly right-orthogonal for unitary
+gates), the new spectrum to `C[i]` (never divided), and the center/seam
+tensors follow from the canonical identities (no global re-canonicalization
+sweep).
 
-No initialization is needed: on any mixed-canonical input the gate acts exactly
-(the default `alg_orth_trunc()` only cleans numerically-zero spectral directions;
-`NoTruncation()` reproduces the post-gate window bit-for-bit) and the canonical form
-is preserved at machine precision — the seams are exactly orthogonal (`regauge!`
-gauge conversion) and the canonical identity `AC = C·AR` holds at all bonds
-(verified over random gate sequences, including the wrapping bond). The bond
-dimension may grow up to `min(Dl·d, d·Dr)` on the gate bond before truncation.
+A non-unitary gate breaks the exact orthogonality of the SVD factors (the
+`gauge` property of the Hastings update); pass `canonicalize = true` to
+re-canonicalize the final state with `truncate!(ψ; trunc)`（逐键谱截断 +
+重正则化的 infinite 版，对齐 FMA finite `apply!(...; canonicalize = true)`
+的语义）.
+
+No initialization is needed: on any mixed-canonical input a unitary gate acts
+exactly (the default `alg_orth_trunc()` only cleans numerically-zero spectral
+directions; `NoTruncation()` reproduces the post-gate window bit-for-bit) and
+the canonical form is preserved at machine precision — the seams are exactly
+orthogonal (`regauge!` gauge conversion) and the canonical identity
+`AC = C·AR` holds at all bonds (verified over random gate sequences, including
+the wrapping bond). The bond dimension may grow up to `min(Dl·d, d·Dr)` on the
+gate bond before truncation.
 """
-function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS;
-                trunc::TruncationScheme = alg_orth_trunc())
+function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
+                trunc::TruncationScheme = alg_orth_trunc(),
+                canonicalize::Bool = false)
 	i, j = g.positions
 	L = length(ψ)
 	# positions may run one past the cell (bond wrapping: (L, L+1) ≡ the
@@ -116,37 +129,13 @@ function apply!(g::UnitaryGate{2}, ψ::CanonicalIMPS;
 		swap!(ψ, b; trunc)
 	end
 	_nn_gate_apply!(g, ψ, i; trunc)
-	for b in i+1:j-1
-		swap!(ψ, b; trunc)
+	if canonicalize
+		# non-unitary gate: re-canonicalize immediately (before the return
+		# swaps, so they act on a canonical state — the Hastings update
+		# assumes mixed-canonical input), mirroring FMA's
+		# `apply!(...; canonicalize = true)` → `truncate!(ψ; trunc)`
+		truncate!(ψ; trunc)
 	end
-	return ψ
-end
-
-"""
-	apply!(g::GeneralGate{2}, ψ::CanonicalIMPS;
-	       trunc = alg_orth_trunc(), kwargs...) -> ψ
-
-Apply a two-site gate (possibly non-unitary) to `ψ` with the Hastings update, identical
-to the [`UnitaryGate`](@ref) case; the two gate sites may be any ascending pair
-(non-adjacent gates are moved next to each other with exact unitary content swaps,
-applied, and moved back). Because a non-unitary gate does not preserve the canonical
-form, the state is re-canonicalized with `gaugefix!` afterwards (`kwargs...` are
-forwarded). Initializes the canonical form if needed.
-"""
-function apply!(g::GeneralGate{2}, ψ::CanonicalIMPS;
-                trunc::TruncationScheme = alg_orth_trunc(), kwargs...)
-	i, j = g.positions
-	L = length(ψ)
-	# positions may run one past the cell (bond wrapping, as in apply!(::UnitaryGate))
-	(1 <= i < j <= L + 1) || throw(BoundsError())
-	for b in j-1:-1:i+1
-		swap!(ψ, b; trunc)
-	end
-	_nn_gate_apply!(g, ψ, i; trunc)
-	# re-canonicalize immediately after the non-unitary gate, so that the return
-	# swaps act on a canonical state (the Hastings update assumes mixed-canonical
-	# input; acting on the gauge-broken two-site tensor would accumulate error)
-	gaugefix!(ψ, parent(ψ.AR); order = :RL, kwargs...)
 	for b in i+1:j-1
 		swap!(ψ, b; trunc)
 	end

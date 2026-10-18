@@ -152,11 +152,11 @@ end
     for i in 1:dims[1], j in 1:dims[2]
         t12[i, j, i, j] = 1
     end
-    @test phydims(apply!(UnitaryGate((1, 2), t12), copy(ψ))) == dims
+    @test phydims(apply!(GateOp((1, 2), t12), copy(ψ))) == dims
     t34 = zeros(T, dims[3], dims[1], dims[3], dims[1])
     for i in 1:dims[3], j in 1:dims[1]
         t34[i, j, i, j] = 1
     end
-    @test phydims(apply!(UnitaryGate((3, 4), t34), copy(ψ))) == dims
+    @test phydims(apply!(GateOp((3, 4), t34), copy(ψ))) == dims
 end
 

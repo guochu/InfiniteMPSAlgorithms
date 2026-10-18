@@ -117,8 +117,8 @@ hadamard(::DenseIMPS, ::DenseIMPS)
 
 ```@docs
 AbstractGate
-UnitaryGate
-GeneralGate
+InfiniteMPSAlgorithms.GateOp
+InfiniteMPSAlgorithms.isunitary
 apply!
 swap!
 positions
