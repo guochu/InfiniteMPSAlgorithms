@@ -6,12 +6,13 @@
 # `CanonicalIMPS(collect(ψ.As))`）。
 
 """
-    fuse(W, AL) -> Array{T,3}
+    _mult_site(W, AL) -> Array{T,3}
 
 Per-site fusion of an MPO tensor with a left-orthogonal MPS tensor:
-`B[(wl·bl), u, (wr·br)] = Σ_d W[wl, u, wr, d] · AL[bl, d, br]`.
+`B[(wl·bl), u, (wr·br)] = Σ_d W[wl, u, wr, d] · AL[bl, d, br]`（内部工具：
+严格 `W * ψ` 的站点融合核，命名空间私有——不导出）。
 """
-function fuse(W::AbstractArray{T,4}, AL::AbstractArray{U,3}) where {T,U}
+function _mult_site(W::AbstractArray{T,4}, AL::AbstractArray{U,3}) where {T,U}
     wl, u, wr, _ = size(W)
     bl, _, br = size(AL)
     @tensor B5[wl, bl, u, wr, br] := W[wl, u, wr, d] * AL[bl, d, br]
@@ -33,7 +34,7 @@ function _naive_mul_tensor(W1::AbstractArray{T,4}, W2::AbstractArray{U,4}) where
     size(W1, 4) == size(W2, 2) ||
         throw(DimensionMismatch("MPO multiplication requires W1's physical in (d) to match W2's physical out (u)"))
     # this package's TensorOperations version does not support tuple composite
-    # indices; use a flat intermediate tensor + reshape (as in fuse)
+    # indices; use a flat intermediate tensor + reshape (as in _mult_site)
     @tensor W6[wl1, wl2, u, wr1, wr2, d] :=
         W1[wl1, u, wr1, m] * W2[wl2, m, wr2, d]
     return reshape(W6, size(W1, 1) * size(W2, 1), size(W1, 2),
@@ -49,7 +50,7 @@ construction as a typed operator, mirroring MPSKit's naive `*`:
 `DenseIMPO * DenseIMPO` composes with kernel
 [`_naive_mul_tensor`](@ref) (bond dimension = product of the two bond
 dimensions), `DenseIMPO * DenseIMPS` applies with kernel
-[`fuse`](@ref) (bond dimension = W bond × ψ bond). The `*` output unit-cell
+[`_mult_site`](@ref) (bond dimension = W bond × ψ bond). The `*` output unit-cell
 length is the **least common multiple** of the two inputs（单胞不同时逐周期
 平铺收缩）; per-site physical dimensions must agree. No canonicalization or
 normalization is performed — the raw fused tensor string is returned
@@ -69,7 +70,7 @@ function Base.:*(W::DenseIMPO, ψ::DenseIMPS)
     P = lcm(L, N)
     all(size(W[_mod1(ℓ, L)], 4) == size(ψ[_mod1(ℓ, N)], 2) for ℓ in 1:P) ||
         throw(DimensionMismatch("incompatible per-site physical dimensions of MPS and MPO"))
-    return DenseIMPS([fuse(W[_mod1(ℓ, L)], ψ[_mod1(ℓ, N)]) for ℓ in 1:P])
+    return DenseIMPS([_mult_site(W[_mod1(ℓ, L)], ψ[_mod1(ℓ, N)]) for ℓ in 1:P])
 end
 
 # ---------------- 标量代数 ----------------

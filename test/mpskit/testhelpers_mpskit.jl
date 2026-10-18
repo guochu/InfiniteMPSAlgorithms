@@ -20,11 +20,15 @@
 using MPSKit
 import TensorKit
 using TensorKit: TensorMap, ComplexSpace, ℂ, ℝ, dim, space, ⊗
+# 命名空间分层：模型构造器/算符与默认参数经子模块引入（不再由主模块导出；
+# mpskit 测试的 tfim_hamiltonian/Defaults 等裸名由此解析）
+using InfiniteMPSAlgorithms.Models
+using InfiniteMPSAlgorithms.Defaults
 
 "标量类型对应的 TensorKit 数域：实类型 → ℝ，复类型 → ℂ（使 helpers 兼容实/复夹具）。"
 fld(T::Type{<:Number}) = T <: Real ? ℝ : ℂ
 using InfiniteMPSAlgorithms:  # 与 MPSKit 导出名冲突的本包接口
-    VUMPS, IDMRG, VOMPS, TDVP, WI, WII,
+    VUMPS, IDMRG, VOMPS, TDVP, WI, WII, TaylorCluster,
     find_groundstate, timestep, leftenv, rightenv, AC_hamiltonian, C_hamiltonian
 
 # ---- 预热 TensorKit 的 braid/repartition 生成内核 ----

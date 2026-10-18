@@ -13,8 +13,11 @@ implementation of the core MPSKit algorithms).
 - MPO site tensors follow TEMPO's convention: `W[wl, u, wr, d]` (bond indices
   in slots 1 and 3);
 - Algorithms: single-site VUMPS / IDMRG, TDVP (`timestep`/`time_evolve`),
-  W^I/W^II time-evolution MPOs (`timeevompo`) + iterative MPO
-  multiplication `mult` and MPO compression.
+  W^I/W^II/TaylorCluster time-evolution MPOs (`timeevompo`) + iterative MPO
+  multiplication `mult` and MPO compression;
+- Namespaces: model constructors/operators live in the `Models` submodule
+  (`using InfiniteMPSAlgorithms.Models`), default parameters in `Defaults`
+  (`using InfiniteMPSAlgorithms.Defaults`).
 """
 module InfiniteMPSAlgorithms
 
@@ -47,10 +50,9 @@ using FiniteMPSAlgorithms.Defaults: alg_orth_trunc, alg_trunc
 #   adjoint）同为 FMA 提供，tebd.jl 只保留 Pair 矩阵便捷构造与
 #   CanonicalIMPS 上的 apply!/swap!；
 # - **有意遮蔽（不 import，经模块名限定访问 FMA 版）**：
-#   · σx/σy/σz/Sx/Sy/Sz：签名相同但缺省类型不同（FMA 全 ComplexF64，
-#     本包实矩阵缺省 Float64）；
-#   · heisenberg_hamiltonian/tfim_hamiltonian/fermi_hubbard：返回类型不同
-#     （FMA 带 L 位置参数的有限 MPOHamiltonian vs 本包无限 SparseIMPO）；
+#   · σx/σy/σz/Sx/Sy/Sz 与 heisenberg_hamiltonian/tfim_hamiltonian/
+#     fermi_hubbard：本包版收进 `Models` 子模块（缺省类型/返回类型与 FMA
+#     不同），主模块不再定义同名遮蔽；
 #   · linsolve：语义分层不同（FMA 的 ALS 变分求解 vs 本包的 KrylovKit
 #     稠密包装）；
 #   · 类型撞名（struct 无法 import 合并）——**门类型已改为直接用 FMA 的**
@@ -126,6 +128,12 @@ include("observables/toolbox.jl")
 include("models.jl")
 
 # ---- exports (names aligned with MPSKit; the sparse MPO layer keeps TEMPO names) ----
+# 不在主模块导出的（按命名空间分层调用）：
+# - 模型构造器与算符（bulk_mpo/mpohamiltonian/heisenberg_*/tfim*/fermi_hubbard/
+#   σx/σy/σz/Sx/Sy/Sz）→ `using InfiniteMPSAlgorithms.Models`；
+# - 默认参数（Defaults 模块）→ `using InfiniteMPSAlgorithms.Defaults`；
+# - 底层工具（fuse 的私有化改名 _mult_site、integrate、isidentitylevel/
+#   isemptylevel）→ `InfiniteMPSAlgorithms.xxx` 限定访问。
 export
     # periodic containers
     PeriodicVector, PeriodicArray,
@@ -156,9 +164,9 @@ export
     AC_hamiltonian, C_hamiltonian, calc_galerkin,
     # ground-state and time-evolution algorithms
     Algorithm, VUMPS, IDMRG, IDMRG2, TDVP, VOMPS, IterativeConvergenceInfo,
-    find_groundstate, timestep, time_evolve, integrate,
+    find_groundstate, timestep, time_evolve,
     mult, hadamard, ⊙,
-    fuse, copyphyims,
+    copyphyims,
     compress, mult!, hadamard!, compress!,
     changebond!, svdguess_mult, svdguess_hadamard, svdguess_compress,
     vectorize, devectorize, superoperator,
@@ -169,17 +177,12 @@ export
     # SparseIMPO (Schur structure) and time-evolution MPOs
     SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,
-    isidentitylevel, isemptylevel,
     tompotensors, tompotensor,
-    WI, WII, timeevompo,
+    WI, WII, TaylorCluster, timeevompo,
     # observables
     expectationvalue, correlator, entropy, entanglement_spectrum,
     contract_mpo_expval,
-    # models
-    bulk_mpo, mpohamiltonian, heisenberg_xxz, heisenberg_hamiltonian,
-    tfim, tfim_hamiltonian, fermi_hubbard,
-    σx, σy, σz, Sx, Sy, Sz,
     # misc
-    Defaults, renyi_entropy, isometry, permute, distance, distance2, scalar
+    renyi_entropy, isometry, permute, distance, distance2, scalar
 
 end # module

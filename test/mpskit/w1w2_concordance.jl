@@ -64,3 +64,71 @@ const _timeevompo = InfiniteMPSAlgorithms.timeevompo
     # 键维约定：两侧输出 MPO 的键维一致（Schur 通道数，去掉首尾恒等层）
     @test max_bonddim(_timeevompo(H2, -im * dt, WII())) == max_bonddim(W2_k0)
 end
+
+@testset "timeevompo（TaylorCluster，SparseIMPO）≡ MPSKit：算子级一致" begin
+    # per-site 簇代数 = FMA 的 SchurMPOTensor 方法（与 MPSKit 同源移植）+ 本包
+    # 环上逐键存活通道装配（左站非零列 ∩ 右站非零行，保 column-major 序）——
+    # 与 MPSKit 的整链 remove_orphans! 等价。两侧通道空间同构 ⇒ 输出 MPO 的
+    # 键 profile 与稠密周期 trace **逐位一致**（实测 ~1e-17）；distance 的
+    # eigsolve 地板 ~1e-6（√ε 消去）只作辅判。δ 约定同 WII。
+    T = ComplexF64
+    dt = 0.1
+    _tc_check(W, W_k) = begin
+        @test max_bonddim(W) == max_bonddim(W_k)
+        dW = _dense_mpo_repr(W)
+        @test norm(dW - _dense_mpo_repr(W_k)) / norm(dW) < 1.0e-10
+        @test distance(W, W_k) < 1.0e-5
+        @test fidelity(W, W_k) > 1 - 1.0e-8
+    end
+
+    # ---- TFIM（L = 1）：默认 N=2 与开关组合（extension/compression），实时+虚时
+    J, h = 1.0, 1.0
+    H = tfim_hamiltonian(J = J, h = h, T = T)
+    H_k = MPSKit.InfiniteMPOHamiltonian(fill(ℂ^2, 1),
+                                        1 => -h * σz_tk(T),
+                                        (1, 2) => -J * (σx_tk(T) ⊗ σx_tk(T)))
+    for (ext, cmp) in ((true, false), (false, false), (false, true), (true, true)),
+        δ in (-im * dt, -dt)
+        W = _timeevompo(H, δ, TaylorCluster(N = 2, extension = ext, compression = cmp))
+        W_k = from_mpskit(MPSKit.make_time_mpo(H_k, dt,
+                             MPSKit.TaylorCluster(N = 2, extension = ext,
+                                                  compression = cmp);
+                             imaginary_evolution = δ isa Real))
+        _tc_check(W, W_k)
+    end
+
+    # ---- Heisenberg XXX（L = 1，多通道：XX+YY+ZZ 的 Schur 层族，D = 16）
+    hh = (1 / 4) * (σx_tk(T) ⊗ σx_tk(T) + σy_tk(T) ⊗ σy_tk(T) + σz_tk(T) ⊗ σz_tk(T))
+    H2 = heisenberg_hamiltonian(T = T)
+    H2_k = MPSKit.InfiniteMPOHamiltonian(fill(ℂ^2, 1), (1, 2) => hh)
+    for δ in (-im * dt, -dt)
+        W2 = _timeevompo(H2, δ, TaylorCluster(N = 2))
+        W2_k = from_mpskit(MPSKit.make_time_mpo(H2_k, dt, MPSKit.TaylorCluster(N = 2);
+                                                imaginary_evolution = δ isa Real))
+        _tc_check(W2, W2_k)
+    end
+
+    # ---- L = 2 单胞（异场 + 跨站 XX 仅键 (1,2)）：环闭合装配的多站路径
+    X = InfiniteMPSAlgorithms.Models.σx(T)
+    Z = InfiniteMPSAlgorithms.Models.σz(T)
+    H3 = SparseIMPO([InfiniteMPSAlgorithms.Models.mpohamiltonian(-0.7 * Z, [(-1.0, X, X)]),
+                     InfiniteMPSAlgorithms.Models.mpohamiltonian(-1.3 * Z, [(0.0, X, X)])])
+    H3_k = MPSKit.InfiniteMPOHamiltonian(fill(ℂ^2, 2),
+                                         1 => -0.7 * σz_tk(T), 2 => -1.3 * σz_tk(T),
+                                         (1, 2) => -1.0 * σx_tk(T) ⊗ σx_tk(T))
+    for δ in (-im * dt, -dt)
+        W3 = _timeevompo(H3, δ, TaylorCluster(N = 2))
+        W3_k = from_mpskit(MPSKit.make_time_mpo(H3_k, dt, MPSKit.TaylorCluster(N = 2);
+                                                imaginary_evolution = δ isa Real))
+        _tc_check(W3, W3_k)
+    end
+
+    # ---- N = 1（extension/compression 关闭）≡ 包内 WI（同一阶 Taylor 展开，
+    # 稠密周期 trace 逐位一致的自洽断言）
+    W1tc = _timeevompo(H2, -im * dt,
+                       TaylorCluster(N = 1, extension = false, compression = false))
+    W1wi = _timeevompo(H2, -im * dt, WI())
+    d1 = _dense_mpo_repr(W1tc)
+    @test max_bonddim(W1tc) == max_bonddim(W1wi)
+    @test norm(d1 - _dense_mpo_repr(W1wi)) / norm(d1) < 1.0e-12
+end

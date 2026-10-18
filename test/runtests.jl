@@ -5,6 +5,9 @@ using TensorOperations
 using KrylovKit
 using InfiniteMPSAlgorithms
 import InfiniteMPSAlgorithms: scalartype
+# 命名空间分层：模型构造器/算符与默认参数经子模块引入（不再由主模块导出）
+using InfiniteMPSAlgorithms.Models
+using InfiniteMPSAlgorithms.Defaults
 
 include("testhelpers.jl")
 

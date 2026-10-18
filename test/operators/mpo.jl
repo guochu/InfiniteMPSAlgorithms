@@ -1,3 +1,5 @@
+import InfiniteMPSAlgorithms: isidentitylevel, isemptylevel  # 不再导出，显式引入
+
 @testset "SparseIMPO 与模型构造" begin
     T = ComplexF64
 

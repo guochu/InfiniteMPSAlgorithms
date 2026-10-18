@@ -187,8 +187,7 @@ end
 @testset "compress：变分解结构唯一性（引擎间与重复运行）" begin
     # 给定相同 D，最优压缩结构由转移算符主本征对唯一决定：同一引擎在不同
     # 环境随机冷启动流下重复运行、VOMPS/IDMRG 引擎间、DenseIMPO/CanonicalIMPO
-    # 入口间均收敛到同一解（debug/coldstart_stability.jl 实测 fidelity ≡ 1.0；
-    # 环境冷启动 randn 化不影响解的结构唯一性）
+    # 入口间均收敛到同一解（环境冷启动 randn 化不影响解的结构唯一性）
     T = ComplexF64
     Random.seed!(83)
     Wd = rand_denseimpo(T, [2, 2]; D = 6)
@@ -347,14 +346,14 @@ end
     gmv = svdguess_mult(W.Ws, ψ1.AL, 4)
     @test fidelity(CanonicalIMPS(gmv), gm) ≈ 1 atol = 1e-10
     W3 = DenseIMPO([randn(T, 3, 2, 3, 2), randn(T, 3, 2, 3, 2)])
-    nvm = CanonicalIMPS([fuse(W3[ℓ], ψa.AL[ℓ]) for ℓ in 1:2])
+    nvm = CanonicalIMPS([InfiniteMPSAlgorithms._mult_site(W3[ℓ], ψa.AL[ℓ]) for ℓ in 1:2])
     gme = svdguess_mult(W3, ψa, 9)                            # 键 rank ≤ 12 ⇒ D = 9 有截断
     @test max_bonddim(gme) ≤ 9 && ismixedcanonical(gme)
     @test abs(dot(gme, nvm)) / (norm(gme) * norm(nvm)) > 0.5
 
     # svdguess 初猜（默认）与随机初猜（in-place 的 out 提供）都应收敛到
     # 高保真度的压缩结果（与精确构造射线的保真度 ≥ 0.9·N）
-    y_exact = CanonicalIMPS([fuse(W[ℓ], ψ1.AL[ℓ]) for ℓ in 1:length(ψ1)])   # 精确朴素构造（W * ψ，构造器自带归一化）
+    y_exact = CanonicalIMPS([InfiniteMPSAlgorithms._mult_site(W[ℓ], ψ1.AL[ℓ]) for ℓ in 1:length(ψ1)])   # 精确朴素构造（W * ψ，构造器自带归一化）
     y_svd, _, _ = mult(W, ψ1, VOMPS(D = 3))        # svdguess 初猜
     @test fidelity(y_svd, y_exact) > 0.9           # 方向一致（幅值无意义）
     out = randomimps(T, [2, 2]; D = 3)

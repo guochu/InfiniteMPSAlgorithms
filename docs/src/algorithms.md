@@ -129,25 +129,31 @@ compress(x, alg::CompressionAlgorithm) -> y
 
 Applying a time-evolution MPO is `ψ′ = mult(timeevompo(H, -im * dt, WII()), ψ)`.
 
-## Time-evolution MPOs (W^I / W^II)
+## Time-evolution MPOs (W^I / W^II / TaylorCluster)
 
 ```julia
-timeevompo(H, δ, alg::Union{WI,WII}) -> W ≈ exp(δ·H)
+timeevompo(H, δ, alg::Union{WI,WII,TaylorCluster}) -> W ≈ exp(δ·H)
 ```
 
 Long-range time-evolution MPOs after Zaletel et al. (PRB 107, 035121
-(2023)), built on the Schur-structured `SparseIMPO` layer — the `SparseIMPO`
-method of FiniteMPSAlgorithms' `timeevompo`. `δ` is the exponent
-coefficient itself——实时演化 `δ = -im·t`（`exp(-i·H·t)`）、虚时冷却
-`δ = -τ`（`exp(-H·τ)`），同 `integrate` 的约定.
+(2023)) — the `WII` block-exponential scheme — and the `N`-th order Taylor
+cluster expansion (Van Damme et al., SciPost Phys. 17, 135 (2024)) —
+`TaylorCluster(; N, extension, compression)`. Both built on the
+Schur-structured `SparseIMPO` layer — the `SparseIMPO` methods of
+FiniteMPSAlgorithms' `timeevompo`. `δ` is the exponent coefficient
+itself——实时演化 `δ = -im·t`（`exp(-i·H·t)`）、虚时冷却 `δ = -τ`
+（`exp(-H·τ)`），同 TDVP 局部指数演化 `integrate` 的约定
+（`InfiniteMPSAlgorithms.integrate`，不导出）.
 
 ## Sparse MPO layer
 
 `SparseIMPO` stores MPO tensors in Schur (upper-triangular block) form
-(level structure `isidentitylevel` / `isemptylevel`; per-side level counts
+(level structure `isidentitylevel` / `isemptylevel` — accessible as
+`InfiniteMPSAlgorithms.isidentitylevel` etc.; per-side level counts
 `space_l` / `space_r`), used by the Hamiltonian
-environments (per-level solves) and the W^I/W^II construction. Densify with
-`DenseIMPO(W)`; inspect per-level dense tensors with `tompotensor`.
+environments (per-level solves) and the time-evolution MPO construction.
+Densify with `DenseIMPO(W)`; inspect per-level dense tensors with
+`tompotensor`.
 
 ## Observables
 
@@ -163,6 +169,9 @@ entanglement_spectrum(ψ, loc)
 `expectationvalue(ψ, H)` / `length(ψ)` is the energy density.
 
 ## Models
+
+模型构造器与公共算符（`σx`/`σz`/`Sx` 等）收在 `Models` 子模块：
+`using InfiniteMPSAlgorithms.Models` 后直接可用。
 
 ```julia
 tfim_hamiltonian(; J, h, T)     # SparseIMPO Hamiltonian

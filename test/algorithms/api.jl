@@ -342,8 +342,8 @@ end
     Wψ = W3 * ψ2
     @test Wψ isa DenseIMPS && length(Wψ) == 6
     @test bonddim(Wψ, 1) == 4
-    # 逐周期平铺语义：site ℓ = fuse(W[mod1(ℓ,3)], ψ[mod1(ℓ,2)])
-    @test Wψ[5] == fuse(W3[2], ψ2[1])
+    # 逐周期平铺语义：site ℓ = _mult_site(W[mod1(ℓ,3)], ψ[mod1(ℓ,2)])
+    @test Wψ[5] == InfiniteMPSAlgorithms._mult_site(W3[2], ψ2[1])
     # 严格 hadamard（⊙）：(N₁ = 2, N₂ = 3) ⇒ 6，键维 = 乘积
     h32 = ψ2 ⊙ ψ3
     @test h32 isa DenseIMPS && length(h32) == 6 && bonddim(h32, 1) == 6
@@ -466,17 +466,19 @@ end
     @test VOMPS(D = 2).tol == Defaults.tol
 
     # integrate：对单位算符精确指数 exp(δ)·v（dt 即指数系数本身：
-    # -im·0.01 为实时、-0.1 为虚时）
+    # -im·0.01 为实时、-0.1 为虚时）。integrate 已从主模块导出移除，限定访问。
     # 注：算符必须用矩阵（实测 KrylovKit 对裸函数算符的作用次数计数异常）
     D = Diagonal(ones(2))
     v0 = [1.0 + 0im, 2.0]
-    vr = integrate(D, v0, -im * 0.1, KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
+    vr = InfiniteMPSAlgorithms.integrate(D, v0, -im * 0.1,
+                                         KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
     @test vr ≈ exp(-im * 0.1) * v0
-    vi = integrate(D, v0, -0.1, KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
+    vi = InfiniteMPSAlgorithms.integrate(D, v0, -0.1,
+                                         KrylovKit.Lanczos(; tol = 1e-12, maxiter = 30))
     @test vi ≈ exp(-0.1) * v0
 end
 
-@testset "MPSKit 对标：timestep 能量守恒 / approximate 不动点 / fuse / 基态残差" begin
+@testset "MPSKit 对标：timestep 能量守恒 / approximate 不动点 / _mult_site / 基态残差" begin
     T = ComplexF64
     H = tfim_hamiltonian(T = T)
     Random.seed!(41)
@@ -493,9 +495,9 @@ end
     @test abs(real(expectationvalue(ψt, H)) - e0) < 1e-2
     @test abs(norm(ψt) - 1) < 1e-8
 
-    # fuse：恒等 MPO 与 AL 融合后等于 AL
+    # _mult_site：恒等 MPO 与 AL 融合后等于 AL
     I1 = identityimpo(T, [2])
-    @test fuse(I1[1], ψg.AL[1]) ≈ ψg.AL[1]
+    @test InfiniteMPSAlgorithms._mult_site(I1[1], ψg.AL[1]) ≈ ψg.AL[1]
 
     # approximate（mult）：恒等 MPO 作用任意态（D = 6 = 朴素键维）→ 不动点
     # （overlap = 1，输出与输入同向）

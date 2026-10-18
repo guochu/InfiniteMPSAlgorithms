@@ -37,7 +37,6 @@ randomimpo
 vectorize
 devectorize
 superoperator
-fuse
 ```
 
 ## Gauges and transfer matrices
@@ -87,7 +86,6 @@ updatetol
 find_groundstate
 timestep
 time_evolve
-integrate
 ```
 
 ## Iterative MPO algebra
@@ -164,13 +162,11 @@ renyi_entropy
 ```@docs
 ExpDecayOpTerm
 ExpDecayOpSum
-isidentitylevel
-isemptylevel
 tompotensors
 tompotensor
-infinite_mpo
 WI
 WII
+TaylorCluster
 timeevompo
 ```
 
@@ -186,24 +182,30 @@ contract_mpo_expval
 
 ## Models
 
+模型构造器与公共算符收在 `InfiniteMPSAlgorithms.Models` 子模块：
+`using InfiniteMPSAlgorithms.Models` 后直接可用。
+
 ```@docs
-bulk_mpo
-mpohamiltonian
-heisenberg_xxz
-heisenberg_hamiltonian
-tfim
-tfim_hamiltonian
-fermi_hubbard
-σx
-σy
-σz
-Sx
-Sy
-Sz
+InfiniteMPSAlgorithms.Models.bulk_mpo
+InfiniteMPSAlgorithms.Models.mpohamiltonian
+InfiniteMPSAlgorithms.Models.heisenberg_xxz
+InfiniteMPSAlgorithms.Models.heisenberg_hamiltonian
+InfiniteMPSAlgorithms.Models.tfim
+InfiniteMPSAlgorithms.Models.tfim_hamiltonian
+InfiniteMPSAlgorithms.Models.fermi_hubbard
+InfiniteMPSAlgorithms.Models.σx
+InfiniteMPSAlgorithms.Models.σy
+InfiniteMPSAlgorithms.Models.σz
+InfiniteMPSAlgorithms.Models.Sx
+InfiniteMPSAlgorithms.Models.Sy
+InfiniteMPSAlgorithms.Models.Sz
 ```
 
 ## Defaults
 
+默认参数与默认算法构造器收在 `InfiniteMPSAlgorithms.Defaults` 子模块：
+`using InfiniteMPSAlgorithms.Defaults` 后直接可用。
+
 ```@docs
-Defaults
+InfiniteMPSAlgorithms.Defaults
 ```

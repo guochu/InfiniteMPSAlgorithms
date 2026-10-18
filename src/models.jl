@@ -2,6 +2,22 @@
 #
 # H = Σᵢ h1ᵢ + Σᵢ Σₚ coeffₚ · aₚ,ᵢ ⊗ bₚ,ᵢ₊₁ (on-site + nearest neighbor;
 # periodic boundary conditions)
+#
+# 模型构造器收纳于 `InfiniteMPSAlgorithms.Models` 子模块：`using
+# InfiniteMPSAlgorithms.Models` 后直接可用（bulk_mpo / mpohamiltonian /
+# heisenberg_hamiltonian / tfim_hamiltonian / heisenberg_xxz / tfim /
+# fermi_hubbard 与算符 σx/σy/σz/Sx/Sy/Sz——与本包的算法层命名空间分离，
+# 主模块不再导出任何模型名）。
+
+module Models
+
+using ..InfiniteMPSAlgorithms: scalartype, SchurMPOTensor, SparseIMPO,
+                               DenseIMPO, tompotensor
+
+export bulk_mpo, mpohamiltonian,
+       heisenberg_hamiltonian, tfim_hamiltonian, heisenberg_xxz, tfim,
+       fermi_hubbard,
+       σx, σy, σz, Sx, Sy, Sz
 
 """
     bulk_mpo(h1, pairs) -> SchurMPOTensor
@@ -113,7 +129,7 @@ end
 density is `1/4 − ln2`. Returns `(; mpo, bulk, hamiltonian)`: `mpo` is the
 periodic `DenseIMPO` (的周期 trace 完整收缩适合做**时间演化生成元**，见
 `timeevompo`)、`bulk` the Schur bulk，`hamiltonian` 是同一模型的
-`SparseIMPO`（**求能量用这个**：闭列公式，见 [`DMRGCache`](@ref) 的 `DenseIMPO`
+`SparseIMPO`（**求能量用这个**：闭列公式，见 `DMRGCache` 的 `DenseIMPO`
 版说明）。
 """
 function heisenberg_xxz(; J::Real = 1.0, Δ::Real = 1.0, h::Real = 0.0, T::Type = ComplexF64)
@@ -128,7 +144,7 @@ end
 Transverse-field Ising model `H = −J Σ σˣσˣ − h Σ σᶻ`. For J=h=1 the
 ground-state energy density is `−4/π`. `mpo` 是周期 `DenseIMPO`（适合做时间演化
 生成元，见 `timeevompo`）、`bulk` 是 Schur bulk、`hamiltonian` 是同一模型的
-`SparseIMPO`（**求能量用这个**：闭列公式，见 [`DMRGCache`](@ref) 的 `DenseIMPO`
+`SparseIMPO`（**求能量用这个**：闭列公式，见 `DMRGCache` 的 `DenseIMPO`
 版说明）。
 """
 function tfim(; J::Real = 1.0, h::Real = 1.0, T::Type = Float64)
@@ -160,3 +176,5 @@ function fermi_hubbard(; t::Real = 1.0, U::Real = 0.0, μ::Real = 0.0, T::Type =
     return (; mpo = DenseIMPO([tompotensor(bulk)]), bulk = bulk,
             hamiltonian = SparseIMPO([mpohamiltonian(h1, pairs)]))
 end
+
+end # module Models

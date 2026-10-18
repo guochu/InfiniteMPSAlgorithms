@@ -7,6 +7,8 @@
 # 覆盖：结构 / vumps / idmrg / mult / w1w2 / tdvp / observables。
 # =====================================================================
 
+import InfiniteMPSAlgorithms: isidentitylevel, isemptylevel  # 不再导出，显式引入
+
 @testset "unit cell size = 2" begin
     T = ComplexF64
     e_exact = 0.25 - log(2)          # 均匀 Heisenberg 能量密度（精确）

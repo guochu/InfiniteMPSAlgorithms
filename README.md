@@ -44,6 +44,7 @@ The package depends on `KrylovKit`, `MatrixAlgebraKit`, `TensorOperations`,
 
 ```julia
 using InfiniteMPSAlgorithms
+using InfiniteMPSAlgorithms.Models        # model constructors (tfim_hamiltonian, …)
 
 H = tfim_hamiltonian()                     # transverse-field Ising MPOHamiltonian
 
@@ -134,11 +135,12 @@ states, same parameters).
 
 **Same names** (semantics mirror MPSKit unless noted): `PeriodicVector`,
 `PeriodicArray`, `find_groundstate`, `VUMPS`, `IDMRG`, `VOMPS`, `TDVP`,
-`timestep`, `time_evolve`, `timeevompo`, `WI`, `WII`, `environments`,
-`leftenv`, `rightenv`, `AC_hamiltonian`, `C_hamiltonian`, `calc_galerkin`,
-`gaugefix!`, `regauge!`, `LeftCanonical`, `RightCanonical`, `MixedCanonical`,
-`TransferMatrix`, `regularize!`, `correlator`, `entropy`,
-`entanglement_spectrum`, `DynamicTol`, `updatetol`, `Defaults`.
+`timestep`, `time_evolve`, `timeevompo`, `WI`, `WII`, `TaylorCluster`,
+`environments`, `leftenv`, `rightenv`, `AC_hamiltonian`, `C_hamiltonian`,
+`calc_galerkin`, `gaugefix!`, `regauge!`, `LeftCanonical`, `RightCanonical`,
+`MixedCanonical`, `TransferMatrix`, `regularize!`, `correlator`, `entropy`,
+`entanglement_spectrum`, `DynamicTol`, `updatetol`. Default parameters live
+in the `Defaults` submodule: `using InfiniteMPSAlgorithms.Defaults`.
 
 **Implemented here but not in MPSKit**
 
@@ -155,9 +157,12 @@ states, same parameters).
   `UnitaryGate`, `GeneralGate` (Hastings update, aligned with TEMPO/GTEMPO).
 - **Superoperator layer**: `vectorize`, `devectorize`, `superoperator`.
 - **Schur/Jordan helpers and models**: `tompotensor`, `tompotensors`,
-  `infinite_mpo`, `bulk_mpo`, `mpohamiltonian`, `isidentitylevel`,
-  `isemptylevel`, `tfim_hamiltonian`, `heisenberg_hamiltonian`,
-  `heisenberg_xxz`, `fermi_hubbard` (MPSKit keeps models in MPSKitModels.jl).
+  model constructors in the `Models` submodule
+  (`using InfiniteMPSAlgorithms.Models`: `bulk_mpo`, `mpohamiltonian`,
+  `tfim_hamiltonian`, `heisenberg_hamiltonian`, `heisenberg_xxz`,
+  `fermi_hubbard`, Pauli/spin operators `σx`/`σy`/`σz`/`Sx`/`Sy`/`Sz`;
+  MPSKit keeps models in MPSKitModels.jl). Schur level introspection
+  `isidentitylevel` / `isemptylevel`（`InfiniteMPSAlgorithms.` 限定访问）.
 - **Constructors and misc**: `randomimps`, `prodimps`, `identityimpo`,
   `randomimpo`, `fidelity`, `infidelity`, `renyi_entropy`,
   `contract_mpo_expval`, `push_env_left`, `push_env_right`.

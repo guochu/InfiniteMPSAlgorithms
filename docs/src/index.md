@@ -19,7 +19,7 @@ extend.
   dynamic tolerances, and warm-started environments.
 - **Time evolution** — single-site TDVP (`timestep` / `time_evolve`),
   two-site TEBD gates with the Hastings update (`apply!` / `swap!`), and
-  W^I / W^II time-evolution MPOs (`timeevompo`).
+  W^I / W^II / TaylorCluster time-evolution MPOs (`timeevompo`).
 - **Iterative MPO algebra** — `mult` (MPO·MPS application and MPO·MPO
   composition), `compress` (bond-dimension reduction), and `hadamard`
   (elementwise product), all with *compute-on-the-fly* variational
@@ -45,6 +45,7 @@ The package depends on `KrylovKit`, `MatrixAlgebraKit`, `TensorOperations`,
 
 ```julia
 using InfiniteMPSAlgorithms
+using InfiniteMPSAlgorithms.Models        # model constructors (tfim_hamiltonian, …)
 
 H = tfim_hamiltonian()                     # transverse-field Ising MPOHamiltonian
 
@@ -97,6 +98,8 @@ form `mult(W, ψ)`（mpo·mpo 组合的规范代表即 `CanonicalIMPO(W1 * W2)`�
 for debugging.
 
 ### Observables
+
+观测量算符（`Sz` 等）同样来自 `Models` 子模块（见上）。
 
 ```julia
 expectationvalue(ψ, H)                     # total energy over the unit cell

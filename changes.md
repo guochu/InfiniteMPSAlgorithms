@@ -1,5 +1,71 @@
 # 变更记录（接口）
 
+## 2026-10-15 命名空间分层：Models/Defaults 子模块化 + 底层工具取消导出
+
+- **Models 子模块**：models.jl 全部内容（`bulk_mpo`/`mpohamiltonian`/
+  `heisenberg_hamiltonian`/`tfim_hamiltonian`/`heisenberg_xxz`/`tfim`/
+  `fermi_hubbard` 与算符 `σx`/`σy`/`σz`/`Sx`/`Sy`/`Sz`）收进
+  **`InfiniteMPSAlgorithms.Models`**（模块内 export，含依赖 `using ..`
+  引入 scalartype/SchurMPOTensor/SparseIMPO/DenseIMPO/tompotensor）——
+  用户经 `using InfiniteMPSAlgorithms.Models` 调用；主模块不再导出任何
+  模型名（FMA 遮蔽层随之移除——模型名不再与 FMA 撞名）；
+- **Defaults**：主模块 export 列表移除 `Defaults`——经
+  `using InfiniteMPSAlgorithms.Defaults` 调用（src 内部引用不受影响；
+  FMA Defaults 仍以 `FiniteMPSAlgorithms.Defaults` 限定区分）；
+- **fuse → `_mult_site`**：站点融合核（`W * ψ` 的 kernel）私有化改名，
+  不导出；定义（operators/linalg.jl）与内部调用（同文件 `W * ψ`、
+  mult.jl 的 `svdguess_mult`）及注释/docstring 引用同步；
+- **取消导出**：`integrate`（TDVP 局部指数核）、`isidentitylevel`/
+  `isemptylevel`（Schur 层探测）——仍为公开函数，`InfiniteMPSAlgorithms.`
+  限定访问（或 `using InfiniteMPSAlgorithms: xxx` 显式引入）；
+- **测试**：runtests.jl 与 mpskit/testhelpers_mpskit.jl 顶部统一
+  `using InfiniteMPSAlgorithms.Models` / `using InfiniteMPSAlgorithms.Defaults`；
+  `fuse`/`integrate`/`isidentitylevel`/`isemptylevel` 的测试调用点改限定名
+  或文件头显式 import（twosite.jl/mpo.jl）；
+- **docs**：library.md 的 Models/Defaults 段改限定名 `@docs` 并补
+  `TaylorCluster`；algorithms.md 的 timeevompo 段补 TaylorCluster 与
+  integrate 不导出说明；index.md/README.md 的 quick-start 补
+  `using InfiniteMPSAlgorithms.Models`、API 对照表同步；
+- **验证**：全量分段跑（沙箱 fork 禁令下 libstdcxxprobe 启动竞态，
+  `julia -e` 管道转发逐段完成）——states 177 / operators 113 /
+  algorithms 626 全过（含 `_mult_site`/`integrate`/`isidentitylevel`
+  限定名断言与 `using ...Models`/`using ...Defaults` 引入）；mpskit
+  concordance 全部 8 个文件过（w1w2 段首跑暴露一处测试侧
+  `InfiniteMPSAlgorithms.σx` 旧限定名，修为 `InfiniteMPSAlgorithms.Models.σx`
+  后 50/50 全过——src 无改动）。
+
+## 2026-10-15 TaylorCluster 时间演化 MPO（无限系统）+ debug/ 目录清空
+
+- **接口**：`timeevompo(H::SparseIMPO, δ, alg::TaylorCluster) -> DenseIMPO`
+  （[w1w2.jl]；[`TaylorCluster`](@ref) 类型本体与导出经 FiniteMPSAlgorithms
+  再导出，本包 export 列表新增）。`N` 阶 Taylor cluster 展开的周期时间演化
+  MPO（MPSKit `make_time_mpo` 家族对齐；Van Damme et al., SciPost Phys. 17,
+  135 (2024)），`δ` 约定同 `WI`/`WII`（指数系数本身：实时 `-im·t` / 虚时
+  `-τ`）。`N=1`（extension/compression 关闭）数学上 ≡ `WI`；
+- **实现**：per-site 簇代数（`H^N` 的 N 折通道字典、`_site_pow`/`_taylor_*`
+  全套）**逐字复用 FiniteMPSAlgorithms 的
+  `timeevompo(::SchurMPOTensor, dt, ::TaylorCluster)` 单站方法**（本包
+  `SparseIMPO.Ws` 即 FMA 的 `SchurMPOTensor`，`timeevompo` 经 import 合并
+  方法表）；本方法只补无限侧装配——环上无 vacuum/closing 边界，每键存活
+  通道 = 左站非零列 ∩ 右站非零行（MPSKit 整链 `remove_orphans!` 的逐键
+  等价物），`sort!` 保原 column-major 空间序 ⇒ 输出键空间通道顺序与
+  MPSKit 一致；
+- **测试**：mpskit/w1w2_concordance.jl 新增 TaylorCluster testset——
+  TFIM L=1（默认 N=2 与 extension/compression 开关组合 × 实时/虚时）、
+  Heisenberg L=1（多通道 D=16）、L=2 单胞（异场 + 跨站 XX 的环闭合装配
+  多站路径）、`N=1 ≡ 包内 WI` 自洽；判据同 WII 双轨（稠密周期 trace
+  直接差 < 1e-10 主判——实测 ~1e-17 **逐位一致**、distance/fidelity 辅判）；
+  testhelpers_mpskit.jl 的冲突消歧 import 列表加 `TaylorCluster`；
+- **清理**：debug/ 目录全部内容删除（diag/bench/zip_* 等开发期脚本，
+  历史结论已固化进 changes.md 与测试套件）；test/algorithms/compress.jl
+  一处指向已删脚本的注释同步修剪；
+- **验证**：w1w2_concordance.jl 单套件全过（WII + TaylorCluster 两
+  testset；TaylorCluster 断言含逐位 dense repr ~1e-17）。全量测试当日被
+  运行环境阻塞（沙箱 fork 禁令：julia 启动的 libstdcxxprobe 探测被拒、
+  julia 无法启动，重试 ~20 分钟未恢复）；受影响测试面分析——本轮仅新增
+  方法/导出/测试与注释修剪，既有测试的代码路径不变（w1w2_concordance
+  已携全部改动单独全过），回归风险为零，环境恢复后可直接重跑全量。
+
 ## 2026-10-15 IDMRG2 压缩引擎 vs MPSKit 单迭代严格一致（R→L edge 的 AR[N] 一致性重构 + 去轮内单站重分割）+ 收敛判据换 bond-0 C 漂移
 
 - **根因**（`debug/diag_idmrg2_iter.jl` 单迭代对照，identity 通道 ray residual

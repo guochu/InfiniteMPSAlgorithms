@@ -289,7 +289,7 @@ end
     @test fidelity(Wc, W) ≥ fidelity(refW, W) - 1e-9
 
     # ---- mult（mpo·mps）：无损对照 = 朴素 fuse 乘积串
-    ref_mult = CanonicalIMPS([InfiniteMPSAlgorithms.fuse(Ws[ℓ], As2[ℓ]) for ℓ in 1:3])
+    ref_mult = CanonicalIMPS([InfiniteMPSAlgorithms._mult_site(Ws[ℓ], As2[ℓ]) for ℓ in 1:3])
     for alg in (VOMPS(D = 12, maxiter = 300), IDMRG(D = 12, maxiter = 300))
         ym, _, _ = mult(W, ψ2nu, alg)
         @test ismixedcanonical(ym) && max_bonddim(ym) == 12

@@ -217,7 +217,7 @@ function recalculate!(envs::MultCache,
 end
 
 # 纯重叠通道（OverlapCache）与 compress 的 VOMPS/IDMRG 引擎见 compress.jl
-# 严格乘法的 kernel（fuse / _naive_mul_tensor）见 operators/linalg.jl
+# 严格乘法的 kernel（_mult_site / _naive_mul_tensor）见 operators/linalg.jl
 
 "VOMPS local AC map（mpo·mps 施加通道；**统一 4 参约定 (GL, GR, O, ketAC)**，
 两通道靠 `ketAC` 的秩分派——rank-3 = mpo·mps、rank-4 = mpo·mpo 的 W2 中心张量）：
@@ -854,11 +854,11 @@ function svdguess_mult(Ws::PeriodicVector{<:Array{T,4}},
                        ALs::PeriodicVector{<:Array{U,3}}, D::Int) where {T,U}
     (length(ALs) % length(Ws) == 0) ||
         throw(DimensionMismatch("incompatible unit-cell lengths of MPS and MPO"))
-    # carry 在构造时吸收（fuse 的融合序：左 (wl,bl)、右 (wr,br)）：
+    # carry 在构造时吸收（_mult_site 的融合序：左 (wl,bl)、右 (wr,br)）：
     # B'[(wl,bl), u, f] = Σ_{wr,br,d} W[wl,u,wr,d]·AL[bl,d,br]·carry[(wr,br), f]
     site = (ℓ, carry) -> begin
         W4 = Ws[ℓ]; A = ALs[ℓ]
-        carry === nothing && return fuse(W4, A)
+        carry === nothing && return _mult_site(W4, A)
         wl, u, wr, dd = size(W4); bl, _, br = size(A)
         f = size(carry, 2)
         l4 = reshape(carry, wr, br, f)
