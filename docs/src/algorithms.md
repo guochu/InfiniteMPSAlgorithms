@@ -69,16 +69,23 @@ energy when no observer is given); the iteration log is controlled by
 ### TEBD gates
 
 ```julia
+apply!(g::AbstractGate{1}, ψ; trunc = alg_orth_trunc(),
+       canonicalize = !isunitary(g)) -> ψ
 apply!(g::AbstractGate{2}, ψ; trunc = alg_orth_trunc(),
        canonicalize = !isunitary(g)) -> ψ
 swap!(ψ, i; trunc = alg_orth_trunc()) -> ψ
 ```
 
-Two-site gates with the Hastings update (aligned with TEMPO/GTEMPO; the gate
-type is FMA's unified [`GateOp`](@ref) — `isunitary` checks unitarity
-explicitly): a single SVD of the post-gate window distributes the factors onto
-`AL[i]`, `AR[i+1]`, `C[i]` without ever dividing the spectrum, so the
-physical state is preserved exactly when no truncation is applied.
+Both single-site (`AbstractGate{1}`) and two-site (`AbstractGate{2}`) gates
+are supported; the gate type is FMA's unified [`Gate`](@ref) and `isunitary`
+reads its unitarity flag. A single-site gate acts on the center tensor
+`AC[i]` only: the bond spectra `C[i-1]`, `C[i]` are kept (unitary gates do not
+change the Schmidt values) and `AL[i]`/`AR[i]` are recomputed from the
+canonical identities with a `regauge!` gauge conversion.
+Two-site gates use the Hastings update (aligned with TEMPO/GTEMPO): a single
+SVD of the post-gate window distributes the factors onto `AL[i]`, `AR[i+1]`,
+`C[i]` without ever dividing the spectrum, so the physical state is preserved
+exactly when no truncation is applied.
 The support must satisfy `1 <= i <= L` and `j - i < L` (`j = L + 1` is the
 wrapping bond `(L, 1)`); non-adjacent gate sites are moved together with
 exact unitary swaps.

@@ -14,11 +14,12 @@ implementation details.
   kernel is
   `W12[(wl1,wl2), u, (wr1,wr2), d] = Σ_m W1[wl1,u,wr1,m] · W2[wl2,m,wr2,d]`
   with the contracted middle physical index `m = W1.d = W2.u`.
-- **Gates** ([`GateOp`](@ref), FMA 的统一门类型) store the
+- **Gates** ([`Gate`](@ref), FMA 的统一门类型) store the
   rank-`2N` tensor `(i1', …, iN', i1, …, iN)`: all bra (output) physical
   indices first, all ket (input) physical indices second, each block ordered
-  with site 1 the slowest index; unitarity is checked explicitly with
-  `isunitary` (not at construction).
+  with site 1 the slowest index; unitarity is detected at construction
+  (within `atol`, or trusted from the `isunitary` keyword) and read back with
+  `isunitary(g)`.
 - **Unit cells** are periodic. All tensor strings are stored in
   [`PeriodicVector`](@ref)s of length `N = length(ψ)`, and every index wraps
   around with period `N` (`ψ.C[0] == ψ.C[N]`, and so on).

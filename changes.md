@@ -1,5 +1,25 @@
 # 变更记录（接口）
 
+## 2026-10-19 TEBD 接口跟进 FMA（`GateOp` → `Gate`）+ 单比特门支持
+
+- **背景**：FMA 将 `GateOp` 更名为 **`Gate{N,T,M}`**，并新增矩阵构造
+  `Gate(positions, op::AbstractMatrix, phydims; isunitary = nothing, atol)`；
+  门类型现在在构造时按 `atol` 自动检测 unitarity（也可由关键字直接给定）；
+- **接口**：import/export 由 `AbstractGate, GateOp, isunitary` 改为
+  **`AbstractGate, Gate, isunitary`**；本包与测试/文档中的 `GateOp` 全部改名；
+- **新增单比特门**：`apply!(g::AbstractGate{1}, ψ::CanonicalIMPS; trunc,
+  canonicalize = !isunitary(g))`——门作用于中心张量 `AC[i]`（`1 <= i <= L`），
+  键谱 `C[i-1]`、`C[i]` 保持不变（幺正门不改 Schmidt 值），`AL[i]`/`AR[i]`
+  由规范恒等式经 `regauge!` 重算（幺正门时即 `G·AL[i]`、`G·AR[i]`）；
+  非幺正门缺省经 `truncate!(ψ; trunc)` 重正则化，与 FMA 的 `canonicalize`
+  语义一致；两比特门行为不变；
+- **测试**：tebd.jl 新增"单比特门作用" testset（规范保持、`C` 不变、与两站
+  `kron(U, I)` 等价、`g·g†` 往返、wrap 站点、非幺正门缺省 canonicalize、
+  越界抛错），gate 类型 testset 补矩阵构造与单比特构造断言；
+  testhelpers 的 `pair_gate` 改委托 `Gate`；envs.jl 两处 `GateOp` 改名；
+- **docs**：library.md（`Gate` @docs）、conventions.md（构造时检测 unitarity）、
+  algorithms.md（单比特门语义 + 双签名）、README.md、tdvp.jl docstring 同步。
+
 ## 2026-10-18 TEBD 门接口对齐 FMA 统一 GateOp（UnitaryGate/GeneralGate 退役）
 
 - **背景**：FMA 的 TEBD 接口重做——`UnitaryGate`/`GeneralGate` 双类型删除，

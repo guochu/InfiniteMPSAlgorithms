@@ -46,12 +46,12 @@ using FiniteMPSAlgorithms.Defaults: alg_orth_trunc, alg_trunc
 #   fidelity/infidelity/expectationvalue/entanglement_spectrum/changebond!/
 #   compress(compress!)/mult(mult!)/hadamard(hadamard!)/tompotensors/
 #   svdguess_{mult,hadamard,compress} 与 TEBD 门族——门类型本身
-#   （AbstractGate/GateOp）与基础接口（positions/shift/isunitary）同为
-#   FMA 提供（FMA 的 TEBD 接口已统一为单一 GateOp：不再区分
-#   UnitaryGate/GeneralGate，unitarity 改由 isunitary 显式检查、
-#   非幺正门的重正则化改由 apply!(...; canonicalize = !isunitary(g))
-#   缺省触发），
-#   tebd.jl 只保留 CanonicalIMPS 上的 apply!/swap!；
+#   （AbstractGate/Gate；FMA 已将 GateOp 更名为 Gate，并新增
+#   Gate(positions, op, phydims) 矩阵构造）与基础接口
+#   （positions/shift/isunitary）同为 FMA 提供（单一 Gate 类型不再区分
+#   UnitaryGate/GeneralGate，unitarity 由 isunitary 显式检查、
+#   非幺正门的重正则化由 apply!(...; canonicalize = !isunitary(g))
+#   缺省触发），tebd.jl 只保留 CanonicalIMPS 上的 apply!/swap!；
 # - **有意遮蔽（不 import，经模块名限定访问 FMA 版）**：
 #   · σx/σy/σz/Sx/Sy/Sz 与 heisenberg_hamiltonian/tfim_hamiltonian/
 #     fermi_hubbard：本包版收进 `Models` 子模块（缺省类型/返回类型与 FMA
@@ -71,7 +71,7 @@ import FiniteMPSAlgorithms: distance, distance2, ⊙, truncate!, tompotensor,
                              tompotensors, svdguess_mult, svdguess_hadamard,
                              svdguess_compress,
                              apply!, swap!, positions, shift,
-                             AbstractGate, GateOp, isunitary
+                             AbstractGate, Gate, isunitary
 import TensorOperations: scalartype
 
 include("utility.jl")
@@ -176,7 +176,7 @@ export
     fidelity, infidelity,
     DynamicTol, updatetol,
     # TEBD quantum gates
-    AbstractGate, GateOp, isunitary, apply!, swap!, positions, shift,
+    AbstractGate, Gate, isunitary, apply!, swap!, positions, shift,
     # SparseIMPO (Schur structure) and time-evolution MPOs
     SchurMPOTensor, SparseIMPO,
     ExpDecayOpTerm, ExpDecayOpSum,

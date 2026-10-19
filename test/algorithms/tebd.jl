@@ -23,29 +23,42 @@
     gaugefix!(ψ, parent(ψ.AR))
     @test ismixedcanonical(ψ)
 
-    @testset "gate 类型（GateOp，FMA 统一门接口）" begin
+    @testset "gate 类型（Gate，FMA 统一门接口）" begin
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
         g = pair_gate(Pair(2, 3), G)
-        @test g isa GateOp
+        @test g isa Gate
         @test positions(g) == (2, 3)
         @test size(g.op) == (d, d, d, d)
         @test scalartype(typeof(g)) == T
         # rank-4 张量构造与 Pair 矩阵构造给出同一算符
         G4 = permutedims(reshape(G, d, d, d, d), (2, 1, 4, 3))
-        g4 = GateOp((2, 3), G4)
+        g4 = Gate((2, 3), G4)
         @test g.op == g4.op
-        # isunitary：QR 因子酉、随机矩阵不酉（GateOp 构造本身不校验）
+        # 矩阵构造 Gate(positions, op, phydims)（FMA 新增形式）
+        gm = Gate((2, 3), G, d)
+        @test positions(gm) == (2, 3)
+        @test gm.op ≈ g.op
+        # isunitary：构造器按 atol 自动检测（QR 因子酉、随机矩阵不酉）
         @test isunitary(g4)
-        @test !isunitary(GateOp((1, 2), randn(T, d, d, d, d)))
+        @test isunitary(gm)
+        @test !isunitary(Gate((1, 2), randn(T, d, d, d, d)))
+        @test !isunitary(Gate((1, 2), randn(T, d * d, d * d), d))
+        # 单比特门：rank-2 算子张量 / d×d 矩阵构造
+        U = qr(randn(T, d, d)).Q |> Matrix
+        g1 = Gate((2,), U)
+        @test positions(g1) == (2,)
+        @test size(g1.op) == (d, d)
+        @test isunitary(g1)
+        @test Gate((2,), U, d).op ≈ g1.op
         # 秩错误
-        @test_throws ArgumentError GateOp((1, 2), randn(T, d, d, d))
-        # positions 乱序：GateOp 内部排序（support 升序 + 算符腿跟随置换，
+        @test_throws ArgumentError Gate((1, 2), randn(T, d, d, d))
+        # positions 乱序：Gate 内部排序（support 升序 + 算符腿跟随置换，
         # 不再抛错）——(3, 2) 输入与 (2, 3) 输入给出同一门
-        g32 = GateOp((3, 2), permutedims(G4, (2, 1, 4, 3)))
+        g32 = Gate((3, 2), permutedims(G4, (2, 1, 4, 3)))
         @test positions(g32) == (2, 3)
         @test g32.op ≈ G4
         # positions 重复拒绝
-        @test_throws ArgumentError GateOp((2, 2), G4)
+        @test_throws ArgumentError Gate((2, 2), G4)
         # adjoint：共轭转置且支持不变
         ga = adjoint(g)
         @test positions(ga) == (2, 3)
@@ -68,7 +81,7 @@
         @test fidelity(ψ, ψ1) > 0.95
     end
 
-    @testset "GateOp 作用（幺正门）" begin
+    @testset "Gate 作用（幺正门）" begin
         G = qr(randn(T, d * d, d * d)).Q |> Matrix
         g = pair_gate(Pair(2, 3), G)
         # 无截断：门改变态
@@ -92,8 +105,48 @@
         @test size(ψ3.C[2], 1) <= chi
     end
 
+    @testset "单比特门作用（AbstractGate{1}）" begin
+        U = qr(randn(T, d, d)).Q |> Matrix
+        gu = Gate((2,), U)
+        @test isunitary(gu)
+        # 规范保持：C 不变，AL/AR 由 regauge! 重算
+        ψ1 = copy(ψ)
+        Cprev = copy(ψ1.C[1]); Cnext = copy(ψ1.C[2])
+        apply!(gu, ψ1)
+        @test ismixedcanonical(ψ1)
+        @test maximum(mixedcanonical_errors(ψ1)) < 1e-12
+        @test ψ1.C[1] ≈ Cprev atol = 1e-12
+        @test ψ1.C[2] ≈ Cnext atol = 1e-12
+        # 与两站 kron(U, I)（site 2 为慢指标）作用等价
+        ψ2 = copy(ψ)
+        apply!(pair_gate(Pair(2, 3), kron(U, Matrix{T}(I, d, d))), ψ2)
+        @test fidelity(ψ1, ψ2) ≈ 1 atol = 1e-10
+        # g·g† 往返无损
+        apply!(adjoint(gu), ψ1)
+        @test fidelity(ψ, ψ1) ≈ 1 atol = 1e-12
+        @test ismixedcanonical(ψ1)
+        # wrap 站点（i = 1 与 i = L）
+        for i in (1, L)
+            ψw = apply!(Gate((i,), U), copy(ψ))
+            @test ismixedcanonical(ψw)
+            apply!(Gate((i,), adjoint(U)), ψw)
+            @test fidelity(ψ, ψw) ≈ 1 atol = 1e-12
+        end
+        # 非幺正单比特门：缺省 canonicalize = !isunitary(g)
+        gn = Gate((3,), randn(T, d, d))
+        @test !isunitary(gn)
+        ψn = apply!(gn, copy(ψ))
+        @test ismixedcanonical(ψn)
+        # 显式 canonicalize = false 可跳过重正则化
+        ψn2 = apply!(gn, copy(ψ); canonicalize = false)
+        @test ψn2 isa typeof(ψ)
+        # support bounds（1 <= i <= L）
+        @test_throws BoundsError apply!(Gate((0,), U), copy(ψ))
+        @test_throws BoundsError apply!(Gate((L + 1,), U), copy(ψ))
+    end
+
     @testset "非幺正门（canonicalize = !isunitary(g)）" begin
-        # FMA 统一门接口语义：GateOp 不区分幺正/非幺正类型，非幺正门破坏
+        # FMA 统一门接口语义：Gate 不区分幺正/非幺正类型，非幺正门破坏
         # Hastings 更新的严格正交性（gauge 性质）——缺省 canonicalize =
         # !isunitary(g) 自动重正则化；显式 canonicalize = false 可跳过。
         gg = pair_gate(Pair(2, 3), randn(T, d * d, d * d))

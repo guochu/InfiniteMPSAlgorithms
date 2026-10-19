@@ -1,13 +1,14 @@
-# TEBD: quantum gates (AbstractGate / GateOp) + apply! + swap!
+# TEBD: quantum gates (AbstractGate / Gate) + apply! + swap!
 # Minimal TEBD building blocks; the time-evolution loop is driven by the caller.
 #
-# 门类型与基础接口（AbstractGate/GateOp 的 struct 定义、positions/shift/
-# adjoint/isunitary、NTuple 构造与内部排序）由 FiniteMPSAlgorithms 提供并经
-# 主文件 import 再导出（FMA 的统一门接口：单一 GateOp 取代旧的
-# UnitaryGate/GeneralGate 双类型）。本文件只保留本包侧的扩展：
-# CanonicalIMPS（infinite 链）上的 apply!（两站门 + canonicalize 重正则化）
-# 与 swap!（Hastings 更新）——门操作保持**只支持两比特门**（AbstractGate{2}），
-# FMA 的 N-site block sweep 不在 infinite 侧实现。
+# 门类型与基础接口（AbstractGate/Gate 的 struct 定义、positions/shift/
+# adjoint/isunitary、NTuple/矩阵构造与内部排序）由 FiniteMPSAlgorithms 提供
+# 并经主文件 import 再导出（FMA 的统一门接口：单一 Gate 类型取代旧的
+# UnitaryGate/GeneralGate 双类型；GateOp 已更名为 Gate）。本文件只保留本包
+# 侧的扩展：CanonicalIMPS（infinite 链）上的 apply!（单站门 + 两站门 +
+# canonicalize 重正则化）与 swap!（Hastings 更新）——门操作支持单比特与
+# 两比特门（AbstractGate{1}/AbstractGate{2}），FMA 的 N ≥ 3 block sweep 不在
+# infinite 侧实现。
 #
 # The Hastings update (aligned with TEMPO/GTEMPO) acts on the two-site window
 # AC[i]·AR[i+1] (exact local representation, unit left environment). A single
@@ -85,15 +86,32 @@ function _nn_gate_apply!(g::AbstractGate{2}, ψ::CanonicalIMPS, i::Integer;
 	return _hastings_update!(ψ, gated, i; trunc)
 end
 
+# Single-site gate core. The gate acts on the center tensor of site `i`,
+#     AC[i] ← G·AC[i],
+# and the bond spectra are untouched: a unitary gate preserves the Schmidt
+# values of both adjacent bonds, and the neighboring tensors follow from the
+# canonical identities AC = AL·C = C·AR with a `regauge!` gauge conversion
+#     AL[i] from AL[i]·C[i] = AC[i],   AR[i] from C[i-1]·AR[i] = AC[i]
+# (exactly the new left/right isometries G·AL[i] and G·AR[i] for unitary G).
+# A non-unitary gate changes the spectra; `apply!` re-canonicalizes by default
+# (`canonicalize = !isunitary(g)`), matching FMA's semantics.
+function _single_site_gate_apply!(g::AbstractGate{1}, ψ::CanonicalIMPS, i::Integer)
+	@tensor ACi[a, p′, c] := g.op[p′, p] * ψ.AC[i][a, p, c]
+	ψ.AC[i] = ACi
+	ψ.AL[i] = regauge!(ACi, ψ.C[i])
+	ψ.AR[i] = regauge!(ψ.C[i - 1], ACi)
+	return ψ
+end
+
 """
 	apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
 	       trunc = alg_orth_trunc(), canonicalize = !isunitary(g)) -> ψ
 
 Apply a two-site gate to `ψ` with the Hastings update (aligned with
-TEMPO/GTEMPO; FMA 的统一门接口：门一律为 [`GateOp`](@ref)，unitarity 由
+TEMPO/GTEMPO; FMA 的统一门接口：门一律为 [`Gate`](@ref)，unitarity 由
 [`isunitary`](@ref) 显式检查——本方法不再区分幺正/非幺正类型分派). The
 support must satisfy `1 <= i <= L` and `j - i < L` (`j > i` is automatic from
-the ascending GateOp support); `j = L + 1` is the wrapping bond `(L, 1)`.
+the ascending [`Gate`](@ref) support); `j = L + 1` is the wrapping bond `(L, 1)`.
 Non-adjacent gates are first moved next to each other with exact unitary
 content swaps, applied at the neighboring bond, and moved back. The post-gate
 window `AC[i]·G·AR[i+1]` is SVD-decomposed; the left
@@ -125,7 +143,7 @@ function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
 	i, j = g.positions
 	L = length(ψ)
 	# support bounds: 1 <= i <= L and j - i < L (j > i is automatic from the
-	# ascending GateOp support). j == L + 1 is the wrapping bond (L, 1).
+	# ascending Gate support). j == L + 1 is the wrapping bond (L, 1).
 	(1 <= i <= L && j - i < L) || throw(BoundsError())
 	for b in j-1:-1:i+1
 		swap!(ψ, b; trunc)
@@ -141,6 +159,32 @@ function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
 	for b in i+1:j-1
 		swap!(ψ, b; trunc)
 	end
+	return ψ
+end
+
+"""
+	apply!(g::AbstractGate{1}, ψ::CanonicalIMPS;
+	       trunc = alg_orth_trunc(), canonicalize = !isunitary(g)) -> ψ
+
+Apply a single-site gate to `ψ` in place. The operator acts on the center
+tensor `AC[i]` (`i = g.positions[1]`, with `1 <= i <= L`), and the bond
+spectra `C[i-1]`, `C[i]` are kept: a unitary gate
+does not change the Schmidt values, and the neighboring tensors follow from
+the canonical identities `AC = AL·C = C·AR` via a `regauge!` gauge conversion
+(`AL[i] ← G·AL[i]`, `AR[i] ← G·AR[i]` for unitary `G`). No swaps are needed
+and the canonical form is preserved at machine precision.
+
+A non-unitary gate changes the spectra, so `canonicalize` defaults to
+`!isunitary(g)` (the FMA interface): the final state is re-canonicalized with
+`truncate!(ψ; trunc)`; pass `canonicalize = false` to skip it.
+"""
+function apply!(g::AbstractGate{1}, ψ::CanonicalIMPS;
+                trunc::TruncationScheme = alg_orth_trunc(),
+                canonicalize::Bool = !isunitary(g))
+	i = g.positions[1]
+	(1 <= i <= length(ψ)) || throw(BoundsError())
+	_single_site_gate_apply!(g, ψ, i)
+	canonicalize && truncate!(ψ; trunc)
 	return ψ
 end
 

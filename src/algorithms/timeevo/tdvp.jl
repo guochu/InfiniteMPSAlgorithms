@@ -72,7 +72,7 @@ evolved state needs more than `ψ₀` provides — for example
 - `changebond!(ψ₀; D = D₀)`: resizes every bond to `D₀` and re-canonicalizes
   (the grown directions are filled with `noise`, default `1e-10`, which avoids a
   rank-deficient gauge), or
-- a few two-site steps `apply!(GateOp((i, i+1), g), ψ₀)`,
+- a few two-site steps `apply!(Gate((i, i+1), g), ψ₀)`,
   which grow the bond dimension along the gates' bonds,
 
 then evolve the resulting state. In particular, for imaginary-time cooling to a

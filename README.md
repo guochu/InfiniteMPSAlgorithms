@@ -154,8 +154,8 @@ in the `Defaults` submodule: `using InfiniteMPSAlgorithms.Defaults`.
   containers, plus `exact_add`; deterministic initial guesses
   `svdguess_mult` / `svdguess_hadamard` / `svdguess_compress`.
 - **TEBD quantum gates** on infinite MPS: `apply!`, `swap!`, the unified
-  `GateOp` gate type + `isunitary` (Hastings update, aligned with
-  TEMPO/GTEMPO; two-site gates only — FMA's N-site block sweep is finite-only).
+  `Gate` gate type + `isunitary` (Hastings update, aligned with TEMPO/GTEMPO;
+  single-site and two-site gates — FMA's N ≥ 3 block sweep is finite-only).
 - **Superoperator layer**: `vectorize`, `devectorize`, `superoperator`.
 - **Schur/Jordan helpers and models**: `tompotensor`, `tompotensors`,
   model constructors in the `Models` submodule
