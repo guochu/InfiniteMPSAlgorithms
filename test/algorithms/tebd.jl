@@ -92,19 +92,33 @@
         @test size(ψ3.C[2], 1) <= chi
     end
 
-    @testset "非幺正门（canonicalize = true）" begin
+    @testset "非幺正门（canonicalize = !isunitary(g)）" begin
         # FMA 统一门接口语义：GateOp 不区分幺正/非幺正类型，非幺正门破坏
-        # Hastings 更新的严格正交性（gauge 性质）——默认不重正则化，
-        # `canonicalize = true` 用 truncate!(ψ; trunc) 恢复全规范
+        # Hastings 更新的严格正交性（gauge 性质）——缺省 canonicalize =
+        # !isunitary(g) 自动重正则化；显式 canonicalize = false 可跳过。
         gg = pair_gate(Pair(2, 3), randn(T, d * d, d * d))
         @test !isunitary(gg)
         ψ1 = copy(ψ)
-        ψ1 = apply!(gg, ψ1; canonicalize = true)
+        ψ1 = apply!(gg, ψ1)                 # 缺省：非幺正门自动 canonicalize
         @test ismixedcanonical(ψ1)
+        ψ1c = copy(ψ)
+        ψ1c = apply!(gg, ψ1c; canonicalize = true)
+        @test ismixedcanonical(ψ1c)
+        @test ψ1.AC[2] ≈ ψ1c.AC[2] atol = 1e-10
         # wrap 键上的非相邻非幺正门（gather swaps + 门 + canonicalize + 回移）
         gn = pair_gate(Pair(1, 4), randn(T, d * d, d * d))
-        ψ2 = apply!(gn, copy(ψ); canonicalize = true)
+        ψ2 = apply!(gn, copy(ψ))
         @test ismixedcanonical(ψ2)
+    end
+
+    @testset "support bounds（1 <= i <= L，j - i < L）" begin
+        @test_throws BoundsError apply!(pair_gate(Pair(0, 1), randn(T, d * d, d * d)), copy(ψ))
+        @test_throws BoundsError apply!(pair_gate(Pair(5, 6), randn(T, d * d, d * d)), copy(ψ))
+        # j - i < L：在 L = 4 的链上 (1, 5) 会绕过整圈
+        @test_throws BoundsError apply!(pair_gate(Pair(1, 5), randn(T, d * d, d * d)), copy(ψ))
+        # 允许的 wrap 键 (L, L+1) = (4, 5)
+        gw = pair_gate(Pair(4, 5), Matrix{T}(I, d * d, d * d))
+        @test apply!(gw, copy(ψ)) isa typeof(ψ)
     end
 
     @testset "Hastings 无损性随 trunc err 收敛" begin

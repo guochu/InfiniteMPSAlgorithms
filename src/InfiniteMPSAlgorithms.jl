@@ -49,7 +49,8 @@ using FiniteMPSAlgorithms.Defaults: alg_orth_trunc, alg_trunc
 #   （AbstractGate/GateOp）与基础接口（positions/shift/isunitary）同为
 #   FMA 提供（FMA 的 TEBD 接口已统一为单一 GateOp：不再区分
 #   UnitaryGate/GeneralGate，unitarity 改由 isunitary 显式检查、
-#   非幺正门的重正则化改由 apply!(...; canonicalize = true) 触发），
+#   非幺正门的重正则化改由 apply!(...; canonicalize = !isunitary(g))
+#   缺省触发），
 #   tebd.jl 只保留 CanonicalIMPS 上的 apply!/swap!；
 # - **有意遮蔽（不 import，经模块名限定访问 FMA 版）**：
 #   · σx/σy/σz/Sx/Sy/Sz 与 heisenberg_hamiltonian/tfim_hamiltonian/

@@ -87,15 +87,16 @@ end
 
 """
 	apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
-	       trunc = alg_orth_trunc(), canonicalize = false) -> ψ
+	       trunc = alg_orth_trunc(), canonicalize = !isunitary(g)) -> ψ
 
 Apply a two-site gate to `ψ` with the Hastings update (aligned with
 TEMPO/GTEMPO; FMA 的统一门接口：门一律为 [`GateOp`](@ref)，unitarity 由
-[`isunitary`](@ref) 显式检查——本方法不再区分幺正/非幺正类型分派). The two
-gate sites may be any ascending pair `(i, j)` — with `j` possibly `L + 1` for
-the wrapping bond `(L, 1)`: non-adjacent gates are first moved next to each
-other with exact unitary content swaps, applied at the neighboring bond, and
-moved back. The post-gate window `AC[i]·G·AR[i+1]` is SVD-decomposed; the left
+[`isunitary`](@ref) 显式检查——本方法不再区分幺正/非幺正类型分派). The
+support must satisfy `1 <= i <= L` and `j - i < L` (`j > i` is automatic from
+the ascending GateOp support); `j = L + 1` is the wrapping bond `(L, 1)`.
+Non-adjacent gates are first moved next to each other with exact unitary
+content swaps, applied at the neighboring bond, and moved back. The post-gate
+window `AC[i]·G·AR[i+1]` is SVD-decomposed; the left
 factor is written directly to `AL[i]` (exactly left-orthogonal for unitary
 gates), the right factor to `AR[i+1]` (exactly right-orthogonal for unitary
 gates), the new spectrum to `C[i]` (never divided), and the center/seam
@@ -103,10 +104,11 @@ tensors follow from the canonical identities (no global re-canonicalization
 sweep).
 
 A non-unitary gate breaks the exact orthogonality of the SVD factors (the
-`gauge` property of the Hastings update); pass `canonicalize = true` to
-re-canonicalize the final state with `truncate!(ψ; trunc)`（逐键谱截断 +
-重正则化的 infinite 版，对齐 FMA finite `apply!(...; canonicalize = true)`
-的语义）.
+`gauge` property of the Hastings update), so `canonicalize` defaults to
+`!isunitary(g)` (the FMA interface): a non-unitary gate re-canonicalizes the
+final state with `truncate!(ψ; trunc)`（逐键谱截断 + 重正则化的 infinite 版，
+对齐 FMA finite `apply!(...; canonicalize = !isunitary(g))` 的语义）; pass
+`canonicalize = false` to skip it.
 
 No initialization is needed: on any mixed-canonical input a unitary gate acts
 exactly (the default `alg_orth_trunc()` only cleans numerically-zero spectral
@@ -119,12 +121,12 @@ gate bond before truncation.
 """
 function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
                 trunc::TruncationScheme = alg_orth_trunc(),
-                canonicalize::Bool = false)
+                canonicalize::Bool = !isunitary(g))
 	i, j = g.positions
 	L = length(ψ)
-	# positions may run one past the cell (bond wrapping: (L, L+1) ≡ the
-	# bond between sites L and 1)
-	(1 <= i < j <= L + 1) || throw(BoundsError())
+	# support bounds: 1 <= i <= L and j - i < L (j > i is automatic from the
+	# ascending GateOp support). j == L + 1 is the wrapping bond (L, 1).
+	(1 <= i <= L && j - i < L) || throw(BoundsError())
 	for b in j-1:-1:i+1
 		swap!(ψ, b; trunc)
 	end
@@ -133,7 +135,7 @@ function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
 		# non-unitary gate: re-canonicalize immediately (before the return
 		# swaps, so they act on a canonical state — the Hastings update
 		# assumes mixed-canonical input), mirroring FMA's
-		# `apply!(...; canonicalize = true)` → `truncate!(ψ; trunc)`
+		# `apply!(...; canonicalize = !isunitary(g))` → `truncate!(ψ; trunc)`
 		truncate!(ψ; trunc)
 	end
 	for b in i+1:j-1

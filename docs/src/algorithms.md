@@ -69,7 +69,8 @@ energy when no observer is given); the iteration log is controlled by
 ### TEBD gates
 
 ```julia
-apply!(g::AbstractGate{2}, ψ; trunc = alg_orth_trunc(), canonicalize = false) -> ψ
+apply!(g::AbstractGate{2}, ψ; trunc = alg_orth_trunc(),
+       canonicalize = !isunitary(g)) -> ψ
 swap!(ψ, i; trunc = alg_orth_trunc()) -> ψ
 ```
 
@@ -78,9 +79,12 @@ type is FMA's unified [`GateOp`](@ref) — `isunitary` checks unitarity
 explicitly): a single SVD of the post-gate window distributes the factors onto
 `AL[i]`, `AR[i+1]`, `C[i]` without ever dividing the spectrum, so the
 physical state is preserved exactly when no truncation is applied.
-Non-adjacent gate sites are moved together with exact unitary swaps.
-General (non-unitary) gates break the exact orthogonality of the update —
-pass `canonicalize = true` to re-canonicalize with `truncate!` afterwards.
+The support must satisfy `1 <= i <= L` and `j - i < L` (`j = L + 1` is the
+wrapping bond `(L, 1)`); non-adjacent gate sites are moved together with
+exact unitary swaps.
+General (non-unitary) gates break the exact orthogonality of the update, so
+`canonicalize` defaults to `!isunitary(g)`: non-unitary gates re-canonicalize
+with `truncate!` afterwards (pass `canonicalize = false` to skip it).
 No initialization is needed: on any mixed-canonical input the canonical
 identity network is preserved at machine precision, for single gates and
 for gate sequences alike.
