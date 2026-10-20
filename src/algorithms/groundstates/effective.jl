@@ -6,10 +6,9 @@
 # The effective Hamiltonians are strictly linear operators (no conjugation of
 # x, MPSKit form; correct for complex data as well).
 
-# 内部类型约束别名（不导出，故意遮蔽 FMA 的同名 Array 别名——此处取更宽的
-# AbstractArray 以接受 view 输入；用户侧无冲突）
-const MPOTensor{T} = AbstractArray{T, 4}
-const MPSTensor{T} = AbstractArray{T, 3}
+# 内部类型约束别名（不导出）。FMA 已把 MPSTensor/MPOTensor 从 Array 放宽为
+# AbstractArray（接受 view 输入），与这里原有意图一致；直接使用 FMA 导出的
+# 同名别名即可，无需再本地重定义。
 
 """
     MPO_AC_Hamiltonian(leftenv, operator, rightenv)
