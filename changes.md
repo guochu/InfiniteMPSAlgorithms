@@ -1,5 +1,18 @@
 # 变更记录（接口）
 
+## 2026-10-20 TEBD 门 unitarity 改读字段（FMA 删除导出的 `isunitary(g)`）
+
+- **背景**：FMA `43b0916` 让 `Gate` 构造器用
+  `MatrixAlgebraKit.isunitary`（转发 `atol`）判定 unitarity，并删除内部
+  `_isunitary_op` 与导出的 `isunitary(g::Gate)` 方法；调用侧直接读
+  `g.isunitary`，`apply!` 的缺省 `canonicalize` 相应改为 `!g.isunitary`；
+- **接口**：本包 import/export 移除 `isunitary`（不再从 FMA 引入不存在的
+  绑定），保留 `AbstractGate, Gate, apply!, swap!, positions, shift`；
+  单/两比特 `apply!` 的 `canonicalize` 缺省统一为 `!g.isunitary`；
+- **测试/文档**：tebd.jl 的 `isunitary(g)` 断言全部改为 `g.isunitary`，
+  testhelpers 注释、library.md（移除 `@docs isunitary`）、conventions.md、
+  algorithms.md、README.md 同步；无行为变化。
+
 ## 2026-10-19 TEBD 接口跟进 FMA（`GateOp` → `Gate`）+ 单比特门支持
 
 - **背景**：FMA 将 `GateOp` 更名为 **`Gate{N,T,M}`**，并新增矩阵构造

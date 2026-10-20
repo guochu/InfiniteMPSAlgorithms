@@ -18,8 +18,8 @@ implementation details.
   rank-`2N` tensor `(i1', …, iN', i1, …, iN)`: all bra (output) physical
   indices first, all ket (input) physical indices second, each block ordered
   with site 1 the slowest index; unitarity is detected at construction
-  (within `atol`, or trusted from the `isunitary` keyword) and read back with
-  `isunitary(g)`.
+  (within `atol`, or trusted from the `isunitary` keyword) and stored in the
+  `g.isunitary` field (FMA no longer exports an `isunitary(g)` function).
 - **Unit cells** are periodic. All tensor strings are stored in
   [`PeriodicVector`](@ref)s of length `N = length(ψ)`, and every index wraps
   around with period `N` (`ψ.C[0] == ψ.C[N]`, and so on).

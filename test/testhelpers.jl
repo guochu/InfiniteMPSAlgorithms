@@ -6,8 +6,8 @@
 # 取独立名。`d²×d²` 矩阵按 Kronecker 约定 `(i1 i2)', (i1 i2)`（site i1 为慢
 # 指标），column-major reshape 得 (i2', i1', i2, i1)，permute 到张量约定
 # (i1', i2', i1, i2) 后委托 FMA 的 Gate NTuple 构造（rank/positions-distinct
-# 检查随之生效、support 内部排序；unitarity 由构造器按 atol 自动检测，也可用
-# `isunitary` 读取；两侧物理维需相同）。
+# 检查随之生效、support 内部排序；unitarity 由构造器按 atol 自动检测并存于
+# `g.isunitary` 字段；两侧物理维需相同）。
 function pair_gate(positions::Pair{Int, Int}, op::AbstractMatrix)
     d2 = size(op, 1)
     d = isqrt(d2)

@@ -2,7 +2,7 @@
 # Minimal TEBD building blocks; the time-evolution loop is driven by the caller.
 #
 # 门类型与基础接口（AbstractGate/Gate 的 struct 定义、positions/shift/
-# adjoint/isunitary、NTuple/矩阵构造与内部排序）由 FiniteMPSAlgorithms 提供
+# adjoint、NTuple/矩阵构造与内部排序）由 FiniteMPSAlgorithms 提供
 # 并经主文件 import 再导出（FMA 的统一门接口：单一 Gate 类型取代旧的
 # UnitaryGate/GeneralGate 双类型；GateOp 已更名为 Gate）。本文件只保留本包
 # 侧的扩展：CanonicalIMPS（infinite 链）上的 apply!（单站门 + 两站门 +
@@ -94,7 +94,7 @@ end
 #     AL[i] from AL[i]·C[i] = AC[i],   AR[i] from C[i-1]·AR[i] = AC[i]
 # (exactly the new left/right isometries G·AL[i] and G·AR[i] for unitary G).
 # A non-unitary gate changes the spectra; `apply!` re-canonicalizes by default
-# (`canonicalize = !isunitary(g)`), matching FMA's semantics.
+# (`canonicalize = !g.isunitary`), matching FMA's semantics.
 function _single_site_gate_apply!(g::AbstractGate{1}, ψ::CanonicalIMPS, i::Integer)
 	@tensor ACi[a, p′, c] := g.op[p′, p] * ψ.AC[i][a, p, c]
 	ψ.AC[i] = ACi
@@ -105,11 +105,12 @@ end
 
 """
 	apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
-	       trunc = alg_orth_trunc(), canonicalize = !isunitary(g)) -> ψ
+	       trunc = alg_orth_trunc(), canonicalize = !g.isunitary) -> ψ
 
 Apply a two-site gate to `ψ` with the Hastings update (aligned with
-TEMPO/GTEMPO; FMA 的统一门接口：门一律为 [`Gate`](@ref)，unitarity 由
-[`isunitary`](@ref) 显式检查——本方法不再区分幺正/非幺正类型分派). The
+TEMPO/GTEMPO; FMA 的统一门接口：门一律为 [`Gate`](@ref)，unitarity 读取
+`g.isunitary` 字段——FMA 已删除导出的 `isunitary(g)`；本方法不再区分
+幺正/非幺正类型分派). The
 support must satisfy `1 <= i <= L` and `j - i < L` (`j > i` is automatic from
 the ascending [`Gate`](@ref) support); `j = L + 1` is the wrapping bond `(L, 1)`.
 Non-adjacent gates are first moved next to each other with exact unitary
@@ -123,9 +124,9 @@ sweep).
 
 A non-unitary gate breaks the exact orthogonality of the SVD factors (the
 `gauge` property of the Hastings update), so `canonicalize` defaults to
-`!isunitary(g)` (the FMA interface): a non-unitary gate re-canonicalizes the
+`!g.isunitary` (the FMA interface): a non-unitary gate re-canonicalizes the
 final state with `truncate!(ψ; trunc)`（逐键谱截断 + 重正则化的 infinite 版，
-对齐 FMA finite `apply!(...; canonicalize = !isunitary(g))` 的语义）; pass
+对齐 FMA finite `apply!(...; canonicalize = !g.isunitary)` 的语义）; pass
 `canonicalize = false` to skip it.
 
 No initialization is needed: on any mixed-canonical input a unitary gate acts
@@ -139,7 +140,7 @@ gate bond before truncation.
 """
 function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
                 trunc::TruncationScheme = alg_orth_trunc(),
-                canonicalize::Bool = !isunitary(g))
+                canonicalize::Bool = !g.isunitary)
 	i, j = g.positions
 	L = length(ψ)
 	# support bounds: 1 <= i <= L and j - i < L (j > i is automatic from the
@@ -153,7 +154,7 @@ function apply!(g::AbstractGate{2}, ψ::CanonicalIMPS;
 		# non-unitary gate: re-canonicalize immediately (before the return
 		# swaps, so they act on a canonical state — the Hastings update
 		# assumes mixed-canonical input), mirroring FMA's
-		# `apply!(...; canonicalize = !isunitary(g))` → `truncate!(ψ; trunc)`
+		# `apply!(...; canonicalize = !g.isunitary)` → `truncate!(ψ; trunc)`
 		truncate!(ψ; trunc)
 	end
 	for b in i+1:j-1
@@ -164,7 +165,7 @@ end
 
 """
 	apply!(g::AbstractGate{1}, ψ::CanonicalIMPS;
-	       trunc = alg_orth_trunc(), canonicalize = !isunitary(g)) -> ψ
+	       trunc = alg_orth_trunc(), canonicalize = !g.isunitary) -> ψ
 
 Apply a single-site gate to `ψ` in place. The operator acts on the center
 tensor `AC[i]` (`i = g.positions[1]`, with `1 <= i <= L`), and the bond
@@ -175,12 +176,12 @@ the canonical identities `AC = AL·C = C·AR` via a `regauge!` gauge conversion
 and the canonical form is preserved at machine precision.
 
 A non-unitary gate changes the spectra, so `canonicalize` defaults to
-`!isunitary(g)` (the FMA interface): the final state is re-canonicalized with
+`!g.isunitary` (the FMA interface): the final state is re-canonicalized with
 `truncate!(ψ; trunc)`; pass `canonicalize = false` to skip it.
 """
 function apply!(g::AbstractGate{1}, ψ::CanonicalIMPS;
                 trunc::TruncationScheme = alg_orth_trunc(),
-                canonicalize::Bool = !isunitary(g))
+                canonicalize::Bool = !g.isunitary)
 	i = g.positions[1]
 	(1 <= i <= length(ψ)) || throw(BoundsError())
 	_single_site_gate_apply!(g, ψ, i)

@@ -38,17 +38,17 @@
         gm = Gate((2, 3), G, d)
         @test positions(gm) == (2, 3)
         @test gm.op ≈ g.op
-        # isunitary：构造器按 atol 自动检测（QR 因子酉、随机矩阵不酉）
-        @test isunitary(g4)
-        @test isunitary(gm)
-        @test !isunitary(Gate((1, 2), randn(T, d, d, d, d)))
-        @test !isunitary(Gate((1, 2), randn(T, d * d, d * d), d))
+        # isunitary 字段：构造器按 atol 自动检测（QR 因子酉、随机矩阵不酉）
+        @test g4.isunitary
+        @test gm.isunitary
+        @test !Gate((1, 2), randn(T, d, d, d, d)).isunitary
+        @test !Gate((1, 2), randn(T, d * d, d * d), d).isunitary
         # 单比特门：rank-2 算子张量 / d×d 矩阵构造
         U = qr(randn(T, d, d)).Q |> Matrix
         g1 = Gate((2,), U)
         @test positions(g1) == (2,)
         @test size(g1.op) == (d, d)
-        @test isunitary(g1)
+        @test g1.isunitary
         @test Gate((2,), U, d).op ≈ g1.op
         # 秩错误
         @test_throws ArgumentError Gate((1, 2), randn(T, d, d, d))
@@ -108,7 +108,7 @@
     @testset "单比特门作用（AbstractGate{1}）" begin
         U = qr(randn(T, d, d)).Q |> Matrix
         gu = Gate((2,), U)
-        @test isunitary(gu)
+        @test gu.isunitary
         # 规范保持：C 不变，AL/AR 由 regauge! 重算
         ψ1 = copy(ψ)
         Cprev = copy(ψ1.C[1]); Cnext = copy(ψ1.C[2])
@@ -132,9 +132,9 @@
             apply!(Gate((i,), adjoint(U)), ψw)
             @test fidelity(ψ, ψw) ≈ 1 atol = 1e-12
         end
-        # 非幺正单比特门：缺省 canonicalize = !isunitary(g)
+        # 非幺正单比特门：缺省 canonicalize = !g.isunitary
         gn = Gate((3,), randn(T, d, d))
-        @test !isunitary(gn)
+        @test !gn.isunitary
         ψn = apply!(gn, copy(ψ))
         @test ismixedcanonical(ψn)
         # 显式 canonicalize = false 可跳过重正则化
@@ -145,12 +145,12 @@
         @test_throws BoundsError apply!(Gate((L + 1,), U), copy(ψ))
     end
 
-    @testset "非幺正门（canonicalize = !isunitary(g)）" begin
+    @testset "非幺正门（canonicalize = !g.isunitary）" begin
         # FMA 统一门接口语义：Gate 不区分幺正/非幺正类型，非幺正门破坏
         # Hastings 更新的严格正交性（gauge 性质）——缺省 canonicalize =
-        # !isunitary(g) 自动重正则化；显式 canonicalize = false 可跳过。
+        # !g.isunitary 自动重正则化；显式 canonicalize = false 可跳过。
         gg = pair_gate(Pair(2, 3), randn(T, d * d, d * d))
-        @test !isunitary(gg)
+        @test !gg.isunitary
         ψ1 = copy(ψ)
         ψ1 = apply!(gg, ψ1)                 # 缺省：非幺正门自动 canonicalize
         @test ismixedcanonical(ψ1)
